@@ -93,13 +93,20 @@ pub fn utf_codepoint() -> Arc<Type> {
 
 pub fn generic_var(id: usize) -> Arc<Type> {
     Arc::new(Type::Var {
-        typ: Arc::new(RefCell::new(TypeVar::Generic { id })),
+        type_: Arc::new(RefCell::new(TypeVar::Generic { id })),
     })
 }
 
 pub fn unbound_var(id: usize, level: usize) -> Arc<Type> {
     Arc::new(Type::Var {
-        typ: Arc::new(RefCell::new(TypeVar::Unbound { id, level })),
+        type_: Arc::new(RefCell::new(TypeVar::Unbound { id, level })),
+    })
+}
+
+#[cfg(test)]
+pub fn link(type_: Arc<Type>) -> Arc<Type> {
+    Arc::new(Type::Var {
+        type_: Arc::new(RefCell::new(TypeVar::Link { type_ })),
     })
 }
 

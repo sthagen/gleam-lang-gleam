@@ -5,8 +5,14 @@
 - Gleam can now compile Gleam projects without an external build tool.
 - Gleam can now run eunit without an external build tool.
 - Gleam can now run an Erlang shell without an external build tool.
+- Added an error hint when joining string using the `+` or `+.` operator.
+- New projects are created with `setup-erlang` v1.1.2 and Erlang/OTP v23.2.
 
-## Unreleased
+## v0.14.2 - 2021-03-02
+
+- Project names can now contain numbers.
+
+## v0.14.1 - 2021-02-27
 
 - The error message for binary operators has been given more detail and
   hints.

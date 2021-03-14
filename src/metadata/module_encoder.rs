@@ -1,8 +1,3 @@
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
-
-use capnp::text_list;
-use typ::{AccessorsMap, RecordAccessor};
-
 use crate::{
     ast::{
         BitStringSegmentOption, Constant, TypedConstant, TypedConstantBitStringSegment,
@@ -11,9 +6,12 @@ use crate::{
     fs::Writer,
     schema_capnp::*,
     typ::{
-        self, FieldMap, Type, TypeConstructor, TypeVar, ValueConstructor, ValueConstructorVariant,
+        self, AccessorsMap, FieldMap, RecordAccessor, Type, TypeConstructor, TypeVar,
+        ValueConstructor, ValueConstructorVariant,
     },
 };
+use capnp::text_list;
+use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 pub struct ModuleEncoder<'a> {
     data: &'a typ::Module,
@@ -59,7 +57,7 @@ impl<'a> ModuleEncoder<'a> {
         mut builder: accessors_map::Builder<'_>,
         accessors: &AccessorsMap,
     ) {
-        self.build_type(builder.reborrow().init_type(), accessors.typ.as_ref());
+        self.build_type(builder.reborrow().init_type(), accessors.type_.as_ref());
         let mut builder = builder.init_accessors(accessors.accessors.len() as u32);
         for (i, (name, accessor)) in accessors.accessors.iter().enumerate() {
             let mut property = builder.reborrow().get(i as u32);
@@ -73,7 +71,8 @@ impl<'a> ModuleEncoder<'a> {
         mut builder: record_accessor::Builder<'_>,
         accessor: &RecordAccessor,
     ) {
-        self.build_type(builder.reborrow().init_type(), accessor.typ.as_ref());
+        self.build_type(builder.reborrow().init_type(), accessor.type_.as_ref());
+        builder.reborrow().set_label(&accessor.label);
         builder.set_index(accessor.index as u16);
     }
 
@@ -132,7 +131,7 @@ impl<'a> ModuleEncoder<'a> {
         mut builder: value_constructor::Builder<'_>,
         constructor: &ValueConstructor,
     ) {
-        self.build_type(builder.reborrow().init_type(), &constructor.typ);
+        self.build_type(builder.reborrow().init_type(), &constructor.type_);
         self.build_value_constructor_variant(builder.init_variant(), &constructor.variant);
     }
 
@@ -267,7 +266,7 @@ impl<'a> ModuleEncoder<'a> {
                 self.build_bit_string_segment_option(builder.reborrow().get(i as u32), option);
             }
         }
-        self.build_type(builder.init_type(), &segment.typ);
+        self.build_type(builder.init_type(), &segment.type_);
     }
 
     fn build_bit_string_segment_option(
@@ -278,15 +277,15 @@ impl<'a> ModuleEncoder<'a> {
         use crate::ast::TypedConstantBitStringSegmentOption as Opt;
         match option {
             Opt::Binary { .. } => builder.set_binary(()),
-            Opt::Integer { .. } => builder.set_integer(()),
+            Opt::Int { .. } => builder.set_integer(()),
             Opt::Float { .. } => builder.set_float(()),
             Opt::BitString { .. } => builder.set_bitstring(()),
-            Opt::UTF8 { .. } => builder.set_utf8(()),
-            Opt::UTF16 { .. } => builder.set_utf16(()),
-            Opt::UTF32 { .. } => builder.set_utf32(()),
-            Opt::UTF8Codepoint { .. } => builder.set_utf8_codepoint(()),
-            Opt::UTF16Codepoint { .. } => builder.set_utf16_codepoint(()),
-            Opt::UTF32Codepoint { .. } => builder.set_utf32_codepoint(()),
+            Opt::Utf8 { .. } => builder.set_utf8(()),
+            Opt::Utf16 { .. } => builder.set_utf16(()),
+            Opt::Utf32 { .. } => builder.set_utf32(()),
+            Opt::Utf8Codepoint { .. } => builder.set_utf8_codepoint(()),
+            Opt::Utf16Codepoint { .. } => builder.set_utf16_codepoint(()),
+            Opt::Utf32Codepoint { .. } => builder.set_utf32_codepoint(()),
             Opt::Signed { .. } => builder.set_signed(()),
             Opt::Unsigned { .. } => builder.set_unsigned(()),
             Opt::Big { .. } => builder.set_big(()),
@@ -303,13 +302,7 @@ impl<'a> ModuleEncoder<'a> {
 
             Opt::Unit { value, location } => {
                 let mut builder = builder.init_unit();
-                self.build_constant(
-                    builder.reborrow().init_value(),
-                    &Constant::Int {
-                        value: format!("{}", value),
-                        location: *location,
-                    },
-                );
+                builder.set_value(*value);
             }
         }
     }
@@ -342,8 +335,8 @@ impl<'a> ModuleEncoder<'a> {
                 elems.as_slice(),
             ),
 
-            Type::Var { typ } => match &*typ.borrow() {
-                TypeVar::Link { typ } => self.build_type(builder, &*typ),
+            Type::Var { type_: typ } => match &*typ.borrow() {
+                TypeVar::Link { type_: typ } => self.build_type(builder, &*typ),
                 TypeVar::Generic { id } => self.build_type_var(builder.init_var(), *id),
                 TypeVar::Unbound { id, .. } => crate::error::fatal_compiler_bug(
                     "Unexpected unbound var when serialising module metadata",

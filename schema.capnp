@@ -43,6 +43,7 @@ struct AccessorsMap {
 struct RecordAccessor {
   type @0 :Type;
   index @1 :UInt16;
+  label @2 :Text;
 }
 
 struct Type {
@@ -103,23 +104,25 @@ struct FieldMap {
 }
 
 struct Constant {
-  int @0 :Text;
-  float @1 :Text;
-  string @2 :Text;
-  tuple @3 :List(Constant);
+  union {
+    int @0 :Text;
+    float @1 :Text;
+    string @2 :Text;
+    tuple @3 :List(Constant);
 
-  list :group {
-   elements @4 :List(Constant);
-   type @5 :Type;
+    list :group {
+      elements @4 :List(Constant);
+      type @5 :Type;
+    }
+
+    record :group {
+      args @6 :List(Constant);
+      tag @7 :Text;
+      typ @8 :Type;
+    }
+
+    bitString @9 :List(BitStringSegment);
   }
-
-  record :group {
-    args @6 :List(Constant);
-    tag @7 :Text;
-    typ @8 :Type;
-  }
-
-  bitString @9 :List(BitStringSegment);
 }
 
 struct BitStringSegment {
@@ -166,7 +169,7 @@ struct BitStringSegmentOption {
     }
 
     unit :group {
-      value @17 :Constant;
+      value @17 :UInt8;
       shortForm @18 :Bool;
     }
   }

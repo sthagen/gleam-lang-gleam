@@ -38,7 +38,7 @@ use error::*;
 use hydrator::Hydrator;
 
 pub trait HasType {
-    fn typ(&self) -> Arc<Type>;
+    fn type_(&self) -> Arc<Type>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,7 +56,7 @@ pub enum Type {
     },
 
     Var {
-        typ: Arc<RefCell<TypeVar>>,
+        type_: Arc<RefCell<TypeVar>>,
     },
 
     Tuple {
@@ -71,7 +71,7 @@ impl Type {
 
     pub fn is_unbound(&self) -> bool {
         match self {
-            Self::Var { typ } => typ.borrow().is_unbound(),
+            Self::Var { type_: typ } => typ.borrow().is_unbound(),
             _ => false,
         }
     }
@@ -104,6 +104,13 @@ impl Type {
         }
     }
 
+    pub fn is_string(&self) -> bool {
+        match self {
+            Self::App { module, name, .. } => module.is_empty() && name == "String",
+            _ => false,
+        }
+    }
+
     /// Get the args for the type if the type is a specific `Type::App`.
     /// Returns None if the type is not a `Type::App` or is an incorrect `Type:App`
     ///
@@ -129,9 +136,9 @@ impl Type {
                 }
             }
 
-            Self::Var { typ } => {
+            Self::Var { type_: typ } => {
                 let args: Vec<_> = match &*typ.borrow() {
-                    TypeVar::Link { typ } => {
+                    TypeVar::Link { type_: typ } => {
                         return typ.get_app_args(public, module, name, arity, environment);
                     }
 
@@ -144,7 +151,7 @@ impl Type {
 
                 // TODO: use the real type here rather than making a copy
                 *typ.borrow_mut() = TypeVar::Link {
-                    typ: Arc::new(Self::App {
+                    type_: Arc::new(Self::App {
                         name: name.to_string(),
                         module: module.to_owned(),
                         args: args.clone(),
@@ -170,12 +177,12 @@ impl Type {
                 .find_private_type()
                 .or_else(|| args.iter().find_map(|t| t.find_private_type())),
 
-            Self::Var { typ, .. } => match &*typ.borrow() {
+            Self::Var { type_: typ, .. } => match &*typ.borrow() {
                 TypeVar::Unbound { .. } => None,
 
                 TypeVar::Generic { .. } => None,
 
-                TypeVar::Link { typ, .. } => typ.find_private_type(),
+                TypeVar::Link { type_: typ, .. } => typ.find_private_type(),
             },
         }
     }
@@ -189,8 +196,8 @@ impl Type {
 }
 
 pub fn collapse_links(t: Arc<Type>) -> Arc<Type> {
-    if let Type::Var { typ } = &*t {
-        if let TypeVar::Link { typ } = &*typ.borrow() {
+    if let Type::Var { type_: typ } = &*t {
+        if let TypeVar::Link { type_: typ } = &*typ.borrow() {
             return typ.clone();
         }
     }
@@ -200,7 +207,7 @@ pub fn collapse_links(t: Arc<Type>) -> Arc<Type> {
 #[derive(Debug, PartialEq, Clone)]
 pub struct AccessorsMap {
     pub public: bool,
-    pub typ: Arc<Type>,
+    pub type_: Arc<Type>,
     pub accessors: HashMap<String, RecordAccessor>,
 }
 
@@ -209,7 +216,7 @@ pub struct RecordAccessor {
     // TODO: smaller int. Doesn't need to be this big
     pub index: u64,
     pub label: String,
-    pub typ: Arc<Type>,
+    pub type_: Arc<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -290,7 +297,7 @@ pub trait Typer {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeVar {
     Unbound { id: usize, level: usize },
-    Link { typ: Arc<Type> },
+    Link { type_: Arc<Type> },
     Generic { id: usize },
 }
 
@@ -314,14 +321,14 @@ pub struct ValueConstructor {
     pub public: bool,
     pub origin: SrcSpan,
     pub variant: ValueConstructorVariant,
-    pub typ: Arc<Type>,
+    pub type_: Arc<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAliasConstructor {
     pub public: bool,
     pub module: Vec<String>,
-    pub typ: Type,
+    pub type_: Type,
     pub arity: usize,
 }
 
@@ -420,7 +427,7 @@ pub fn infer_module(
 
     // Ensure no exported values have private types in their type signature
     for (_, value) in environment.module_values.iter() {
-        if let Some(leaked) = value.typ.find_private_type() {
+        if let Some(leaked) = value.type_.find_private_type() {
             return Err(Error::PrivateTypeLeak {
                 location: value.origin.clone(),
                 leaked,
@@ -488,7 +495,7 @@ fn register_values<'a>(
     match s {
         Statement::Fn {
             name,
-            args,
+            arguments: args,
             location,
             return_annotation,
             public,
@@ -546,8 +553,8 @@ fn register_values<'a>(
             location,
             name,
             public,
-            args,
-            retrn,
+            arguments: args,
+            return_: retrn,
             module,
             fun,
             ..
@@ -583,7 +590,7 @@ fn register_values<'a>(
                 name,
                 ValueConstructor {
                     public: *public,
-                    typ: typ.clone(),
+                    type_: typ.clone(),
                     origin: *location,
                     variant: ValueConstructorVariant::ModuleFn {
                         name: fun.clone(),
@@ -641,7 +648,7 @@ fn register_values<'a>(
                     accessors,
                     // TODO: improve the ownership here so that we can use the
                     // `return_type_constructor` below rather than looking it up twice.
-                    typ: typ.clone(),
+                    type_: typ.clone(),
                 };
                 environment.insert_accessors(name.as_ref(), map)
             }
@@ -650,10 +657,10 @@ fn register_values<'a>(
             for constructor in constructors.iter() {
                 assert_unique_value_name(names, &constructor.name, &constructor.location)?;
 
-                let mut field_map = FieldMap::new(constructor.args.len());
-                let mut args_types = Vec::with_capacity(constructor.args.len());
+                let mut field_map = FieldMap::new(constructor.arguments.len());
+                let mut args_types = Vec::with_capacity(constructor.arguments.len());
                 for (i, RecordConstructorArg { label, ast, .. }) in
-                    constructor.args.iter().enumerate()
+                    constructor.arguments.iter().enumerate()
                 {
                     let t = hydrator.type_from_ast(ast, environment)?;
                     args_types.push(t);
@@ -668,7 +675,7 @@ fn register_values<'a>(
                 }
                 let field_map = field_map.into_option();
                 // Insert constructor function into module scope
-                let typ = match constructor.args.len() {
+                let typ = match constructor.arguments.len() {
                     0 => typ.clone(),
                     _ => fn_(args_types, typ.clone()),
                 };
@@ -678,11 +685,11 @@ fn register_values<'a>(
                         &constructor.name,
                         ValueConstructor {
                             public: *public,
-                            typ: typ.clone(),
+                            type_: typ.clone(),
                             origin: constructor.location,
                             variant: ValueConstructorVariant::Record {
                                 name: constructor.name.clone(),
-                                arity: constructor.args.len(),
+                                arity: constructor.arguments.len(),
                                 field_map: field_map.clone(),
                             },
                         },
@@ -701,7 +708,7 @@ fn register_values<'a>(
                     constructor.name.clone(),
                     ValueConstructorVariant::Record {
                         name: constructor.name.clone(),
-                        arity: constructor.args.len(),
+                        arity: constructor.arguments.len(),
                         field_map,
                     },
                     typ,
@@ -726,7 +733,7 @@ fn generalise_statement(
             location,
             name,
             public,
-            args,
+            arguments: args,
             body,
             return_annotation,
             end_location,
@@ -737,7 +744,7 @@ fn generalise_statement(
                 .get_variable(name.as_str())
                 .gleam_expect("Could not find preregistered type for function");
             let field_map = function.field_map().cloned();
-            let typ = function.typ.clone();
+            let typ = function.type_.clone();
 
             // Generalise the function if not already done so
             let typ = if environment.ungeneralised_functions.remove(name.as_str()) {
@@ -753,7 +760,7 @@ fn generalise_statement(
                 ValueConstructor {
                     public,
                     origin: location,
-                    typ,
+                    type_: typ,
                     variant: ValueConstructorVariant::ModuleFn {
                         name: name.clone(),
                         field_map,
@@ -768,7 +775,7 @@ fn generalise_statement(
                 location,
                 name,
                 public,
-                args,
+                arguments: args,
                 end_location,
                 return_annotation,
                 return_type,
@@ -792,7 +799,7 @@ fn infer_statement(
             location,
             name,
             public,
-            args,
+            arguments: args,
             body,
             return_annotation,
             end_location,
@@ -802,7 +809,7 @@ fn infer_statement(
                 .get_variable(name.as_str())
                 .gleam_expect("Could not find preregistered type for function");
             let field_map = preregistered_fn.field_map().cloned();
-            let preregistered_type = preregistered_fn.typ.clone();
+            let preregistered_type = preregistered_fn.type_.clone();
             let (args_types, return_type) = preregistered_type
                 .fn_types()
                 .gleam_expect("Preregistered type for fn was not a fn");
@@ -821,8 +828,8 @@ fn infer_statement(
                         .gleam_expect("Could not find hydrator for fn");
                     let (args, body) =
                         expr_typer.infer_fn_with_known_types(args, body, Some(return_type))?;
-                    let args_types = args.iter().map(|a| a.typ.clone()).collect();
-                    let typ = fn_(args_types, body.typ());
+                    let args_types = args.iter().map(|a| a.type_.clone()).collect();
+                    let typ = fn_(args_types, body.type_());
                     let safe_to_generalise = !expr_typer.ungeneralised_function_used;
                     Ok((typ, args, body, safe_to_generalise))
                 })?;
@@ -857,7 +864,7 @@ fn infer_statement(
                 location,
                 name,
                 public,
-                args,
+                arguments: args,
                 end_location,
                 return_annotation,
                 return_type: typ
@@ -872,8 +879,8 @@ fn infer_statement(
             location,
             name,
             public,
-            args,
-            retrn,
+            arguments: args,
+            return_: retrn,
             module,
             fun,
             ..
@@ -881,7 +888,7 @@ fn infer_statement(
             let preregistered_fn = environment
                 .get_variable(name.as_str())
                 .gleam_expect("Could not find preregistered type for function");
-            let preregistered_type = preregistered_fn.typ.clone();
+            let preregistered_type = preregistered_fn.type_.clone();
             let (args_types, return_type) = preregistered_type
                 .fn_types()
                 .gleam_expect("Preregistered type for fn was not a fn");
@@ -896,8 +903,8 @@ fn infer_statement(
                 location,
                 name,
                 public,
-                args,
-                retrn,
+                arguments: args,
+                return_: retrn,
                 module,
                 fun,
             })
@@ -908,8 +915,8 @@ fn infer_statement(
             location,
             public,
             alias,
-            args,
-            resolved_type,
+            parameters: args,
+            type_ast: resolved_type,
             ..
         } => {
             let typ = environment
@@ -922,9 +929,9 @@ fn infer_statement(
                 location,
                 public,
                 alias,
-                args,
-                resolved_type,
-                typ,
+                parameters: args,
+                type_ast: resolved_type,
+                type_: typ,
             })
         }
 
@@ -944,13 +951,13 @@ fn infer_statement(
                     |RecordConstructor {
                          location,
                          name,
-                         args,
+                         arguments: args,
                          documentation,
                      }| {
                         let preregistered_fn = environment
                             .get_variable(name.as_str())
                             .gleam_expect("Could not find preregistered type for function");
-                        let preregistered_type = preregistered_fn.typ.clone();
+                        let preregistered_type = preregistered_fn.type_.clone();
 
                         let args = if let Some((args_types, _return_type)) =
                             preregistered_type.fn_types()
@@ -971,7 +978,7 @@ fn infer_statement(
                                             label,
                                             ast,
                                             location,
-                                            typ: t.clone(),
+                                            type_: t.clone(),
                                         }
                                     },
                                 )
@@ -983,7 +990,7 @@ fn infer_statement(
                         RecordConstructor {
                             location,
                             name,
-                            args,
+                            arguments: args,
                             documentation,
                         }
                     },
@@ -1012,7 +1019,7 @@ fn infer_statement(
             location,
             public,
             name,
-            args,
+            arguments: args,
         } => {
             // Check contained types are valid
             let mut hydrator = Hydrator::new();
@@ -1028,7 +1035,7 @@ fn infer_statement(
                 location,
                 public,
                 name,
-                args,
+                arguments: args,
             })
         }
 
@@ -1054,7 +1061,7 @@ fn infer_statement(
             ..
         } => {
             let typed_expr = ExprTyper::new(environment).infer_const(&annotation, *value)?;
-            let typ = typed_expr.typ();
+            let type_ = typed_expr.type_();
 
             environment.insert_module_value(
                 &name,
@@ -1064,7 +1071,7 @@ fn infer_statement(
                     variant: ValueConstructorVariant::ModuleConstant {
                         literal: typed_expr.clone(),
                     },
-                    typ: typ.clone(),
+                    type_: type_.clone(),
                 },
             );
 
@@ -1079,7 +1086,7 @@ fn infer_statement(
                 annotation,
                 public,
                 value: Box::new(typed_expr),
-                typ,
+                type_,
             })
         }
     }
@@ -1117,30 +1124,28 @@ where
         BitStringSegmentOption::Binary { location } => {
             Ok(BitStringSegmentOption::Binary { location })
         }
-        BitStringSegmentOption::Integer { location } => {
-            Ok(BitStringSegmentOption::Integer { location })
-        }
+        BitStringSegmentOption::Int { location } => Ok(BitStringSegmentOption::Int { location }),
         BitStringSegmentOption::Float { location } => {
             Ok(BitStringSegmentOption::Float { location })
         }
         BitStringSegmentOption::BitString { location } => {
             Ok(BitStringSegmentOption::BitString { location })
         }
-        BitStringSegmentOption::UTF8 { location } => Ok(BitStringSegmentOption::UTF8 { location }),
-        BitStringSegmentOption::UTF16 { location } => {
-            Ok(BitStringSegmentOption::UTF16 { location })
+        BitStringSegmentOption::Utf8 { location } => Ok(BitStringSegmentOption::Utf8 { location }),
+        BitStringSegmentOption::Utf16 { location } => {
+            Ok(BitStringSegmentOption::Utf16 { location })
         }
-        BitStringSegmentOption::UTF32 { location } => {
-            Ok(BitStringSegmentOption::UTF32 { location })
+        BitStringSegmentOption::Utf32 { location } => {
+            Ok(BitStringSegmentOption::Utf32 { location })
         }
-        BitStringSegmentOption::UTF8Codepoint { location } => {
-            Ok(BitStringSegmentOption::UTF8Codepoint { location })
+        BitStringSegmentOption::Utf8Codepoint { location } => {
+            Ok(BitStringSegmentOption::Utf8Codepoint { location })
         }
-        BitStringSegmentOption::UTF16Codepoint { location } => {
-            Ok(BitStringSegmentOption::UTF16Codepoint { location })
+        BitStringSegmentOption::Utf16Codepoint { location } => {
+            Ok(BitStringSegmentOption::Utf16Codepoint { location })
         }
-        BitStringSegmentOption::UTF32Codepoint { location } => {
-            Ok(BitStringSegmentOption::UTF32Codepoint { location })
+        BitStringSegmentOption::Utf32Codepoint { location } => {
+            Ok(BitStringSegmentOption::Utf32Codepoint { location })
         }
         BitStringSegmentOption::Signed { location } => {
             Ok(BitStringSegmentOption::Signed { location })
@@ -1181,9 +1186,11 @@ fn assert_no_labelled_arguments<A>(args: &[CallArg<A>]) -> Result<(), Error> {
 /// the type, thus ensuring the type will be correctly generalized.
 ///
 fn update_levels(typ: Arc<Type>, own_level: usize, own_id: usize) -> Result<(), UnifyError> {
-    if let Type::Var { typ } = &*typ {
+    if let Type::Var { type_: typ } = &*typ {
         let new_value = match &*typ.borrow() {
-            TypeVar::Link { typ, .. } => return update_levels(typ.clone(), own_level, own_id),
+            TypeVar::Link { type_: typ, .. } => {
+                return update_levels(typ.clone(), own_level, own_id)
+            }
 
             TypeVar::Unbound { id, level } => {
                 if id == &own_id {
@@ -1238,9 +1245,11 @@ fn match_fun_type(
     arity: usize,
     environment: &mut Environment<'_, '_>,
 ) -> Result<(Vec<Arc<Type>>, Arc<Type>), MatchFunTypeError> {
-    if let Type::Var { typ } = &*typ {
+    if let Type::Var { type_: typ } = &*typ {
         let new_value = match &*typ.borrow() {
-            TypeVar::Link { typ, .. } => return match_fun_type(typ.clone(), arity, environment),
+            TypeVar::Link { type_: typ, .. } => {
+                return match_fun_type(typ.clone(), arity, environment)
+            }
 
             TypeVar::Unbound { level, .. } => {
                 let args: Vec<_> = (0..arity)
@@ -1255,7 +1264,7 @@ fn match_fun_type(
 
         if let Some((args, retrn)) = new_value {
             *typ.borrow_mut() = TypeVar::Link {
-                typ: fn_(args.clone(), retrn.clone()),
+                type_: fn_(args.clone(), retrn.clone()),
             };
             return Ok((args, retrn));
         }
@@ -1280,20 +1289,20 @@ fn match_fun_type(
 ///
 fn generalise(t: Arc<Type>, ctx_level: usize) -> Arc<Type> {
     match &*t {
-        Type::Var { typ } => {
+        Type::Var { type_: typ } => {
             let new_var = match &*typ.borrow() {
                 TypeVar::Unbound { id, level } => {
                     let id = *id;
                     if *level > ctx_level {
                         return Arc::new(Type::Var {
-                            typ: Arc::new(RefCell::new(TypeVar::Generic { id })),
+                            type_: Arc::new(RefCell::new(TypeVar::Generic { id })),
                         });
                     } else {
                         Some(TypeVar::Unbound { id, level: *level })
                     }
                 }
 
-                TypeVar::Link { typ } => return generalise(typ.clone(), ctx_level),
+                TypeVar::Link { type_: typ } => return generalise(typ.clone(), ctx_level),
 
                 TypeVar::Generic { .. } => None,
             };
@@ -1301,7 +1310,7 @@ fn generalise(t: Arc<Type>, ctx_level: usize) -> Arc<Type> {
             if let Some(v) = new_var {
                 *typ.borrow_mut() = v;
             }
-            Arc::new(Type::Var { typ: typ.clone() })
+            Arc::new(Type::Var { type_: typ.clone() })
         }
 
         Type::App {
@@ -1360,7 +1369,7 @@ fn custom_type_accessors<A>(
 ) -> Result<Option<HashMap<String, RecordAccessor>>, Error> {
     // Get the constructor for this custom type.
     let args = match constructors {
-        [constructor] if !constructor.args.is_empty() => &constructor.args,
+        [constructor] if !constructor.arguments.is_empty() => &constructor.arguments,
         // If there is not exactly 1 constructor we return as we cannot
         // build any constructors.
         _ => return Ok(None),
@@ -1376,7 +1385,7 @@ fn custom_type_accessors<A>(
                 RecordAccessor {
                     index: index as u64,
                     label: label.to_string(),
-                    typ,
+                    type_: typ,
                 },
             );
         }
@@ -1396,7 +1405,7 @@ pub fn register_types<'a>(
         Statement::ExternalType {
             name,
             public,
-            args,
+            arguments: args,
             location,
             ..
         } => {
@@ -1469,9 +1478,9 @@ pub fn register_types<'a>(
         Statement::TypeAlias {
             location,
             public,
-            args,
+            parameters: args,
             alias: name,
-            resolved_type,
+            type_ast: resolved_type,
             ..
         } => {
             assert_unique_type_name(names, name, location)?;
@@ -1552,7 +1561,7 @@ pub fn register_import(
                     environment.insert_variable(
                         imported_name.clone(),
                         value.variant.clone(),
-                        value.typ.clone(),
+                        value.type_.clone(),
                         location.clone(),
                     );
                     variant = Some(&value.variant);

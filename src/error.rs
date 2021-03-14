@@ -295,22 +295,22 @@ of the Gleam dependency modules."
                 let diagnostic = ProjectErrorDiagnostic {
                     title: "Invalid project name".to_string(),
                     label: format!(
-                        "We were not able to create your project as `{}` is
+                        "We were not able to create your project as `{}`
 {}
 
 Please try again with a different project name.",
                         name,
                         match reason {
                             InvalidProjectNameReason::ErlangReservedWord =>
-                                "a reserved word in Erlang.",
+                                "is a reserved word in Erlang.",
                             InvalidProjectNameReason::ErlangStandardLibraryModule =>
-                                "a standard library module in Erlang.",
+                                "is a standard library module in Erlang.",
                             InvalidProjectNameReason::GleamReservedWord =>
-                                "a reserved word in Gleam.",
+                                "is a reserved word in Gleam.",
                             InvalidProjectNameReason::Format =>
                                 "does not have the correct format. Project names must start
-with a lowercase letter and may only contain lowercase letters
-and underscores.",
+with a lowercase letter and may only contain lowercase letters,
+numbers and underscores.",
                         }
                     ),
                 };
@@ -777,9 +777,8 @@ But this argument has this type:
                         given = printer.pretty_print(given, 4),
                     )
                     .unwrap();
-                    if let Some((alt, t)) = hint_alternative_operator(&op, given.as_ref()) {
-                        writeln!(buf, "Hint: the {} operator can be used with {}s\n", alt, t)
-                            .unwrap();
+                    if let Some(t) = hint_alternative_operator(&op, given.as_ref()) {
+                        writeln!(buf, "Hint: {}\n", t).unwrap();
                     }
                 }
 
@@ -1672,26 +1671,39 @@ fn import_cycle(buffer: &mut Buffer, modules: &[String]) {
     writeln!(buffer, "    └─────┘\n").unwrap();
 }
 
-fn hint_alternative_operator(op: &BinOp, given: &Type) -> Option<(&'static str, &'static str)> {
+fn hint_alternative_operator(op: &BinOp, given: &Type) -> Option<String> {
     match op {
-        BinOp::AddInt if given.is_float() => Some(("+.", "Float")),
-        BinOp::DivInt if given.is_float() => Some(("/.", "Float")),
-        BinOp::GtEqInt if given.is_float() => Some((">=", "Float")),
-        BinOp::GtInt if given.is_float() => Some((">", "Float")),
-        BinOp::LtEqInt if given.is_float() => Some(("<=.", "Float")),
-        BinOp::LtInt if given.is_float() => Some(("<.", "Float")),
-        BinOp::MultInt if given.is_float() => Some(("*.", "Float")),
-        BinOp::SubInt if given.is_float() => Some(("-.", "Float")),
+        BinOp::AddInt if given.is_float() => Some(hint_numeric_message("+.", "Float")),
+        BinOp::DivInt if given.is_float() => Some(hint_numeric_message("/.", "Float")),
+        BinOp::GtEqInt if given.is_float() => Some(hint_numeric_message(">=", "Float")),
+        BinOp::GtInt if given.is_float() => Some(hint_numeric_message(">", "Float")),
+        BinOp::LtEqInt if given.is_float() => Some(hint_numeric_message("<=.", "Float")),
+        BinOp::LtInt if given.is_float() => Some(hint_numeric_message("<.", "Float")),
+        BinOp::MultInt if given.is_float() => Some(hint_numeric_message("*.", "Float")),
+        BinOp::SubInt if given.is_float() => Some(hint_numeric_message("-.", "Float")),
 
-        BinOp::AddFloat if given.is_int() => Some(("+", "Int")),
-        BinOp::DivFloat if given.is_int() => Some(("/", "Int")),
-        BinOp::GtEqFloat if given.is_int() => Some((">=.", "Int")),
-        BinOp::GtFloat if given.is_int() => Some((">.", "Int")),
-        BinOp::LtEqFloat if given.is_int() => Some(("<=", "Int")),
-        BinOp::LtFloat if given.is_int() => Some(("<", "Int")),
-        BinOp::MultFloat if given.is_int() => Some(("*", "Int")),
-        BinOp::SubFloat if given.is_int() => Some(("-", "Int")),
+        BinOp::AddFloat if given.is_int() => Some(hint_numeric_message("+", "Int")),
+        BinOp::DivFloat if given.is_int() => Some(hint_numeric_message("/", "Int")),
+        BinOp::GtEqFloat if given.is_int() => Some(hint_numeric_message(">=.", "Int")),
+        BinOp::GtFloat if given.is_int() => Some(hint_numeric_message(">.", "Int")),
+        BinOp::LtEqFloat if given.is_int() => Some(hint_numeric_message("<=", "Int")),
+        BinOp::LtFloat if given.is_int() => Some(hint_numeric_message("<", "Int")),
+        BinOp::MultFloat if given.is_int() => Some(hint_numeric_message("*", "Int")),
+        BinOp::SubFloat if given.is_int() => Some(hint_numeric_message("-", "Int")),
+
+        BinOp::AddInt if given.is_string() => Some(hint_string_message()),
+        BinOp::AddFloat if given.is_string() => Some(hint_string_message()),
 
         _ => None,
     }
+}
+
+fn hint_numeric_message(alt: &str, type_: &str) -> String {
+    format!("the {} operator can be used with {}s\n", alt, type_)
+}
+
+fn hint_string_message() -> String {
+    "Strings can be joined using the `append` or `concat` functions from
+the `gleam/string` module"
+        .to_string()
 }

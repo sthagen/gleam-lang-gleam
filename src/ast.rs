@@ -72,13 +72,13 @@ pub struct Arg<T> {
     pub names: ArgNames,
     pub location: SrcSpan,
     pub annotation: Option<TypeAst>,
-    pub typ: T,
+    pub type_: T,
 }
 
 impl<A> Arg<A> {
     pub fn set_type<B>(self, t: B) -> Arg<B> {
         Arg {
-            typ: t,
+            type_: t,
             names: self.names,
             location: self.location,
             annotation: self.annotation,
@@ -92,7 +92,7 @@ impl<A> ExternalFnArg<A> {
             location: self.location,
             label: self.label,
             annotation: self.annotation,
-            typ: t,
+            type_: t,
         }
     }
 }
@@ -109,7 +109,7 @@ pub enum ArgNames {
 pub struct RecordConstructor<T> {
     pub location: SrcSpan,
     pub name: String,
-    pub args: Vec<RecordConstructorArg<T>>,
+    pub arguments: Vec<RecordConstructorArg<T>>,
     pub documentation: Option<String>,
 }
 
@@ -124,7 +124,7 @@ pub struct RecordConstructorArg<T> {
     pub label: Option<String>,
     pub ast: TypeAst,
     pub location: SrcSpan,
-    pub typ: T,
+    pub type_: T,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -133,13 +133,13 @@ pub enum TypeAst {
         location: SrcSpan,
         module: Option<String>,
         name: String,
-        args: Vec<Self>,
+        arguments: Vec<Self>,
     },
 
     Fn {
         location: SrcSpan,
-        args: Vec<Self>,
-        retrn: Box<Self>,
+        arguments: Vec<Self>,
+        return_: Box<Self>,
     },
 
     Var {
@@ -179,7 +179,7 @@ pub enum Statement<T, Expr, ConstantRecordTag> {
         end_location: usize,
         location: SrcSpan,
         name: String,
-        args: Vec<Arg<T>>,
+        arguments: Vec<Arg<T>>,
         body: Expr,
         public: bool,
         return_annotation: Option<TypeAst>,
@@ -190,9 +190,9 @@ pub enum Statement<T, Expr, ConstantRecordTag> {
     TypeAlias {
         location: SrcSpan,
         alias: String,
-        args: Vec<String>,
-        resolved_type: TypeAst,
-        typ: T,
+        parameters: Vec<String>,
+        type_ast: TypeAst,
+        type_: T,
         public: bool,
         doc: Option<String>,
     },
@@ -211,9 +211,9 @@ pub enum Statement<T, Expr, ConstantRecordTag> {
     ExternalFn {
         location: SrcSpan,
         public: bool,
-        args: Vec<ExternalFnArg<T>>,
+        arguments: Vec<ExternalFnArg<T>>,
         name: String,
-        retrn: TypeAst,
+        return_: TypeAst,
         return_type: T,
         module: String,
         fun: String,
@@ -224,7 +224,7 @@ pub enum Statement<T, Expr, ConstantRecordTag> {
         location: SrcSpan,
         public: bool,
         name: String,
-        args: Vec<String>,
+        arguments: Vec<String>,
         doc: Option<String>,
     },
 
@@ -242,7 +242,7 @@ pub enum Statement<T, Expr, ConstantRecordTag> {
         name: String,
         annotation: Option<TypeAst>,
         value: Box<Constant<T, ConstantRecordTag>>,
-        typ: T,
+        type_: T,
     },
 }
 
@@ -286,7 +286,7 @@ pub struct ExternalFnArg<T> {
     pub location: SrcSpan,
     pub label: Option<String>,
     pub annotation: TypeAst,
-    pub typ: T,
+    pub type_: T,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -511,14 +511,14 @@ pub enum ClauseGuard<Type, RecordTag> {
 
     Var {
         location: SrcSpan,
-        typ: Type,
+        type_: Type,
         name: String,
     },
 
     TupleIndex {
         location: SrcSpan,
         index: u64,
-        typ: Type,
+        type_: Type,
         tuple: Box<Self>,
     },
 
@@ -548,11 +548,11 @@ impl<A, B> ClauseGuard<A, B> {
 }
 
 impl TypedClauseGuard {
-    pub fn typ(&self) -> Arc<Type> {
+    pub fn type_(&self) -> Arc<Type> {
         match self {
-            ClauseGuard::Var { typ, .. } => typ.clone(),
-            ClauseGuard::TupleIndex { typ, .. } => typ.clone(),
-            ClauseGuard::Constant(constant) => constant.typ(),
+            ClauseGuard::Var { type_, .. } => type_.clone(),
+            ClauseGuard::TupleIndex { type_, .. } => type_.clone(),
+            ClauseGuard::Constant(constant) => constant.type_(),
 
             ClauseGuard::Or { .. }
             | ClauseGuard::And { .. }
@@ -604,7 +604,7 @@ pub enum Pattern<Constructor, Type> {
     VarUsage {
         location: SrcSpan,
         name: String,
-        typ: Type,
+        type_: Type,
     },
 
     Let {
@@ -631,7 +631,7 @@ pub enum Pattern<Constructor, Type> {
     Constructor {
         location: SrcSpan,
         name: String,
-        args: Vec<CallArg<Self>>,
+        arguments: Vec<CallArg<Self>>,
         module: Option<String>,
         constructor: Constructor,
         with_spread: bool,
@@ -711,7 +711,7 @@ pub struct BitStringSegment<Value, Type> {
     pub location: SrcSpan,
     pub value: Box<Value>,
     pub options: Vec<BitStringSegmentOption<Value>>,
-    pub typ: Type,
+    pub type_: Type,
 }
 
 pub type TypedConstantBitStringSegmentOption = BitStringSegmentOption<TypedConstant>;
@@ -722,7 +722,7 @@ pub enum BitStringSegmentOption<Value> {
         location: SrcSpan,
     },
 
-    Integer {
+    Int {
         location: SrcSpan,
     },
 
@@ -734,27 +734,27 @@ pub enum BitStringSegmentOption<Value> {
         location: SrcSpan,
     },
 
-    UTF8 {
+    Utf8 {
         location: SrcSpan,
     },
 
-    UTF16 {
+    Utf16 {
         location: SrcSpan,
     },
 
-    UTF32 {
+    Utf32 {
         location: SrcSpan,
     },
 
-    UTF8Codepoint {
+    Utf8Codepoint {
         location: SrcSpan,
     },
 
-    UTF16Codepoint {
+    Utf16Codepoint {
         location: SrcSpan,
     },
 
-    UTF32Codepoint {
+    Utf32Codepoint {
         location: SrcSpan,
     },
 
@@ -786,7 +786,7 @@ pub enum BitStringSegmentOption<Value> {
 
     Unit {
         location: SrcSpan,
-        value: Box<usize>,
+        value: u8,
     },
 }
 
@@ -794,15 +794,15 @@ impl<A> BitStringSegmentOption<A> {
     pub fn location(&self) -> SrcSpan {
         match self {
             BitStringSegmentOption::Binary { location }
-            | BitStringSegmentOption::Integer { location }
+            | BitStringSegmentOption::Int { location }
             | BitStringSegmentOption::Float { location }
             | BitStringSegmentOption::BitString { location }
-            | BitStringSegmentOption::UTF8 { location }
-            | BitStringSegmentOption::UTF16 { location }
-            | BitStringSegmentOption::UTF32 { location }
-            | BitStringSegmentOption::UTF8Codepoint { location }
-            | BitStringSegmentOption::UTF16Codepoint { location }
-            | BitStringSegmentOption::UTF32Codepoint { location }
+            | BitStringSegmentOption::Utf8 { location }
+            | BitStringSegmentOption::Utf16 { location }
+            | BitStringSegmentOption::Utf32 { location }
+            | BitStringSegmentOption::Utf8Codepoint { location }
+            | BitStringSegmentOption::Utf16Codepoint { location }
+            | BitStringSegmentOption::Utf32Codepoint { location }
             | BitStringSegmentOption::Signed { location }
             | BitStringSegmentOption::Unsigned { location }
             | BitStringSegmentOption::Big { location }
@@ -816,15 +816,15 @@ impl<A> BitStringSegmentOption<A> {
     pub fn label(&self) -> String {
         match self {
             BitStringSegmentOption::Binary { .. } => "binary".to_string(),
-            BitStringSegmentOption::Integer { .. } => "int".to_string(),
+            BitStringSegmentOption::Int { .. } => "int".to_string(),
             BitStringSegmentOption::Float { .. } => "float".to_string(),
             BitStringSegmentOption::BitString { .. } => "bit_string".to_string(),
-            BitStringSegmentOption::UTF8 { .. } => "utf8".to_string(),
-            BitStringSegmentOption::UTF16 { .. } => "utf16".to_string(),
-            BitStringSegmentOption::UTF32 { .. } => "utf32".to_string(),
-            BitStringSegmentOption::UTF8Codepoint { .. } => "utf8_codepoint".to_string(),
-            BitStringSegmentOption::UTF16Codepoint { .. } => "utf16_codepoint".to_string(),
-            BitStringSegmentOption::UTF32Codepoint { .. } => "utf32_codepoint".to_string(),
+            BitStringSegmentOption::Utf8 { .. } => "utf8".to_string(),
+            BitStringSegmentOption::Utf16 { .. } => "utf16".to_string(),
+            BitStringSegmentOption::Utf32 { .. } => "utf32".to_string(),
+            BitStringSegmentOption::Utf8Codepoint { .. } => "utf8_codepoint".to_string(),
+            BitStringSegmentOption::Utf16Codepoint { .. } => "utf16_codepoint".to_string(),
+            BitStringSegmentOption::Utf32Codepoint { .. } => "utf32_codepoint".to_string(),
             BitStringSegmentOption::Signed { .. } => "signed".to_string(),
             BitStringSegmentOption::Unsigned { .. } => "unsigned".to_string(),
             BitStringSegmentOption::Big { .. } => "big".to_string(),
