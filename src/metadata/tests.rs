@@ -1,14 +1,18 @@
-use clap::value_t;
+use type_::{AccessorsMap, FieldMap, RecordAccessor};
 
 use super::*;
 use crate::{
+    ast::{
+        BitStringSegment, BitStringSegmentOption, CallArg, Constant, TypedConstant,
+        TypedConstantBitStringSegmentOption,
+    },
     fs::test::InMemoryFile,
-    typ::{self, TypeVar},
+    type_::{self, Module, Type, TypeConstructor, ValueConstructor, ValueConstructorVariant},
 };
-use std::{io::BufReader, iter::FromIterator};
+use std::{collections::HashMap, io::BufReader, sync::Arc};
 
 fn roundtrip(input: &Module) -> Module {
-    let mut buffer = InMemoryFile::new();
+    let buffer = InMemoryFile::new();
     ModuleEncoder::new(input).write(buffer.clone()).unwrap();
     let buffer = buffer.into_contents().unwrap();
     ModuleDecoder::new()
@@ -26,7 +30,7 @@ fn constant_module(constant: TypedConstant) -> Module {
             ValueConstructor {
                 public: true,
                 origin: Default::default(),
-                type_: typ::int(),
+                type_: type_::int(),
                 variant: ValueConstructorVariant::ModuleConstant { literal: constant },
             },
         )]
@@ -45,7 +49,7 @@ fn bit_string_segment_option_module(option: TypedConstantBitStringSegmentOption)
                 value: "1".to_string(),
             }),
             options: vec![option],
-            type_: typ::int(),
+            type_: type_::int(),
         }],
     })
 }
@@ -68,7 +72,7 @@ fn module_with_app_type() {
         types: vec![(
             "ListIntType".to_string(),
             TypeConstructor {
-                typ: typ::list(typ::int()),
+                typ: type_::list(type_::int()),
                 public: true,
                 origin: Default::default(),
                 module: vec!["the".to_string(), "module".to_string()],
@@ -90,7 +94,7 @@ fn module_with_fn_type() {
         types: vec![(
             "FnType".to_string(),
             TypeConstructor {
-                typ: typ::fn_(vec![typ::nil(), typ::float()], typ::int()),
+                typ: type_::fn_(vec![type_::nil(), type_::float()], type_::int()),
                 public: true,
                 origin: Default::default(),
                 module: vec!["the".to_string(), "module".to_string()],
@@ -112,7 +116,7 @@ fn module_with_tuple_type() {
         types: vec![(
             "TupleType".to_string(),
             TypeConstructor {
-                typ: typ::tuple(vec![typ::nil(), typ::float(), typ::int()]),
+                typ: type_::tuple(vec![type_::nil(), type_::float(), type_::int()]),
                 public: true,
                 origin: Default::default(),
                 module: vec!["the".to_string(), "module".to_string()],
@@ -129,10 +133,10 @@ fn module_with_tuple_type() {
 
 #[test]
 fn module_with_generic_type() {
-    let t0 = typ::generic_var(0);
-    let t1 = typ::generic_var(1);
-    let t7 = typ::generic_var(7);
-    let t8 = typ::generic_var(8);
+    let t0 = type_::generic_var(0);
+    let t1 = type_::generic_var(1);
+    let t7 = type_::generic_var(7);
+    let t8 = type_::generic_var(8);
 
     fn make(t1: Arc<Type>, t2: Arc<Type>) -> Module {
         Module {
@@ -140,7 +144,7 @@ fn module_with_generic_type() {
             types: vec![(
                 "TupleType".to_string(),
                 TypeConstructor {
-                    typ: typ::tuple(vec![t1.clone(), t1.clone(), t2.clone()]),
+                    typ: type_::tuple(vec![t1.clone(), t1.clone(), t2.clone()]),
                     public: true,
                     origin: Default::default(),
                     module: vec!["the".to_string(), "module".to_string()],
@@ -159,8 +163,8 @@ fn module_with_generic_type() {
 
 #[test]
 fn module_with_type_links() {
-    let linked_type = typ::link(typ::int());
-    let type_ = typ::int();
+    let linked_type = type_::link(type_::int());
+    let type_ = type_::int();
 
     fn make(type_: Arc<Type>) -> Module {
         Module {
@@ -196,7 +200,7 @@ fn module_fn_value() {
             ValueConstructor {
                 public: true,
                 origin: Default::default(),
-                type_: typ::int(),
+                type_: type_::int(),
                 variant: ValueConstructorVariant::ModuleFn {
                     name: "one".to_string(),
                     field_map: None,
@@ -223,7 +227,7 @@ fn module_fn_value_with_field_map() {
             ValueConstructor {
                 public: true,
                 origin: Default::default(),
-                type_: typ::int(),
+                type_: type_::int(),
                 variant: ValueConstructorVariant::ModuleFn {
                     name: "one".to_string(),
                     field_map: Some(FieldMap {
@@ -255,7 +259,7 @@ fn record_value() {
             ValueConstructor {
                 public: true,
                 origin: Default::default(),
-                type_: typ::int(),
+                type_: type_::int(),
                 variant: ValueConstructorVariant::Record {
                     name: "one".to_string(),
                     field_map: None,
@@ -281,7 +285,7 @@ fn record_value_with_field_map() {
             ValueConstructor {
                 public: true,
                 origin: Default::default(),
-                type_: typ::int(),
+                type_: type_::int(),
                 variant: ValueConstructorVariant::Record {
                     name: "one".to_string(),
                     field_map: Some(FieldMap {
@@ -312,14 +316,14 @@ fn accessors() {
                 "one".to_string(),
                 AccessorsMap {
                     public: true,
-                    type_: typ::int(),
+                    type_: type_::int(),
                     accessors: vec![
                         (
                             "a".to_string(),
                             RecordAccessor {
                                 index: 6,
                                 label: "siiixxx".to_string(),
-                                type_: typ::nil(),
+                                type_: type_::nil(),
                             },
                         ),
                         (
@@ -327,7 +331,7 @@ fn accessors() {
                             RecordAccessor {
                                 index: 5,
                                 label: "fiveee".to_string(),
-                                type_: typ::float(),
+                                type_: type_::float(),
                             },
                         ),
                     ]
@@ -339,13 +343,13 @@ fn accessors() {
                 "two".to_string(),
                 AccessorsMap {
                     public: true,
-                    type_: typ::int(),
+                    type_: type_::int(),
                     accessors: vec![(
                         "a".to_string(),
                         RecordAccessor {
                             index: 1,
                             label: "ok".to_string(),
-                            type_: typ::float(),
+                            type_: type_::float(),
                         },
                     )]
                     .into_iter()
@@ -426,7 +430,7 @@ fn constant_tuple() {
 fn constant_list() {
     let module = constant_module(Constant::List {
         location: Default::default(),
-        typ: typ::int(),
+        typ: type_::int(),
         elements: vec![
             Constant::Int {
                 location: Default::default(),
@@ -471,7 +475,7 @@ fn constant_record() {
             },
         ],
         tag: "thetag".to_string(),
-        typ: typ::int(),
+        typ: type_::int(),
     });
 
     assert_eq!(roundtrip(&module), module);
@@ -537,16 +541,98 @@ fn constant_bit_string_size_short_form() {
     assert_eq!(roundtrip(&module), module);
 }
 
-// Which::Bitstring(reader) => todo!(),
-// Which::Utf8(reader) => todo!(),
-// Which::Utf16(reader) => todo!(),
-// Which::Utf32(reader) => todo!(),
-// Which::Utf8Codepoint(reader) => todo!(),
-// Which::Utf16Codepoint(reader) => todo!(),
-// Which::Utf32Codepoint(reader) => todo!(),
-// Which::Signed(reader) => todo!(),
-// Which::Unsigned(reader) => todo!(),
-// Which::Big(reader) => todo!(),
-// Which::Little(reader) => todo!(),
-// Which::Native(reader) => todo!(),
-// Which::Unit(reader) => todo!(),
+#[test]
+fn constant_bit_string_bit_string() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::BitString {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_utf8() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Utf8 {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_utf16() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Utf16 {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_utf32() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Utf32 {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_utf8codepoint() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Utf8Codepoint {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_utf16codepoint() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Utf16Codepoint {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_utf32codepoint() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Utf32Codepoint {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_signed() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Signed {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_unsigned() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Unsigned {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_big() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Big {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_little() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Little {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn constant_bit_string_native() {
+    let module = bit_string_segment_option_module(BitStringSegmentOption::Native {
+        location: Default::default(),
+    });
+    assert_eq!(roundtrip(&module), module);
+}
