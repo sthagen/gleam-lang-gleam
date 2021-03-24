@@ -5,8 +5,17 @@
 - Gleam can now compile Gleam projects without an external build tool.
 - Gleam can now run eunit without an external build tool.
 - Gleam can now run an Erlang shell without an external build tool.
+- New project's `gleam.toml` has a comment that shows how to add a
+  `repository` field.
+- New projects no longer include a licence field in `src/$APP.app.src` by
+  default.
+
+## v0.14.3 - 2021-03-20
+
 - Added an error hint when joining string using the `+` or `+.` operator.
 - New projects are created with `setup-erlang` v1.1.2 and Erlang/OTP v23.2.
+- Fixed a bug where the compiler would be unable to locate an imported module
+  if a value from a nested module is used in a qualified fashion.
 
 ## v0.14.2 - 2021-03-02
 

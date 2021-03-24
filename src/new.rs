@@ -237,7 +237,6 @@ pub fn stop(_state: Dynamic) {
   {{modules, []}},
 
   {{include_files, ["gleam.toml", "gen"]}},
-  {{licenses, ["Apache 2.0"]}},
   {{links, []}}
 ]}}.
 "#,
@@ -401,14 +400,11 @@ jobs:
         write(
             self.root.join("gleam.toml"),
             &format!(
-                r#"name = "{}"
+                r#"name = "{name}"
 
-# [docs]
-# links = [
-#   {{ title = 'GitHub', href = 'https://github.com/username/project_name' }}
-# ]
+# repository = {{ type = "github", user = "my-user", repo = "{name}" }}
 "#,
-                self.options.name,
+                name = self.options.name,
             ),
         )
     }
