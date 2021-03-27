@@ -126,6 +126,10 @@ jobs:
         sed -i 's/cargo run --/gleam/' */rebar.config */Makefile
       working-directory: ./test
 
+    - name: test/build_with_gleam
+      run: gleam eunit
+      working-directory: ./test/build_with_gleam
+
     - name: test/core_language
       run: rebar3 eunit
       working-directory: ./test/core_language
@@ -137,6 +141,10 @@ jobs:
     - name: test/compile_package1
       run: make
       working-directory: ./test/compile_package1
+
+    - name: test/build0
+      run: gleam eunit
+      working-directory: ./test/build0
 
     - name: Test app template
       run: |
@@ -157,3 +165,9 @@ jobs:
         rebar3 eunit
         rebar3 escriptize
         _build/default/bin/escript_project
+
+    - name: Test gleam-lib template
+      run: |
+        gleam new gleam_lib_project --template=gleam-lib
+        cd gleam_lib_project
+        gleam eunit
