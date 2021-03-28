@@ -6,6 +6,10 @@
 - Gleam can now run eunit without an external build tool.
 - Gleam can now run an Erlang shell without an external build tool.
 - Projects without rebar3 can be generated using the `gleam-lib` template.
+
+## v0.14.4 - 2021-03-27
+
+- The Gleam compiler has been updated to compile with the new Rust v1.51.0.
 - New project's `gleam.toml` has a comment that shows how to add a
   `repository` field.
 - New projects no longer include a licence field in `src/$APP.app.src` by
@@ -33,7 +37,7 @@
 
 ## v0.14.0 - 2021-02-18
 
-#### [Release Blog Post](https://gleam.run/news/gleam-v0.14-released/)
+[Release Blog Post](https://gleam.run/news/gleam-v0.14-released/)
 
 ## v0.14.0-rc2 - 2021-02-18
 
@@ -76,7 +80,7 @@
 
 ## v0.13.0 - 2021-01-13
 
-#### [Release Blog Post](https://gleam.run/news/gleam-v0.13-released/)
+[Release Blog Post](https://gleam.run/news/gleam-v0.13-released/)
 
 - New Gleam projects use stdlib v0.13.0.
 
@@ -121,7 +125,7 @@
 
 ## v0.12.0 - 2020-10-31
 
-#### [Release Blog Post](https://gleam.run/news/gleam-v0.12-and-gleam-otp-v0.1-released/)
+[Release Blog Post](https://gleam.run/news/gleam-v0.12-and-gleam-otp-v0.1-released/)
 
 ## v0.12.0-rc4 - 2020-10-31
 
@@ -173,7 +177,7 @@
 
 ## v0.11.0 - 2020-08-28
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.11-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.11-released/)
 
 ## v0.11.0-rc3 - 2020-08-27
 
@@ -237,7 +241,7 @@
 
 # v0.10.0 - 2020-07-01
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.10-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.10-released/)
 
 - Newly generated projects use stdlib v0.10.1.
 - Fixed a bug where discards inside bit string patterns generated invalid
@@ -272,7 +276,7 @@
 
 ## v0.9.0 - 2020-06-01
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.9-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.9-released/)
 
 - Newly generated projects use stdlib v0.9.0.
 - Additional information is printed to the console when generating HTML
@@ -308,7 +312,7 @@
 
 ## v0.8.0 - 2020-05-07
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.8-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.8-released/)
 
 - The `docs build`, `docs publish`, and `docs remove` commands can be used to
   compile HTML documentation locally, publish them to HexDocs, and remove them
@@ -366,7 +370,7 @@
 
 ## v0.7.0 - 2020-03-01
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.7-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.7-released/)
 
 ## v0.7.0-rc1 - 2020-02-28
 
@@ -411,7 +415,7 @@
 
 ## v0.6.0 - 2019-12-25 🎄
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.6-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.6-released/)
 
 - Function capture syntax now supports labelled arguments.
 
@@ -433,7 +437,7 @@
 
 ## v0.5.0 - 2019-12-16
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.5-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.5-released/)
 
 - Enum constructor arguments can now be labelled, allowing arguments to be
   given by name at the call site.
@@ -490,7 +494,7 @@
 
 ## v0.4.0 - 2019-09-19
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.4-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.4-released/)
 
 - The struct data type has be introduced. Structs are pre-declared user
   defined data types with named fields and constant access time.
@@ -510,7 +514,7 @@
 
 ## v0.3.0 - 2019-08-08
 
-#### [Release Blog Post](https://lpil.uk/blog/gleam-v0.3-released/)
+[Release Blog Post](https://lpil.uk/blog/gleam-v0.3-released/)
 
 - New project structure can be generated with the `gleam new` command.
 - Functions can be annotated with their argument and return types. This may be
@@ -564,6 +568,6 @@
 
 ## v0.1.0 - 2019-04-15
 
-#### [Release Blog Post](https://lpil.uk/blog/hello-gleam/)
+[Release Blog Post](https://lpil.uk/blog/hello-gleam/)
 
 - Initial release!
