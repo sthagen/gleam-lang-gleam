@@ -3,13 +3,13 @@ use super::*;
 #[test]
 fn record_definition_test() {
     assert_eq!(
-        record_definition("PetCat", &[&"name", &"is_cute",]),
+        record_definition("PetCat", &["name", "is_cute",]),
         "-record(pet_cat, {name, is_cute}).\n".to_string()
     );
 
     // Reserved words are escaped in record names and fields
     assert_eq!(
-        record_definition("div", &[&"receive", &"catch", &"unreserved"]),
+        record_definition("div", &["receive", "catch", "unreserved"]),
         "-record(\'div\', {\'receive\', \'catch\', unreserved}).\n".to_string()
     );
 }
@@ -2622,4 +2622,34 @@ go() ->
     );
 
     // TODO: patterns that are just vars don't render a case expression
+}
+
+// https://github.com/gleam-lang/gleam/issues/1006
+#[test]
+fn keyword_constructors() {
+    assert_erl!(
+        "pub type X { Div }",
+        "-module(the_app).
+-compile(no_auto_import).
+
+-export_type([x/0]).
+
+-type x() :: 'div'.
+
+
+"
+    );
+
+    assert_erl!(
+        "pub type X { Fun(Int) }",
+        "-module(the_app).
+-compile(no_auto_import).
+
+-export_type([x/0]).
+
+-type x() :: {'fun', integer()}.
+
+
+"
+    );
 }

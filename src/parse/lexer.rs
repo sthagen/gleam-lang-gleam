@@ -37,7 +37,7 @@ pub fn str_to_keyword(word: &str) -> Option<Tok> {
     }
 }
 
-pub fn make_tokenizer<'a>(source: &'a str) -> impl Iterator<Item = LexResult> + 'a {
+pub fn make_tokenizer(source: &str) -> impl Iterator<Item = LexResult> + '_ {
     let nlh = NewlineHandler::new(source.char_indices());
     Lexer::new(nlh)
 }
@@ -416,6 +416,9 @@ where
                     self.emit((tok_start, Tok::Dot, tok_end));
                 }
             }
+            '#' => {
+                self.eat_single_char(Tok::Hash);
+            }
             '\n' => {
                 let _ = self.next_char();
                 let tok_start = self.get_pos();
@@ -471,7 +474,7 @@ where
             let end_pos = self.get_pos();
             if name.starts_with('_') {
                 return Err(LexicalError {
-                    error: LexicalErrorType::BadDiscardName { name: name },
+                    error: LexicalErrorType::BadDiscardName { name },
                     location: SrcSpan {
                         start: start_pos,
                         end: end_pos,
@@ -479,7 +482,7 @@ where
                 });
             } else {
                 return Err(LexicalError {
-                    error: LexicalErrorType::BadName { name: name },
+                    error: LexicalErrorType::BadName { name },
                     location: SrcSpan {
                         start: start_pos,
                         end: end_pos,
@@ -514,7 +517,7 @@ where
             }
             let end_pos = self.get_pos();
             return Err(LexicalError {
-                error: LexicalErrorType::BadUpname { name: name },
+                error: LexicalErrorType::BadUpname { name },
                 location: SrcSpan {
                     start: start_pos,
                     end: end_pos,
@@ -800,7 +803,7 @@ where
             None => {
                 // EOF needs a single advance
                 self.loc0 = self.loc1;
-                self.loc1 = self.loc1 + 1;
+                self.loc1 += 1;
                 None
             }
         };
