@@ -15,6 +15,7 @@ use termcolor::Buffer;
 pub type Src = String;
 pub type Name = String;
 
+#[cfg(not(test))]
 pub fn fatal_compiler_bug(msg: &str) -> ! {
     let buffer_writer = cli::stderr_buffer_writer();
     let mut buffer = buffer_writer.buffer();
@@ -40,6 +41,11 @@ with this information and the code that produces the crash:
     .unwrap();
     buffer_writer.print(&buffer).unwrap();
     std::process::exit(1);
+}
+
+#[cfg(test)]
+pub fn fatal_compiler_bug(msg: &str) -> ! {
+    panic!("{}", msg)
 }
 
 pub trait GleamExpect<T> {
@@ -188,6 +194,7 @@ pub enum InvalidProjectNameReason {
     ErlangReservedWord,
     ErlangStandardLibraryModule,
     GleamReservedWord,
+    GleamReservedModule,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -307,6 +314,8 @@ Please try again with a different project name.",
                                 "is a standard library module in Erlang.",
                             InvalidProjectNameReason::GleamReservedWord =>
                                 "is a reserved word in Gleam.",
+                            InvalidProjectNameReason::GleamReservedModule =>
+                                "is a reserved module name in Gleam.",
                             InvalidProjectNameReason::Format =>
                                 "does not have the correct format. Project names must start
 with a lowercase letter and may only contain lowercase letters,

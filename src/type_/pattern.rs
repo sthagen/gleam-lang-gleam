@@ -233,7 +233,7 @@ impl<'a, 'b, 'c> PatternTyper<'a, 'b, 'c> {
                 })
             }
 
-            Pattern::Let {
+            Pattern::Assign {
                 name,
                 pattern,
                 location,
@@ -241,7 +241,7 @@ impl<'a, 'b, 'c> PatternTyper<'a, 'b, 'c> {
                 self.insert_variable(&name, typ.clone(), location)
                     .map_err(|e| convert_unify_error(e, pattern.location()))?;
                 let pattern = self.unify(*pattern, typ)?;
-                Ok(Pattern::Let {
+                Ok(Pattern::Assign {
                     name,
                     pattern: Box::new(pattern),
                     location,
@@ -269,15 +269,15 @@ impl<'a, 'b, 'c> PatternTyper<'a, 'b, 'c> {
                 Ok(Pattern::String { location, value })
             }
 
-            Pattern::Nil { location } => {
+            Pattern::EmptyList { location } => {
                 let typ2 = list(self.environment.new_unbound_var(self.level));
                 self.environment
                     .unify(typ, typ2)
                     .map_err(|e| convert_unify_error(e, location))?;
-                Ok(Pattern::Nil { location })
+                Ok(Pattern::EmptyList { location })
             }
 
-            Pattern::Cons {
+            Pattern::ListCons {
                 location,
                 head,
                 tail,
@@ -286,7 +286,7 @@ impl<'a, 'b, 'c> PatternTyper<'a, 'b, 'c> {
                     let head = Box::new(self.unify(*head, args[0].clone())?);
                     let tail = Box::new(self.unify(*tail, typ)?);
 
-                    Ok(Pattern::Cons {
+                    Ok(Pattern::ListCons {
                         location,
                         head,
                         tail,

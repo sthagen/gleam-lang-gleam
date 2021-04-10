@@ -54,8 +54,8 @@ pub mod extra;
 pub mod lexer;
 mod token;
 use crate::ast::{
-    Arg, ArgNames, BinOp, BindingKind, BitStringSegment, BitStringSegmentOption, CallArg, Clause,
-    ClauseGuard, Constant, ExternalFnArg, HasLocation, Module, Pattern, RecordConstructor,
+    Arg, ArgNames, AssignmentKind, BinOp, BitStringSegment, BitStringSegmentOption, CallArg,
+    Clause, ClauseGuard, Constant, ExternalFnArg, HasLocation, Module, Pattern, RecordConstructor,
     RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement, TypeAst, UnqualifiedImport,
     UntypedArg, UntypedClause, UntypedClauseGuard, UntypedConstant, UntypedExpr,
     UntypedExternalFnArg, UntypedModule, UntypedPattern, UntypedRecordUpdateArg, UntypedStatement,
@@ -612,7 +612,7 @@ where
             let then = self.parse_expression_seq()?;
             match (value, then) {
                 (Some(value), Some((then, seq_end))) => Ok(Some((
-                    UntypedExpr::Let {
+                    UntypedExpr::Assignment {
                         location: SrcSpan {
                             start,
                             end: value.location().end,
@@ -656,19 +656,19 @@ where
     }
 
     // let, assert, or try
-    fn maybe_binding_start(&mut self) -> Option<(usize, BindingKind)> {
+    fn maybe_binding_start(&mut self) -> Option<(usize, AssignmentKind)> {
         match self.tok0 {
             Some((start, Tok::Let, _)) => {
                 let _ = self.next_tok();
-                Some((start, BindingKind::Let))
+                Some((start, AssignmentKind::Let))
             }
             Some((start, Tok::Assert, _)) => {
                 let _ = self.next_tok();
-                Some((start, BindingKind::Assert))
+                Some((start, AssignmentKind::Assert))
             }
             Some((start, Tok::Try, _)) => {
                 let _ = self.next_tok();
-                Some((start, BindingKind::Try))
+                Some((start, AssignmentKind::Try))
             }
             _ => None,
         }
@@ -724,11 +724,11 @@ where
             }
             Some((start, Tok::ListNil, end)) => {
                 let _ = self.next_tok();
-                Pattern::Nil {
+                Pattern::EmptyList {
                     location: SrcSpan { start, end },
                 }
             }
-            Some((start, Tok::Tuple, _)) => {
+            Some((start, Tok::Tuple, _)) | Some((start, Tok::Hash, _)) => {
                 let _ = self.next_tok();
                 let _ = self.expect_one(&Tok::Lpar)?;
                 let elems = Parser::series_of(self, &Parser::parse_pattern, Some(&Tok::Comma))?;
@@ -793,7 +793,7 @@ where
                         name: "_".to_string(),
                     },
                     // No tail specified
-                    None => Pattern::Nil {
+                    None => Pattern::EmptyList {
                         location: SrcSpan {
                             start: rsqb_e - 1,
                             end: rsqb_e,
@@ -804,7 +804,7 @@ where
                 elems
                     .into_iter()
                     .rev()
-                    .fold(tail_pattern, |a, e| Pattern::Cons {
+                    .fold(tail_pattern, |a, e| Pattern::ListCons {
                         location: e.location(),
                         head: Box::new(e),
                         tail: Box::new(a),
@@ -822,7 +822,7 @@ where
         if let Some((_, Tok::As, _)) = self.tok0 {
             let _ = self.next_tok();
             let (start, name, end) = self.expect_name()?;
-            Ok(Some(Pattern::Let {
+            Ok(Some(Pattern::Assign {
                 name,
                 location: SrcSpan { start, end },
                 pattern: Box::new(pattern),
@@ -1575,7 +1575,7 @@ where
             }
 
             // Tuple
-            Some((start, Tok::Tuple, end)) => {
+            Some((start, Tok::Tuple, end)) | Some((start, Tok::Hash, end)) => {
                 let _ = self.next_tok();
                 let _ = self.expect_one(&Tok::Lpar)?;
                 let elems = self.parse_types(for_const)?;
@@ -1853,7 +1853,7 @@ where
                 }))
             }
 
-            Some((start, Tok::Tuple, _)) => {
+            Some((start, Tok::Tuple, _)) | Some((start, Tok::Hash, _)) => {
                 let _ = self.next_tok();
                 let _ = self.expect_one(&Tok::Lpar)?;
                 let elements =

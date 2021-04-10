@@ -292,7 +292,7 @@ impl<'comments> Formatter<'comments> {
                 list(concat(elements), None)
             }
 
-            Constant::Tuple { elements, .. } => "tuple"
+            Constant::Tuple { elements, .. } => "#"
                 .to_doc()
                 .append(wrap_args(elements.iter().map(|e| self.const_expr(e))))
                 .group(),
@@ -419,7 +419,7 @@ impl<'comments> Formatter<'comments> {
 
             TypeAst::Var { name, .. } => name.to_doc(),
 
-            TypeAst::Tuple { elems, .. } => "tuple".to_doc().append(self.type_arguments(elems)),
+            TypeAst::Tuple { elems, .. } => "#".to_doc().append(self.type_arguments(elems)),
         }
         .group()
     }
@@ -561,15 +561,15 @@ impl<'comments> Formatter<'comments> {
         pattern: &'a UntypedPattern,
         value: &'a UntypedExpr,
         then: &'a UntypedExpr,
-        kind: BindingKind,
+        kind: AssignmentKind,
         annotation: &'a Option<TypeAst>,
     ) -> Document<'a> {
         let _ = self.pop_empty_lines(pattern.location().end);
 
         let keyword = match kind {
-            BindingKind::Let => "let ",
-            BindingKind::Try => "try ",
-            BindingKind::Assert => "assert ",
+            AssignmentKind::Let => "let ",
+            AssignmentKind::Try => "try ",
+            AssignmentKind::Assert => "assert ",
         };
 
         let pattern = self.pattern(pattern);
@@ -647,7 +647,7 @@ impl<'comments> Formatter<'comments> {
                 name, left, right, ..
             } => self.bin_op(name, left, right),
 
-            UntypedExpr::Let {
+            UntypedExpr::Assignment {
                 value,
                 pattern,
                 annotation,
@@ -664,7 +664,7 @@ impl<'comments> Formatter<'comments> {
                 label, container, ..
             } => self.expr(container).append(".").append(label.as_str()),
 
-            UntypedExpr::Tuple { elems, .. } => "tuple"
+            UntypedExpr::Tuple { elems, .. } => "#"
                 .to_doc()
                 .append(wrap_args(elems.iter().map(|e| self.wrap_expr(e))))
                 .group(),
@@ -694,7 +694,9 @@ impl<'comments> Formatter<'comments> {
     ) -> Document<'a> {
         fn is_breakable(expr: &UntypedPattern) -> bool {
             match expr {
-                Pattern::Tuple { .. } | Pattern::Cons { .. } | Pattern::BitString { .. } => true,
+                Pattern::Tuple { .. } | Pattern::ListCons { .. } | Pattern::BitString { .. } => {
+                    true
+                }
                 Pattern::Constructor {
                     arguments: args, ..
                 } => !args.is_empty(),
@@ -736,7 +738,7 @@ impl<'comments> Formatter<'comments> {
                 expr,
                 UntypedExpr::Fn { .. }
                     | UntypedExpr::Seq { .. }
-                    | UntypedExpr::Let { .. }
+                    | UntypedExpr::Assignment { .. }
                     | UntypedExpr::Call { .. }
                     | UntypedExpr::Case { .. }
                     | UntypedExpr::Tuple { .. }
@@ -1048,7 +1050,7 @@ impl<'comments> Formatter<'comments> {
 
     fn wrap_expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
         match expr {
-            UntypedExpr::Seq { .. } | UntypedExpr::Let { .. } => "{"
+            UntypedExpr::Seq { .. } | UntypedExpr::Assignment { .. } => "{"
                 .to_doc()
                 .append(force_break())
                 .append(line().append(self.expr(expr)).nest(INDENT))
@@ -1088,7 +1090,7 @@ impl<'comments> Formatter<'comments> {
 
     fn case_clause_value<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
         match expr {
-            UntypedExpr::Seq { .. } | UntypedExpr::Let { .. } => " {"
+            UntypedExpr::Seq { .. } | UntypedExpr::Assignment { .. } => " {"
                 .to_doc()
                 .append(line().append(self.expr(expr)).nest(INDENT).group())
                 .append(line())
@@ -1191,15 +1193,15 @@ impl<'comments> Formatter<'comments> {
 
             Pattern::VarUsage { name, .. } => name.to_doc(),
 
-            Pattern::Let { name, pattern, .. } => {
+            Pattern::Assign { name, pattern, .. } => {
                 self.pattern(pattern).append(" as ").append(name.as_str())
             }
 
             Pattern::Discard { name, .. } => name.to_doc(),
 
-            Pattern::Nil { .. } => "[]".to_doc(),
+            Pattern::EmptyList { .. } => "[]".to_doc(),
 
-            Pattern::Cons { head, tail, .. } => {
+            Pattern::ListCons { head, tail, .. } => {
                 let (elems, tail) =
                     list_cons(head.as_ref(), tail.as_ref(), categorise_list_pattern);
                 let elems = concat(Itertools::intersperse(
@@ -1218,7 +1220,7 @@ impl<'comments> Formatter<'comments> {
                 ..
             } => self.pattern_constructor(name, args, module, *with_spread),
 
-            Pattern::Tuple { elems, .. } => "tuple"
+            Pattern::Tuple { elems, .. } => "#"
                 .to_doc()
                 .append(wrap_args(elems.iter().map(|e| self.pattern(e))))
                 .group(),
@@ -1397,9 +1399,9 @@ fn categorise_list_expr(expr: &UntypedExpr) -> ListType<&UntypedExpr, &UntypedEx
 
 fn categorise_list_pattern(expr: &UntypedPattern) -> ListType<&UntypedPattern, &UntypedPattern> {
     match expr {
-        UntypedPattern::Nil { .. } => ListType::Nil,
+        UntypedPattern::EmptyList { .. } => ListType::Nil,
 
-        UntypedPattern::Cons { head, tail, .. } => ListType::Cons { head, tail },
+        UntypedPattern::ListCons { head, tail, .. } => ListType::Cons { head, tail },
 
         other => ListType::NotList(other),
     }

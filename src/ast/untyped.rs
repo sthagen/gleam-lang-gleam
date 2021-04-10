@@ -39,6 +39,7 @@ pub enum UntypedExpr {
         location: SrcSpan,
     },
 
+    // TODO: use a vector rather than a linked list here
     ListCons {
         location: SrcSpan,
         head: Box<Self>,
@@ -64,12 +65,12 @@ pub enum UntypedExpr {
         right: Box<Self>,
     },
 
-    Let {
+    Assignment {
         location: SrcSpan,
         value: Box<Self>,
         pattern: Pattern<(), ()>,
         then: Box<Self>,
-        kind: BindingKind,
+        kind: AssignmentKind,
         annotation: Option<TypeAst>,
     },
 
@@ -118,7 +119,7 @@ impl UntypedExpr {
     pub fn location(&self) -> SrcSpan {
         match self {
             Self::Seq { then, .. } => then.location(),
-            Self::Let { then, .. } => then.location(),
+            Self::Assignment { then, .. } => then.location(),
             Self::Pipe { right, .. } => right.location(),
             Self::Fn { location, .. }
             | Self::Var { location, .. }
@@ -143,7 +144,7 @@ impl UntypedExpr {
         match self {
             Self::Seq { first, .. } => first.start_byte_index(),
             Self::Pipe { left, .. } => left.start_byte_index(),
-            Self::Let { location, .. } => location.start,
+            Self::Assignment { location, .. } => location.start,
             _ => self.location().start,
         }
     }
