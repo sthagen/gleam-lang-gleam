@@ -633,9 +633,7 @@ impl<'comments> Formatter<'comments> {
                 ..
             } => self.expr_fn(args, return_annotation.as_ref(), body),
 
-            UntypedExpr::ListNil { .. } => "[]".to_doc(),
-
-            UntypedExpr::ListCons { head, tail, .. } => self.list_cons(head, tail),
+            UntypedExpr::List { elements, tail, .. } => self.list(elements, tail.as_ref()),
 
             UntypedExpr::Call {
                 fun,
@@ -694,9 +692,7 @@ impl<'comments> Formatter<'comments> {
     ) -> Document<'a> {
         fn is_breakable(expr: &UntypedPattern) -> bool {
             match expr {
-                Pattern::Tuple { .. } | Pattern::ListCons { .. } | Pattern::BitString { .. } => {
-                    true
-                }
+                Pattern::Tuple { .. } | Pattern::List { .. } | Pattern::BitString { .. } => true,
                 Pattern::Constructor {
                     arguments: args, ..
                 } => !args.is_empty(),
@@ -741,8 +737,8 @@ impl<'comments> Formatter<'comments> {
                     | UntypedExpr::Assignment { .. }
                     | UntypedExpr::Call { .. }
                     | UntypedExpr::Case { .. }
+                    | UntypedExpr::List { .. }
                     | UntypedExpr::Tuple { .. }
-                    | UntypedExpr::ListCons { .. }
                     | UntypedExpr::BitString { .. }
             )
         }
@@ -1098,8 +1094,8 @@ impl<'comments> Formatter<'comments> {
                 .append("}"),
 
             UntypedExpr::Fn { .. }
+            | UntypedExpr::List { .. }
             | UntypedExpr::Tuple { .. }
-            | UntypedExpr::ListCons { .. }
             | UntypedExpr::BitString { .. } => " ".to_doc().append(self.expr(expr)).group(),
 
             UntypedExpr::Case { .. } => line().append(self.expr(expr)).nest(INDENT).group(),
@@ -1164,20 +1160,23 @@ impl<'comments> Formatter<'comments> {
             })
     }
 
-    fn list_cons<'a>(&mut self, head: &'a UntypedExpr, tail: &'a UntypedExpr) -> Document<'a> {
-        let (elems, tail) = list_cons(head, tail, categorise_list_expr);
+    fn list<'a>(
+        &mut self,
+        elements: &'a [UntypedExpr],
+        tail: Option<&'a Box<UntypedExpr>>,
+    ) -> Document<'a> {
         let comma: fn() -> Document<'a> =
-            if tail.is_none() && elems.iter().all(|e| e.is_simple_constant()) {
+            if tail.is_none() && elements.iter().all(|e| e.is_simple_constant()) {
                 || break_(",", ", ").flex_break()
             } else {
                 || break_(",", ", ")
             };
-        let elems = concat(Itertools::intersperse(
-            elems.iter().map(|e| self.wrap_expr(e)),
+        let elements = concat(Itertools::intersperse(
+            elements.iter().map(|e| self.wrap_expr(e)),
             comma(),
         ));
         let tail = tail.map(|e| self.expr(e));
-        list(elems, tail)
+        list(elements, tail)
     }
 
     fn pattern<'a>(&mut self, pattern: &'a UntypedPattern) -> Document<'a> {
@@ -1199,17 +1198,13 @@ impl<'comments> Formatter<'comments> {
 
             Pattern::Discard { name, .. } => name.to_doc(),
 
-            Pattern::EmptyList { .. } => "[]".to_doc(),
-
-            Pattern::ListCons { head, tail, .. } => {
-                let (elems, tail) =
-                    list_cons(head.as_ref(), tail.as_ref(), categorise_list_pattern);
-                let elems = concat(Itertools::intersperse(
-                    elems.iter().map(|e| self.pattern(e)),
+            Pattern::List { elements, tail, .. } => {
+                let elements = concat(Itertools::intersperse(
+                    elements.iter().map(|e| self.pattern(e)),
                     break_(",", ", "),
                 ));
-                let tail = tail.map(|e| self.pattern(e));
-                list(elems, tail)
+                let tail = tail.as_ref().map(|e| self.pattern(e));
+                list(elements, tail)
             }
 
             Pattern::Constructor {
@@ -1387,26 +1382,6 @@ impl<'a> Documentable<'a> for &'a BinOp {
     }
 }
 
-fn categorise_list_expr(expr: &UntypedExpr) -> ListType<&UntypedExpr, &UntypedExpr> {
-    match expr {
-        UntypedExpr::ListNil { .. } => ListType::Nil,
-
-        UntypedExpr::ListCons { head, tail, .. } => ListType::Cons { head, tail },
-
-        other => ListType::NotList(other),
-    }
-}
-
-fn categorise_list_pattern(expr: &UntypedPattern) -> ListType<&UntypedPattern, &UntypedPattern> {
-    match expr {
-        UntypedPattern::EmptyList { .. } => ListType::Nil,
-
-        UntypedPattern::ListCons { head, tail, .. } => ListType::Cons { head, tail },
-
-        other => ListType::NotList(other),
-    }
-}
-
 pub fn wrap_args<'a, I>(args: I) -> Document<'a>
 where
     I: Iterator<Item = Document<'a>>,
@@ -1439,19 +1414,6 @@ where
         .append(break_(",", ""))
         .append(")")
         .group()
-}
-
-fn list_cons<Categorise, Elem>(
-    head: Elem,
-    tail: Elem,
-    categorise_element: Categorise,
-) -> (Vec<Elem>, Option<Elem>)
-where
-    Categorise: Fn(Elem) -> ListType<Elem, Elem>,
-{
-    let mut elems = vec![head];
-    let tail = collect_cons(tail, &mut elems, categorise_element);
-    (elems, tail)
 }
 
 fn bit_string<'a>(segments: impl Iterator<Item = Document<'a>>, is_simple: bool) -> Document<'a> {
@@ -1490,28 +1452,6 @@ fn list<'a>(elems: Document<'a>, tail: Option<Document<'a>>) -> Document<'a> {
     }
     .append("]")
     .group()
-}
-
-fn collect_cons<F, E, T>(e: T, elems: &mut Vec<E>, f: F) -> Option<T>
-where
-    F: Fn(T) -> ListType<E, T>,
-{
-    match f(e) {
-        ListType::Nil => None,
-
-        ListType::Cons { head, tail } => {
-            elems.push(head);
-            collect_cons(tail, elems, f)
-        }
-
-        ListType::NotList(other) => Some(other),
-    }
-}
-
-enum ListType<E, T> {
-    Nil,
-    Cons { head: E, tail: T },
-    NotList(T),
 }
 
 fn printed_comments<'a, 'comments>(

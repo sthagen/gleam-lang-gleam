@@ -86,7 +86,7 @@ impl<'a, D: Documentable<'a>> Documentable<'a> for Option<D> {
     fn to_doc(self) -> Document<'a> {
         match self {
             Some(d) => d.to_doc(),
-            None => Document::Nil,
+            None => nil(),
         }
     }
 }
@@ -97,9 +97,6 @@ pub fn concat<'a>(docs: impl Iterator<Item = Document<'a>>) -> Document<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Document<'a> {
-    /// Returns a document entity used to represent nothingness
-    Nil,
-
     /// A mandatory linebreak
     Line(usize),
 
@@ -110,7 +107,6 @@ pub enum Document<'a> {
     FlexBreak(Box<Self>),
 
     /// Renders `broken` if group is broken, `unbroken` otherwise
-    // TODO: str not string
     Break { broken: &'a str, unbroken: &'a str },
 
     /// Join multiple documents together
@@ -150,8 +146,6 @@ fn fits(mut limit: isize, mut docs: im::Vector<(isize, Mode, Document<'_>)>) -> 
         };
 
         match document {
-            Document::Nil => (),
-
             Document::Line(_) => return true,
 
             Document::ForceBreak => return false,
@@ -190,7 +184,7 @@ fn fmt(
 ) -> Result<()> {
     while let Some((indent, mode, document)) = docs.pop_front() {
         match document {
-            Document::Nil | Document::ForceBreak => (),
+            Document::ForceBreak => (),
 
             Document::Line(i) => {
                 for _ in 0..i {
@@ -258,7 +252,7 @@ fn fmt(
 }
 
 pub fn nil<'a>() -> Document<'a> {
-    Document::Nil
+    Document::Vec(vec![])
 }
 
 pub fn line<'a>() -> Document<'a> {

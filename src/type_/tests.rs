@@ -1512,7 +1512,7 @@ fn the_rest() {
         "case [1] { [x] | [] as x -> 1 }",
         Error::CouldNotUnify {
             situation: None,
-            location: SrcSpan { start: 17, end: 19 },
+            location: SrcSpan { start: 17, end: 18 },
             expected: int(),
             given: list(int()),
         },
@@ -3760,5 +3760,17 @@ pub fn a() {
   gleam.Ok(1)
 }",
         vec![("a", "fn() -> Result(Int, a)")],
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/1029
+#[test]
+fn empty_list_const() {
+    assert_module_infer!(
+        "pub const empty = []
+pub fn a() {
+    empty
+}",
+        vec![("a", "fn() -> List(a)"), ("empty", "List(a)")],
     );
 }

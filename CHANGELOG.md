@@ -17,6 +17,8 @@
 - Gleam now supports `\e` string escapes.
 - Values and types from the prelude can now be used in a qualified fashion by
   importing the `gleam` module.
+- Empty lists can now be used in constants.
+- Compiler performance has been improved when working with lists.
 
 ## v0.14.4 - 2021-03-27
 
