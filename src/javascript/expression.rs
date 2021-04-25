@@ -11,13 +11,18 @@ pub struct Generator<'module> {
     // We register whether float division is used within an expression so that
     // the module generator can output a suitable function if it is needed.
     float_division_used: &'module mut bool,
+    object_equality_used: &'module mut bool,
 }
 
 impl<'module> Generator<'module> {
-    pub fn new(float_division_used: &'module mut bool) -> Self {
+    pub fn new(
+        float_division_used: &'module mut bool,
+        object_equality_used: &'module mut bool,
+    ) -> Self {
         Self {
             tail_position: true,
             float_division_used,
+            object_equality_used,
         }
     }
 
@@ -31,12 +36,12 @@ impl<'module> Generator<'module> {
             TypedExpr::List { .. } => unsupported("List"),
 
             TypedExpr::Tuple { elems, .. } => self.tuple(elems),
-            TypedExpr::TupleIndex { .. } => unsupported("Tuple"),
+            TypedExpr::TupleIndex { tuple, index, .. } => self.tuple_index(tuple, *index),
 
             TypedExpr::Case { .. } => unsupported("Case"),
 
-            TypedExpr::Call { .. } => unsupported("Function"),
-            TypedExpr::Fn { .. } => unsupported("Function"),
+            TypedExpr::Call { fun, args, .. } => self.call(fun, args),
+            TypedExpr::Fn { args, body, .. } => self.fun(args, body),
 
             TypedExpr::RecordAccess { .. } => unsupported("Custom Record"),
             TypedExpr::RecordUpdate { .. } => unsupported("Function"),
@@ -108,7 +113,7 @@ impl<'module> Generator<'module> {
         ))
     }
 
-    fn variable<'a>(&mut self, _name: &'a str, constructor: &'a ValueConstructor) -> Output<'a> {
+    fn variable<'a>(&mut self, name: &'a str, constructor: &'a ValueConstructor) -> Output<'a> {
         match &constructor.variant {
             ValueConstructorVariant::Record { name, .. }
                 if constructor.type_.is_bool() && name == "True" =>
@@ -123,6 +128,8 @@ impl<'module> Generator<'module> {
             ValueConstructorVariant::Record { .. } if constructor.type_.is_nil() => {
                 Ok("undefined".to_doc())
             }
+            ValueConstructorVariant::LocalVariable => Ok(name.to_doc()),
+            ValueConstructorVariant::ModuleFn { .. } => Ok(name.to_doc()),
             _ => unsupported("Referencing variables"),
         }
     }
@@ -136,6 +143,38 @@ impl<'module> Generator<'module> {
     fn tuple<'a>(&mut self, elements: &'a [TypedExpr]) -> Output<'a> {
         self.not_in_tail_position(|gen| {
             array(elements.iter().map(|element| gen.wrap_expression(element)))
+        })
+    }
+
+    fn call<'a>(&mut self, fun: &'a TypedExpr, arguments: &'a [CallArg<TypedExpr>]) -> Output<'a> {
+        let fun = self.not_in_tail_position(|gen| gen.expression(fun))?;
+        let arguments = self.not_in_tail_position(|gen| {
+            call_arguments(
+                arguments
+                    .iter()
+                    .map(|element| gen.wrap_expression(&element.value)),
+            )
+        })?;
+        Ok(docvec![fun, arguments])
+    }
+
+    fn fun<'a>(&mut self, arguments: &'a [TypedArg], body: &'a TypedExpr) -> Output<'a> {
+        let tail = self.tail_position;
+        self.tail_position = true;
+        let result = self.expression(body);
+        self.tail_position = tail;
+        Ok(docvec!(
+            docvec!(fun_args(arguments), " => {", break_("", " "), result?,)
+                .nest(INDENT)
+                .append(break_("", " "))
+                .group(),
+            "}",
+        ))
+    }
+    fn tuple_index<'a>(&mut self, tuple: &'a TypedExpr, index: u64) -> Output<'a> {
+        self.not_in_tail_position(|gen| {
+            let tuple = gen.wrap_expression(tuple)?;
+            Ok(docvec![tuple, Document::String(format!("[{}]", index))])
         })
     }
 
@@ -153,9 +192,22 @@ impl<'module> Generator<'module> {
             BinOp::Or => self.print_bin_op(left, right, "||"),
             BinOp::LtInt | BinOp::LtFloat => self.print_bin_op(left, right, "<"),
             BinOp::LtEqInt | BinOp::LtEqFloat => self.print_bin_op(left, right, "<="),
-            // TODO: https://dmitripavlutin.com/how-to-compare-objects-in-javascript/
-            BinOp::Eq => unsupported("Equality operator"),
-            BinOp::NotEq => unsupported("Equality operator"),
+            BinOp::Eq => {
+                use std::iter::once;
+                *self.object_equality_used = true;
+                Ok(docvec!(
+                    "$deepEqual",
+                    wrap_args(once(left).chain(once(right)))
+                ))
+            }
+            BinOp::NotEq => {
+                use std::iter::once;
+                *self.object_equality_used = true;
+                Ok(docvec!(
+                    "!$deepEqual",
+                    wrap_args(once(left).chain(once(right)))
+                ))
+            }
             BinOp::GtInt | BinOp::GtFloat => self.print_bin_op(left, right, ">"),
             BinOp::GtEqInt | BinOp::GtEqFloat => self.print_bin_op(left, right, ">="),
             BinOp::AddInt | BinOp::AddFloat => self.print_bin_op(left, right, "+"),
@@ -224,6 +276,19 @@ fn array<'a, Elements: Iterator<Item = Output<'a>>>(elements: Elements) -> Outpu
         docvec![break_("", ""), elements].nest(INDENT),
         break_(",", ""),
         "]"
+    ]
+    .group())
+}
+
+fn call_arguments<'a, Elements: Iterator<Item = Output<'a>>>(elements: Elements) -> Output<'a> {
+    let elements = Itertools::intersperse(elements, Ok(break_(",", ", ")))
+        .collect::<Result<Vec<_>, _>>()?
+        .to_doc();
+    Ok(docvec![
+        "(",
+        docvec![break_("", ""), elements].nest(INDENT),
+        break_(",", ""),
+        ")"
     ]
     .group())
 }
