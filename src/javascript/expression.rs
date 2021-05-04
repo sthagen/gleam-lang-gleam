@@ -1,12 +1,18 @@
 use super::*;
 use crate::{
     ast::*,
+    line_numbers::LineNumbers,
     pretty::*,
-    type_::{ValueConstructor, ValueConstructorVariant},
+    type_::{FieldMap, ModuleValueConstructor, ValueConstructor, ValueConstructorVariant},
 };
+
+static RECORD_KEY: &str = "type";
 
 #[derive(Debug)]
 pub struct Generator<'module> {
+    module_name: &'module [String],
+    line_numbers: &'module LineNumbers,
+    function_name: &'module str,
     tail_position: bool,
     // We register whether float division is used within an expression so that
     // the module generator can output a suitable function if it is needed.
@@ -16,10 +22,16 @@ pub struct Generator<'module> {
 
 impl<'module> Generator<'module> {
     pub fn new(
+        module_name: &'module [String],
+        line_numbers: &'module LineNumbers,
+        function_name: &'module str,
         float_division_used: &'module mut bool,
         object_equality_used: &'module mut bool,
     ) -> Self {
         Self {
+            module_name,
+            line_numbers,
+            function_name,
             tail_position: true,
             float_division_used,
             object_equality_used,
@@ -43,26 +55,37 @@ impl<'module> Generator<'module> {
             TypedExpr::Call { fun, args, .. } => self.call(fun, args),
             TypedExpr::Fn { args, body, .. } => self.fun(args, body),
 
-            TypedExpr::RecordAccess { .. } => unsupported("Custom Record"),
-            TypedExpr::RecordUpdate { .. } => unsupported("Function"),
+            TypedExpr::RecordAccess { record, label, .. } => self.record_access(record, label),
+            TypedExpr::RecordUpdate { spread, args, .. } => self.record_update(spread, args),
 
             TypedExpr::Var {
                 name, constructor, ..
             } => self.variable(name, constructor),
+
             TypedExpr::Seq { first, then, .. } => self.sequence(first, then),
+
             TypedExpr::Assignment { .. } => unsupported("Assigning variables"),
+
+            TypedExpr::Try { .. } => unsupported("Try"),
 
             TypedExpr::BinOp {
                 name, left, right, ..
             } => self.bin_op(name, left, right),
 
-            TypedExpr::Todo { .. } => unsupported("todo keyword"),
+            TypedExpr::Todo {
+                label, location, ..
+            } => Ok(self.todo(label, location)),
 
             TypedExpr::BitString { .. } => unsupported("Bitstring"),
 
             TypedExpr::Pipe { .. } => unsupported("Pipe"),
 
-            TypedExpr::ModuleSelect { .. } => unsupported("Module function call"),
+            TypedExpr::ModuleSelect {
+                module_name,
+                label,
+                constructor,
+                ..
+            } => self.module_select(module_name, label, constructor),
         }?;
         Ok(match expression {
             TypedExpr::Seq { .. } | TypedExpr::Assignment { .. } => document,
@@ -128,6 +151,35 @@ impl<'module> Generator<'module> {
             ValueConstructorVariant::Record { .. } if constructor.type_.is_nil() => {
                 Ok("undefined".to_doc())
             }
+            ValueConstructorVariant::Record { name, arity: 0, .. } => {
+                let record_type = name.to_doc().surround("\"", "\"");
+                let record_head = (RECORD_KEY.to_doc(), Some(record_type));
+                Ok(wrap_object(std::iter::once(record_head)))
+            }
+            ValueConstructorVariant::Record {
+                name,
+                arity,
+                field_map,
+                ..
+            } => {
+                let vars = (0..*arity)
+                    .into_iter()
+                    .map(|i| Document::String(format!("var{}", i)));
+
+                let body = docvec![
+                    "return ",
+                    construct_record(name, *arity, field_map, vars.clone().into_iter()),
+                    ";"
+                ];
+
+                Ok(docvec!(
+                    docvec!(wrap_args(vars), " => {", break_("", " "), body,)
+                        .nest(INDENT)
+                        .append(break_("", " "))
+                        .group(),
+                    "}",
+                ))
+            }
             ValueConstructorVariant::LocalVariable => Ok(name.to_doc()),
             ValueConstructorVariant::ModuleFn { .. } => Ok(name.to_doc()),
             _ => unsupported("Referencing variables"),
@@ -147,15 +199,49 @@ impl<'module> Generator<'module> {
     }
 
     fn call<'a>(&mut self, fun: &'a TypedExpr, arguments: &'a [CallArg<TypedExpr>]) -> Output<'a> {
-        let fun = self.not_in_tail_position(|gen| gen.expression(fun))?;
-        let arguments = self.not_in_tail_position(|gen| {
-            call_arguments(
-                arguments
+        match fun {
+            // Short circuit creation of a record so the rendered JS creates the record inline.
+            TypedExpr::Var {
+                constructor:
+                    ValueConstructor {
+                        variant:
+                            ValueConstructorVariant::Record {
+                                name,
+                                arity,
+                                field_map,
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            } => {
+                let tail = self.tail_position;
+                self.tail_position = false;
+                let arguments = arguments
                     .iter()
-                    .map(|element| gen.wrap_expression(&element.value)),
-            )
-        })?;
-        Ok(docvec![fun, arguments])
+                    .map(|element| self.wrap_expression(&element.value))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.tail_position = tail;
+
+                Ok(construct_record(
+                    name,
+                    *arity,
+                    field_map,
+                    arguments.into_iter(),
+                ))
+            }
+            _ => {
+                let fun = self.not_in_tail_position(|gen| gen.expression(fun))?;
+                let arguments = self.not_in_tail_position(|gen| {
+                    call_arguments(
+                        arguments
+                            .iter()
+                            .map(|element| gen.wrap_expression(&element.value)),
+                    )
+                })?;
+                Ok(docvec![fun, arguments])
+            }
+        }
     }
 
     fn fun<'a>(&mut self, arguments: &'a [TypedArg], body: &'a TypedExpr) -> Output<'a> {
@@ -171,6 +257,32 @@ impl<'module> Generator<'module> {
             "}",
         ))
     }
+
+    fn record_access<'a>(&mut self, record: &'a TypedExpr, label: &'a str) -> Output<'a> {
+        self.not_in_tail_position(|gen| {
+            let record = gen.wrap_expression(record)?;
+            Ok(docvec![record, ".", label])
+        })
+    }
+
+    fn record_update<'a>(
+        &mut self,
+        spread: &'a TypedExpr,
+        updates: &'a [TypedRecordUpdateArg],
+    ) -> Output<'a> {
+        self.not_in_tail_position(|gen| {
+            let spread = gen.wrap_expression(spread)?;
+            let updates: Vec<(Document<'a>, Option<Document<'a>>)> = updates
+                .iter()
+                .map(|TypedRecordUpdateArg { label, value, .. }| {
+                    Ok((label.to_doc(), Some(gen.wrap_expression(value)?)))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let assign_args = vec!["{}".to_doc(), spread, wrap_object(updates.into_iter())];
+            Ok(docvec!["Object.assign", wrap_args(assign_args.into_iter())])
+        })
+    }
+
     fn tuple_index<'a>(&mut self, tuple: &'a TypedExpr, index: u64) -> Output<'a> {
         self.not_in_tail_position(|gen| {
             let tuple = gen.wrap_expression(tuple)?;
@@ -235,6 +347,57 @@ impl<'module> Generator<'module> {
             .append(" ")
             .append(right))
     }
+
+    fn todo<'a>(&mut self, message: &'a Option<String>, location: &'a SrcSpan) -> Document<'a> {
+        self.tail_position = false;
+        let gleam_error = "todo";
+        let message = message
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or_else(|| "This has not yet been implemented");
+        let module_name = Document::String(self.module_name.join("_"));
+        let line = self.line_numbers.line_number(location.start);
+
+        docvec![
+            "throw Object.assign",
+            wrap_args(
+                vec![
+                    docvec!["new Error", wrap_args(std::iter::once(string(message)))],
+                    wrap_object(
+                        vec![
+                            ("gleam_error".to_doc(), Some(string(gleam_error))),
+                            ("module".to_doc(), Some(module_name.surround("\"", "\""))),
+                            (
+                                "function".to_doc(),
+                                Some(
+                                    // TODO switch to use `string(self.function_name)`
+                                    // This will require resolving the difference in lifetimes 'module and 'a.
+                                    Document::String(self.function_name.to_string())
+                                        .surround("\"", "\"")
+                                )
+                            ),
+                            ("line".to_doc(), Some(line.to_doc())),
+                        ]
+                        .into_iter()
+                    )
+                ]
+                .into_iter()
+            )
+        ]
+    }
+    fn module_select<'a>(
+        &mut self,
+        module_name: &'a Vec<String>,
+        label: &'a String,
+        constructor: &'a ModuleValueConstructor,
+    ) -> Output<'a> {
+        match constructor {
+            ModuleValueConstructor::Fn | ModuleValueConstructor::Constant { .. } => {
+                Ok(docvec![Document::String(module_name.join("_")), ".", label,])
+            }
+            _ => unsupported("Module function call"),
+        }
+    }
 }
 
 fn int(value: &str) -> Document<'_> {
@@ -258,7 +421,18 @@ pub fn constant_expression<'a>(expression: &'a TypedConstant) -> Output<'a> {
             Ok("false".to_doc())
         }
         Constant::Record { typ, .. } if typ.is_nil() => Ok("undefined".to_doc()),
-        Constant::Record { .. } => unsupported("Record as constant"),
+        Constant::Record { tag, args, .. } => {
+            let field_values: Result<Vec<_>, _> = args
+                .iter()
+                .map(|arg| constant_expression(&arg.value))
+                .collect();
+            Ok(construct_record(
+                tag,
+                args.len(),
+                &None,
+                field_values?.into_iter(),
+            ))
+        }
         Constant::BitString { .. } => unsupported("BitString as constant"),
     }
 }
@@ -291,4 +465,35 @@ fn call_arguments<'a, Elements: Iterator<Item = Output<'a>>>(elements: Elements)
         ")"
     ]
     .group())
+}
+
+fn construct_record<'a>(
+    name: &'a str,
+    arity: usize,
+    field_map: &'a Option<FieldMap>,
+    values: impl Iterator<Item = Document<'a>>,
+) -> Document<'a> {
+    let field_names: Vec<Document<'_>> = match field_map {
+        Some(FieldMap { fields, .. }) => fields
+            .iter()
+            .sorted_by_key(|(_, &v)| v)
+            .map(|x| x.0.as_str().to_doc())
+            .collect(),
+        None => (0..arity)
+            .into_iter()
+            .map(|i| Document::String(format!("{}", i)))
+            .collect(),
+    };
+
+    let record_head = (
+        RECORD_KEY.to_doc(),
+        Some(name.to_doc().surround("\"", "\"")),
+    );
+
+    let record_values = field_names
+        .into_iter()
+        .zip(values)
+        .map(|(name, value)| (name, Some(value)));
+
+    wrap_object(std::iter::once(record_head).chain(record_values))
 }

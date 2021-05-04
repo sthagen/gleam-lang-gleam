@@ -1,7 +1,38 @@
 mod booleans;
+mod custom_types;
 mod functions;
 mod numbers;
 mod strings;
+
+// TODO have a macro that allows us to compile multiple modules in certain tests.
+// https://github.com/gleam-lang/gleam/pull/1070#discussion_r619806755
+fn rocket_ship_module() -> crate::type_::Module {
+    let src = r#"
+pub const c = 299_792_458
+
+pub fn launch() {
+  Ok("launched")
+}
+pub fn fuel(amount: Int) {
+  Ok("fueled")
+}
+  "#;
+    let (mut ast, _) = crate::parse::parse_module(src).expect("syntax error");
+    ast.name = vec!["rocket_ship".to_string()];
+    let mut modules = std::collections::HashMap::new();
+    let mut uid = 0;
+
+    let _ = modules.insert(
+        "gleam".to_string(),
+        (
+            crate::build::Origin::Src,
+            crate::type_::build_prelude(&mut uid),
+        ),
+    );
+    let ast = crate::type_::infer_module(&mut 0, ast, &modules, &mut vec![])
+        .expect("should successfully infer");
+    ast.type_info
+}
 
 #[macro_export]
 macro_rules! assert_js {
@@ -21,6 +52,10 @@ macro_rules! assert_js {
                 crate::build::Origin::Src,
                 crate::type_::build_prelude(&mut uid),
             ),
+        );
+        let _ = modules.insert(
+            "rocket_ship".to_string(),
+            (crate::build::Origin::Src, rocket_ship_module()),
         );
         let ast = crate::type_::infer_module(&mut 0, ast, &modules, &mut vec![])
             .expect("should successfully infer");
@@ -229,6 +264,37 @@ function baz(x, y) {
 }
 
 #[test]
+fn importing_a_module() {
+    assert_js!(
+        r#"
+import rocket_ship
+import rocket_ship as foo
+import rocket_ship.{launch as boom_time, fuel}
+pub fn go() {
+    rocket_ship.fuel(100)
+    boom_time()
+    rocket_ship.c
+}
+"#,
+        r#""use strict";
+
+import * as rocket_ship from "./rocket_ship.js";
+
+import * as foo from "./rocket_ship.js";
+
+import * as rocket_ship from "./rocket_ship.js";
+const { launch: boom_time, fuel } = rocket_ship;
+
+export function go() {
+  rocket_ship.fuel(100);
+  boom_time();
+  return rocket_ship.c;
+}
+"#
+    );
+}
+
+#[test]
 fn equality() {
     assert_js!(
         r#"
@@ -270,6 +336,42 @@ function $deepEqual(x, y) {
 
 function $isObject(object) {
   return object != null && typeof object === 'object';
+}
+"#
+    );
+}
+
+#[test]
+fn todo_throws_error() {
+    assert_js!(
+        r#"
+fn go() {
+    todo
+}
+"#,
+        r#""use strict";
+
+function go() {
+  throw Object.assign(
+    new Error("This has not yet been implemented"),
+    { gleam_error: "todo", module: "the_app", function: "go", line: 3 }
+  )
+}
+"#
+    );
+    assert_js!(
+        r#"
+fn go() {
+    todo("I should do this");
+}
+"#,
+        r#""use strict";
+
+function go() {
+  throw Object.assign(
+    new Error("I should do this"),
+    { gleam_error: "todo", module: "the_app", function: "go", line: 3 }
+  )
 }
 "#
     );

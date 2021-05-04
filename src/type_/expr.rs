@@ -21,12 +21,6 @@ pub struct ExprTyper<'a, 'b, 'c> {
     pub ungeneralised_function_used: bool,
 }
 
-impl<'a, 'b, 'c> Typer for ExprTyper<'a, 'b, 'c> {
-    fn with_environment<T>(&mut self, f: impl FnOnce(&mut Environment<'_, '_>) -> T) -> T {
-        f(self.environment)
-    }
-}
-
 impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
     pub fn new(environment: &'a mut Environment<'b, 'c>) -> Self {
         let mut hydrator = Hydrator::new();
@@ -64,6 +58,14 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
     ) -> Arc<Type> {
         self.environment
             .instantiate(t, ctx_level, ids, &self.hydrator)
+    }
+
+    fn new_unbound_var(&mut self, level: usize) -> Arc<Type> {
+        self.environment.new_unbound_var(level)
+    }
+
+    fn unify(&mut self, t1: Arc<Type>, t2: Arc<Type>) -> Result<(), UnifyError> {
+        self.environment.unify(t1, t2)
     }
 
     /// Crawl the AST, annotating each node with the inferred type or
@@ -114,11 +116,19 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                 location,
                 pattern,
                 value,
-                then,
                 kind,
                 annotation,
                 ..
-            } => self.infer_let(pattern, *value, *then, kind, &annotation, location),
+            } => self.infer_assignment(pattern, *value, kind, &annotation, location),
+
+            UntypedExpr::Try {
+                location,
+                pattern,
+                value,
+                then,
+                annotation,
+                ..
+            } => self.infer_try(pattern, *value, *then, &annotation, location),
 
             UntypedExpr::Case {
                 location,
@@ -339,7 +349,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         let first = self.infer(first)?;
         let then = self.infer(then)?;
 
-        if first.type_().is_result() {
+        if first.type_().is_result() && !first.is_assignment() {
             self.environment
                 .warnings
                 .push(Warning::ImplicitlyDiscardedResult {
@@ -506,8 +516,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
         let tuple = self.infer(tuple)?;
-
-        match tuple.type_().as_ref() {
+        match collapse_links(tuple.type_()).as_ref() {
             Type::Tuple { elems } => {
                 let typ = elems
                     .get(index as usize)
@@ -676,49 +685,21 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         })
     }
 
-    fn infer_let(
+    fn infer_assignment(
         &mut self,
         pattern: UntypedPattern,
         value: UntypedExpr,
-        then: UntypedExpr,
         kind: AssignmentKind,
         annotation: &Option<TypeAst>,
         location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
         let value = self.in_new_scope(|value_typer| value_typer.infer(value))?;
-
-        let try_value_type = self.new_unbound_var(self.environment.level);
-        let try_error_type = self.new_unbound_var(self.environment.level);
-
-        let value_typ = match kind {
-            // Ensure that the value is a result if this is a `try` binding
-            AssignmentKind::Try => {
-                let v = try_value_type.clone();
-                let e = try_error_type.clone();
-                self.unify(result(v, e), value.type_())
-                    .map_err(|e| convert_unify_error(e, value.location()))?;
-                try_value_type
-            }
-            _ => value.type_(),
-        };
-
-        let value_typ = generalise(value_typ, self.environment.level + 1);
+        let value_typ = generalise(value.type_(), self.environment.level + 1);
 
         // Ensure the pattern matches the type of the value
         let pattern =
             pattern::PatternTyper::new(self.environment, &self.hydrator, self.environment.level)
                 .unify(pattern, value_typ.clone())?;
-
-        // Check the type of the following code
-        let then = self.infer(then)?;
-        let typ = then.type_();
-
-        // Ensure that a Result with the right error type is returned for `try`
-        if kind == AssignmentKind::Try {
-            let value = self.new_unbound_var(self.environment.level);
-            self.unify(result(value, try_error_type), typ.clone())
-                .map_err(|e| convert_unify_error(e, then.try_binding_location()))?;
-        }
 
         // Check that any type annotation is accurate.
         if let Some(ann) = annotation {
@@ -731,8 +712,64 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
 
         Ok(TypedExpr::Assignment {
             location,
-            typ,
+            typ: value.type_(),
             kind,
+            pattern,
+            value: Box::new(value),
+        })
+    }
+
+    fn infer_try(
+        &mut self,
+        pattern: UntypedPattern,
+        value: UntypedExpr,
+        then: UntypedExpr,
+        annotation: &Option<TypeAst>,
+        location: SrcSpan,
+    ) -> Result<TypedExpr, Error> {
+        let value = self.in_new_scope(|value_typer| value_typer.infer(value))?;
+
+        let value_type = self.new_unbound_var(self.environment.level);
+        let try_error_type = self.new_unbound_var(self.environment.level);
+
+        // Ensure that the value is a result
+        {
+            let v = value_type.clone();
+            let e = try_error_type.clone();
+            self.unify(result(v, e), value.type_())
+                .map_err(|e| convert_unify_error(e, value.location()))?;
+        };
+
+        let value_type = generalise(value_type, self.environment.level + 1);
+
+        // Ensure the pattern matches the type of the value
+        let pattern =
+            pattern::PatternTyper::new(self.environment, &self.hydrator, self.environment.level)
+                .unify(pattern, value_type.clone())?;
+
+        // Check the type of the following code
+        let then = self.infer(then)?;
+        let typ = then.type_();
+
+        // Ensure that a Result with the right error type is returned for `try`
+        {
+            let t = self.new_unbound_var(self.environment.level);
+            self.unify(result(t, try_error_type), typ.clone())
+                .map_err(|e| convert_unify_error(e, then.location()))?;
+        }
+
+        // Check that any type annotation is accurate.
+        if let Some(ann) = annotation {
+            let ann_typ = self
+                .type_from_ast(ann)
+                .map(|t| self.instantiate(t, self.environment.level, &mut hashmap![]))?;
+            self.unify(ann_typ, value_type)
+                .map_err(|e| convert_unify_error(e, value.location()))?;
+        }
+
+        Ok(TypedExpr::Try {
+            location,
+            typ,
             pattern,
             value: Box::new(value),
             then: Box::new(then),
