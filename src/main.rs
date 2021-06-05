@@ -1,11 +1,8 @@
-#![deny(warnings)]
 #![warn(
     clippy::all,
     clippy::doc_markdown,
     clippy::dbg_macro,
     clippy::todo,
-    clippy::empty_enum,
-    clippy::enum_glob_use,
     clippy::mem_forget,
     // TODO: enable once the false positive bug is solved
     // clippy::use_self,
@@ -13,9 +10,7 @@
     clippy::needless_continue,
     clippy::needless_borrow,
     clippy::match_wildcard_for_single_variants,
-    clippy::if_let_mutex,
     clippy::mismatched_target_os,
-    clippy::await_holding_lock,
     clippy::match_on_vec_items,
     clippy::imprecise_flops,
     clippy::suboptimal_flops,
@@ -33,21 +28,24 @@
     missing_copy_implementations,
     trivial_casts,
     trivial_numeric_casts,
-    unstable_features,
     nonstandard_style,
     unused_import_braces,
     unused_qualifications,
-    unused_results,
-    // Safety
-    unsafe_code,
-    clippy::unimplemented,
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::ok_expect,
-    clippy::integer_division,
-    clippy::indexing_slicing,
-    clippy::mem_forget
 )]
+#![deny(
+    clippy::await_holding_lock,
+    clippy::expect_used,
+    clippy::if_let_mutex,
+    clippy::indexing_slicing,
+    clippy::mem_forget,
+    clippy::ok_expect,
+    clippy::unimplemented,
+    clippy::unwrap_used,
+    unsafe_code,
+    unstable_features,
+    unused_results
+)]
+#![allow(clippy::match_single_binding, clippy::inconsistent_struct_constructor)]
 
 #[macro_use]
 mod pretty;
@@ -172,11 +170,14 @@ enum Command {
     CompilePackage(CompilePackage),
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Debug, Clone)]
 #[structopt(flatten)]
 pub struct NewOptions {
-    #[structopt(help = "name of the project")]
-    pub name: String,
+    #[structopt(help = "location of the project root")]
+    pub project_root: String,
+
+    #[structopt(long, help = "name of the project")]
+    pub name: Option<String>,
 
     #[structopt(
         long = "description",
@@ -184,9 +185,6 @@ pub struct NewOptions {
         default_value = "A Gleam project"
     )]
     pub description: String,
-
-    #[structopt(help = "location of the project root")]
-    pub project_root: Option<String>,
 
     #[structopt(
         long = "template",

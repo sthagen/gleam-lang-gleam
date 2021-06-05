@@ -1,5 +1,8 @@
 use super::*;
-use crate::type_::{HasType, Type};
+use crate::{
+    type_::{HasType, Type},
+    GleamExpect,
+};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TypedExpr {
@@ -21,10 +24,9 @@ pub enum TypedExpr {
         value: String,
     },
 
-    Seq {
-        typ: Arc<Type>,
-        first: Box<Self>,
-        then: Box<Self>,
+    Sequence {
+        location: SrcSpan,
+        expressions: Vec<Self>,
     },
 
     Var {
@@ -148,7 +150,7 @@ impl TypedExpr {
     pub fn non_zero_compile_time_number(&self) -> bool {
         use regex::Regex;
         lazy_static! {
-            static ref NON_ZERO: Regex = Regex::new(r"[1-9]").unwrap();
+            static ref NON_ZERO: Regex = Regex::new(r"[1-9]").gleam_expect("NON_ZERO regex");
         }
 
         matches!(
@@ -159,9 +161,8 @@ impl TypedExpr {
 
     pub fn location(&self) -> SrcSpan {
         match self {
-            Self::Seq { then, .. } | Self::Try { then, .. } => then.location(),
-            Self::Assignment { location, .. }
-            | Self::Fn { location, .. }
+            Self::Try { then, .. } => then.location(),
+            Self::Fn { location, .. }
             | Self::Int { location, .. }
             | Self::Var { location, .. }
             | Self::Todo { location, .. }
@@ -173,15 +174,17 @@ impl TypedExpr {
             | Self::BinOp { location, .. }
             | Self::Tuple { location, .. }
             | Self::String { location, .. }
+            | Self::Sequence { location, .. }
+            | Self::BitString { location, .. }
+            | Self::Assignment { location, .. }
             | Self::TupleIndex { location, .. }
             | Self::ModuleSelect { location, .. }
             | Self::RecordAccess { location, .. }
-            | Self::BitString { location, .. }
             | Self::RecordUpdate { location, .. } => *location,
         }
     }
 
-    /// Returns `true` if the typed_expr is [`Assignment`].
+    /// Returns `true` if the typed expr is [`Assignment`].
     pub fn is_assignment(&self) -> bool {
         matches!(self, Self::Assignment { .. })
     }
@@ -200,7 +203,6 @@ impl TypedExpr {
             Self::Try { then, .. } => then.type_(),
             Self::Fn { typ, .. } => typ.clone(),
             Self::Int { typ, .. } => typ.clone(),
-            Self::Seq { then, .. } => then.type_(),
             Self::Todo { typ, .. } => typ.clone(),
             Self::Case { typ, .. } => typ.clone(),
             Self::List { typ, .. } => typ.clone(),
@@ -216,7 +218,23 @@ impl TypedExpr {
             Self::RecordAccess { typ, .. } => typ.clone(),
             Self::BitString { typ, .. } => typ.clone(),
             Self::RecordUpdate { typ, .. } => typ.clone(),
+            Self::Sequence { expressions, .. } => expressions
+                .last()
+                .map(TypedExpr::type_)
+                .unwrap_or_else(type_::nil),
         }
+    }
+
+    pub fn is_literal(&self) -> bool {
+        matches!(
+            self,
+            Self::Int { .. }
+                | Self::List { .. }
+                | Self::Float { .. }
+                | Self::Tuple { .. }
+                | Self::String { .. }
+                | Self::BitString { .. }
+        )
     }
 }
 

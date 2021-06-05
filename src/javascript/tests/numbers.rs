@@ -1,8 +1,7 @@
-use super::*;
 use crate::assert_js;
 
 #[test]
-fn integer_literals() {
+fn int_literals() {
     assert_js!(
         r#"
 fn go() {
@@ -55,7 +54,7 @@ function go() {
 }
 
 #[test]
-fn integer_operators() {
+fn int_operators() {
     assert_js!(
         r#"
 fn go() {
@@ -76,7 +75,7 @@ function go() {
   1 + 1;
   5 - 1;
   5 / 2 | 0;
-  3 * 3;
+  Math.imul(3, 3);
   5 % 2;
   2 > 1;
   2 < 1;
@@ -116,9 +115,7 @@ function go() {
 }
 
 function $divide(a, b) {
-  if (b === 0) {
-    return 0;
-  }
+  if (b === 0) return 0;
   return a / b;
 }
 "#
@@ -140,11 +137,114 @@ function go() {
 }
 
 function $divide(a, b) {
-  if (b === 0) {
-    return 0;
-  }
+  if (b === 0) return 0;
   return a / b;
 }
 "#
     );
+}
+
+#[test]
+fn int_patterns() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let 4 = x
+}
+"#,
+        r#""use strict";
+
+function go(x) {
+  if (x !== 4) throw new Error("Bad match");
+  return x;
+}
+"#
+    );
+}
+
+#[test]
+fn int_equality() {
+    assert_js!(
+        r#"
+fn go() {
+  1 != 2
+  1 == 2
+}
+"#,
+        r#""use strict";
+
+function go() {
+  1 !== 2;
+  return 1 === 2;
+}
+"#
+    );
+
+    assert_js!(
+        r#"
+fn go(y) {
+  let x = 1
+  x == y
+}
+"#,
+        r#""use strict";
+
+function go(y) {
+  let x = 1;
+  return x === y;
+}
+"#
+    );
+}
+
+#[test]
+fn float_equality() {
+    assert_js!(
+        r#"
+fn go() {
+  1.0 != 2.0
+  1.0 == 2.0
+}
+"#,
+        r#""use strict";
+
+function go() {
+  1.0 !== 2.0;
+  return 1.0 === 2.0;
+}
+"#
+    );
+
+    assert_js!(
+        r#"
+fn go(y) {
+  let x = 1.0
+  x == y
+}
+"#,
+        r#""use strict";
+
+function go(y) {
+  let x = 1.0;
+  return x === y;
+}
+"#
+    );
+}
+
+#[test]
+fn operator_precedence() {
+    assert_js!(
+        r#"
+fn go() {
+  2.4 *. { 3.5 +. 6.0 }
+}
+"#,
+        r#""use strict";
+
+function go() {
+  return 2.4 * (3.5 + 6.0);
+}
+"#
+    )
 }

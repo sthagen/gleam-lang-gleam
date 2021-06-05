@@ -1,18 +1,98 @@
 use super::*;
-use crate::{build::Origin, type_::build_prelude};
+use crate::{build::Origin, type_, type_::build_prelude};
 use std::collections::HashMap;
 
 #[test]
 fn record_definition_test() {
+    let module_name = vec!["name".to_string()];
     assert_eq!(
-        record_definition("PetCat", &["name", "is_cute",]),
-        "-record(pet_cat, {name, is_cute}).\n".to_string()
+        record_definition(
+            "PetCat",
+            &[
+                ("name", type_::tuple(vec![])),
+                ("is_cute", type_::tuple(vec![]))
+            ]
+        ),
+        "-record(pet_cat, {name :: {}, is_cute :: {}}).\n".to_string()
     );
 
     // Reserved words are escaped in record names and fields
     assert_eq!(
-        record_definition("div", &["receive", "catch", "unreserved"]),
-        "-record(\'div\', {\'receive\', \'catch\', unreserved}).\n".to_string()
+        record_definition(
+            "div",
+            &[
+                ("receive", type_::int()),
+                ("catch", type_::tuple(vec![])),
+                ("unreserved", type_::tuple(vec![]))
+            ]
+        ),
+        "-record(\'div\', {\'receive\' :: integer(), \'catch\' :: {}, unreserved :: {}}).\n"
+            .to_string()
+    );
+
+    // Type vars are printed as `any()` because records don't support generics
+    assert_eq!(
+        record_definition(
+            "PetCat",
+            &[
+                ("name", type_::generic_var(1)),
+                ("is_cute", type_::unbound_var(1, 1)),
+                ("linked", type_::link(type_::int()))
+            ]
+        ),
+        "-record(pet_cat, {name :: any(), is_cute :: any(), linked :: integer()}).\n".to_string()
+    );
+
+    // Types are printed with module qualifiers
+    assert_eq!(
+        record_definition(
+            "PetCat",
+            &[(
+                "name",
+                Arc::new(type_::Type::App {
+                    public: true,
+                    module: module_name,
+                    name: "my_type".to_string(),
+                    args: vec![]
+                })
+            )]
+        ),
+        "-record(pet_cat, {name :: name:my_type()}).\n".to_string()
+    );
+
+    // Long definition formatting
+    assert_eq!(
+        record_definition(
+            "PetCat",
+            &[
+                ("name", type_::generic_var(1)),
+                ("is_cute", type_::unbound_var(1, 1)),
+                ("linked", type_::link(type_::int())),
+                (
+                    "whatever",
+                    type_::list(type_::tuple(vec![
+                        type_::nil(),
+                        type_::list(type_::tuple(vec![type_::nil(), type_::nil(), type_::nil()])),
+                        type_::nil(),
+                        type_::list(type_::tuple(vec![type_::nil(), type_::nil(), type_::nil()])),
+                        type_::nil(),
+                        type_::list(type_::tuple(vec![type_::nil(), type_::nil(), type_::nil()])),
+                    ]))
+                ),
+            ]
+        ),
+        "-record(pet_cat, {
+    name :: any(),
+    is_cute :: any(),
+    linked :: integer(),
+    whatever :: list({nil,
+                      list({nil, nil, nil}),
+                      nil,
+                      list({nil, nil, nil}),
+                      nil,
+                      list({nil, nil, nil})})
+}).\n"
+            .to_string()
     );
 }
 
@@ -27,9 +107,16 @@ macro_rules! assert_erl {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
-        let ast = crate::type_::infer_module(&mut 0, ast, &modules, &mut vec![])
-            .expect("should successfully infer");
+        let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
+        let ast = crate::type_::infer_module(
+            &mut 0,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut vec![],
+        )
+        .expect("should successfully infer");
         let mut output = String::new();
         let line_numbers = LineNumbers::new($src);
         module(&ast, &line_numbers, &mut output).unwrap();
@@ -499,6 +586,29 @@ x() ->
 x(Y) ->
     {point, A, B} = Y,
     A.
+"#,
+    );
+
+    //https://github.com/gleam-lang/gleam/issues/1106
+    assert_erl!(
+        r#"pub type State{ Start(Int) End(Int) }
+            pub fn build(constructor : fn(Int) -> a) -> a { constructor(1) }
+            pub fn main() { build(End) }"#,
+        r#"-module(the_app).
+-compile(no_auto_import).
+
+-export([build/1, main/0]).
+-export_type([state/0]).
+
+-type state() :: {start, integer()} | {'end', integer()}.
+
+-spec build(fun((integer()) -> A)) -> A.
+build(Constructor) ->
+    Constructor(1).
+
+-spec main() -> state().
+main() ->
+    build(fun(A) -> {'end', A} end).
 "#,
     );
 
@@ -2467,6 +2577,105 @@ fn build_in_erlang_type_escaping() {
 }
 
 #[test]
+fn escape_erlang_reserved_keywords_in_type_names() {
+    // list of all reserved words in erlang
+    // http://erlang.org/documentation/doc-5.8/doc/reference_manual/introduction.html
+    assert_erl!(
+        r#"pub type After { TestAfter }
+pub type And { TestAnd }
+pub type Andalso { TestAndAlso }
+pub type Band { TestBAnd }
+pub type Begin { TestBegin }
+pub type Bnot { TestBNot }
+pub type Bor { TestBOr }
+pub type Bsl { TestBsl }
+pub type Bsr { TestBsr }
+pub type Bxor { TestBXor }
+pub type Case { TestCase }
+pub type Catch { TestCatch }
+pub type Cond { TestCond }
+pub type Div { TestDiv }
+pub type End { TestEnd }
+pub type Fun { TestFun }
+pub type If { TestIf }
+pub type Let { TestLet }
+pub type Not { TestNot }
+pub type Of { TestOf }
+pub type Or { TestOr }
+pub type Orelse { TestOrElse }
+pub type Query { TestQuery }
+pub type Receive { TestReceive }
+pub type Rem { TestRem }
+pub type Try { TestTry }
+pub type When { TestWhen }
+pub type Xor { TestXor }"#,
+        r#"-module(the_app).
+-compile(no_auto_import).
+
+-export_type(['after'/0, 'and'/0, 'andalso'/0, 'band'/0, 'begin'/0, 'bnot'/0, 'bor'/0, 'bsl'/0, 'bsr'/0, 'bxor'/0, 'case'/0, 'catch'/0, 'cond'/0, 'div'/0, 'end'/0, 'fun'/0, 'if'/0, 'let'/0, 'not'/0, 'of'/0, 'or'/0, 'orelse'/0, 'query'/0, 'receive'/0, 'rem'/0, 'try'/0, 'when'/0, 'xor'/0]).
+
+-type 'after'() :: test_after.
+
+-type 'and'() :: test_and.
+
+-type 'andalso'() :: test_and_also.
+
+-type 'band'() :: test_b_and.
+
+-type 'begin'() :: test_begin.
+
+-type 'bnot'() :: test_b_not.
+
+-type 'bor'() :: test_b_or.
+
+-type 'bsl'() :: test_bsl.
+
+-type 'bsr'() :: test_bsr.
+
+-type 'bxor'() :: test_b_xor.
+
+-type 'case'() :: test_case.
+
+-type 'catch'() :: test_catch.
+
+-type 'cond'() :: test_cond.
+
+-type 'div'() :: test_div.
+
+-type 'end'() :: test_end.
+
+-type 'fun'() :: test_fun.
+
+-type 'if'() :: test_if.
+
+-type 'let'() :: test_let.
+
+-type 'not'() :: test_not.
+
+-type 'of'() :: test_of.
+
+-type 'or'() :: test_or.
+
+-type 'orelse'() :: test_or_else.
+
+-type 'query'() :: test_query.
+
+-type 'receive'() :: test_receive.
+
+-type 'rem'() :: test_rem.
+
+-type 'try'() :: test_try.
+
+-type 'when'() :: test_when.
+
+-type 'xor'() :: test_xor.
+
+
+"#
+    );
+}
+
+#[test]
 fn allowed_string_escapes() {
     assert_erl!(
         r#"fn a() { "\n" "\r" "\t" "\\" "\"" "\e" "\\^" }"#,
@@ -2530,8 +2739,8 @@ fn assert() {
 
 -spec go() -> integer().
 go() ->
-    Y@1 = case {ok, 1} of
-        {ok, Y} -> Y;
+    {ok, Y@1} = case {ok, 1} of
+        {ok, Y} -> {ok, Y};
         Gleam@Assert ->
             erlang:error(#{gleam_error => assert,
                            message => <<"Assertion pattern match failed"/utf8>>,
@@ -2555,8 +2764,8 @@ go() ->
 
 -spec go(list(integer())) -> list(integer()).
 go(X) ->
-    {A@1, B@1, C@1} = case X of
-        [1, A, B, C] -> {A, B, C};
+    [1, A@1, B@1, C@1] = case X of
+        [1, A, B, C] -> [1, A, B, C];
         Gleam@Assert ->
             erlang:error(#{gleam_error => assert,
                            message => <<"Assertion pattern match failed"/utf8>>,
@@ -2580,8 +2789,8 @@ go(X) ->
 
 -spec go(list(integer())) -> list(integer()).
 go(X) ->
-    {A@1, B@1, C@1} = case X of
-        [1 = A, B, C] -> {A, B, C};
+    [1 = A@1, B@1, C@1] = case X of
+        [1 = A, B, C] -> [1 = A, B, C];
         Gleam@Assert ->
             erlang:error(#{gleam_error => assert,
                            message => <<"Assertion pattern match failed"/utf8>>,
@@ -2606,8 +2815,8 @@ go(X) ->
 
 -spec go() -> integer().
 go() ->
-    Y@1 = case {ok, 1} of
-        {ok, Y} -> Y;
+    {ok, Y@1} = case {ok, 1} of
+        {ok, Y} -> {ok, Y};
         Gleam@Assert ->
             erlang:error(#{gleam_error => assert,
                            message => <<"Assertion pattern match failed"/utf8>>,
@@ -2616,8 +2825,8 @@ go() ->
                            function => <<"go"/utf8>>,
                            line => 2})
     end,
-    Y@3 = case {ok, 1} of
-        {ok, Y@2} -> Y@2;
+    {ok, Y@3} = case {ok, 1} of
+        {ok, Y@2} -> {ok, Y@2};
         Gleam@Assert@1 ->
             erlang:error(#{gleam_error => assert,
                            message => <<"Assertion pattern match failed"/utf8>>,

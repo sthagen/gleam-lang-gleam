@@ -29,6 +29,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 const INDENT: isize = 4;
+const MAX_COLUMNS: isize = 80;
 
 pub fn generate_erlang(analysed: &[Analysed]) -> Vec<OutputFile> {
     let mut files = Vec::with_capacity(analysed.len() * 2);
@@ -44,7 +45,7 @@ pub fn generate_erlang(analysed: &[Analysed]) -> Vec<OutputFile> {
     {
         let gen_dir = source_base_path
             .parent()
-            .unwrap()
+            .gleam_expect("generate_erlang parent")
             .join(project::OUTPUT_DIR_NAME)
             .join(origin.dir_name());
         let erl_module_name = name.join("@");
@@ -146,7 +147,16 @@ pub fn records(module: &TypedModule) -> Vec<(&str, String)> {
             constructor
                 .arguments
                 .iter()
-                .map(|RecordConstructorArg { label, .. }| label.as_deref())
+                .map(
+                    |RecordConstructorArg {
+                         label,
+                         ast: _,
+                         location: _,
+                         type_,
+                     }| {
+                        label.as_deref().map(|label| (label, type_.clone()))
+                    },
+                )
                 .collect::<Option<Vec<_>>>()
                 .map(|fields| (constructor.name.as_str(), fields))
         })
@@ -154,25 +164,27 @@ pub fn records(module: &TypedModule) -> Vec<(&str, String)> {
         .collect()
 }
 
-pub fn record_definition(name: &str, fields: &[&str]) -> String {
+pub fn record_definition(name: &str, fields: &[(&str, Arc<Type>)]) -> String {
     let name = &name.to_snake_case();
-    let escaped_name = if is_erlang_reserved_word(name) {
-        format!("'{}'", name)
-    } else {
-        name.to_string()
-    };
-    use std::fmt::Write;
-    let mut buffer = format!("-record({}, {{", escaped_name);
-    for &field in Itertools::intersperse(fields.iter(), &", ") {
-        let escaped_field = if is_erlang_reserved_word(field) {
-            format!("'{}'", field)
-        } else {
-            field.to_string()
-        };
-        write!(buffer, "{}", escaped_field).unwrap();
-    }
-    writeln!(buffer, "}}).").unwrap();
-    buffer
+    let type_printer = TypePrinter::new(&[]).var_as_any();
+    let fields = fields.iter().map(move |(name, type_)| {
+        let type_ = type_printer.print(type_);
+        docvec!(atom((*name).to_string()), " :: ", type_.group())
+    });
+    let fields = break_("", "")
+        .append(concat(Itertools::intersperse(fields, break_(",", ", "))))
+        .nest(INDENT)
+        .append(break_("", ""))
+        .group();
+    docvec!(
+        "-record(",
+        atom(name.to_string()),
+        ", {",
+        fields,
+        "}).",
+        line()
+    )
+    .to_pretty_string(MAX_COLUMNS)
 }
 
 pub fn module(
@@ -380,7 +392,7 @@ pub fn module(
         .append(type_defs)
         .append(statements)
         .append(line())
-        .pretty_print(80, writer)
+        .pretty_print(MAX_COLUMNS, writer)
 }
 
 fn statement<'a>(
@@ -486,20 +498,24 @@ fn fun_spec<'a>(
 }
 
 fn atom<'a>(value: String) -> Document<'a> {
+    Document::String(escape_atom(value))
+}
+
+fn escape_atom(value: String) -> String {
     use regex::Regex;
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"^[a-z][a-z0-9_@]*$").unwrap();
+        static ref RE: Regex = Regex::new(r"^[a-z][a-z0-9_@]*$").gleam_expect("atom RE regex");
     }
 
     if is_erlang_reserved_word(&value) {
         // Escape because of keyword collision
-        Document::String(format!("'{}'", value))
+        format!("'{}'", value)
     } else if RE.is_match(&value) {
         // No need to escape
-        Document::String(value)
+        value
     } else {
         // Escape because of characters contained
-        Document::String(value).surround("'", "'")
+        format!("'{}'", value)
     }
 }
 
@@ -677,12 +693,19 @@ where
     document
 }
 
-fn seq<'a>(first: &'a TypedExpr, then: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
-    force_break()
-        .append(expr(first, env))
-        .append(",")
-        .append(line())
-        .append(expr(then, env))
+fn seq<'a>(expressions: &'a [TypedExpr], env: &mut Env<'a>) -> Document<'a> {
+    let count = expressions.len();
+    let mut documents = Vec::with_capacity(count * 3);
+    documents.push(force_break());
+    for (i, expression) in expressions.iter().enumerate() {
+        documents.push(expr(expression, env));
+        if i + 1 < count {
+            // This isn't the final expression so add the delimeters
+            documents.push(",".to_doc());
+            documents.push(line());
+        }
+    }
+    documents.to_doc()
 }
 
 fn bin_op<'a>(
@@ -803,10 +826,12 @@ fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) ->
     let mut vars: Vec<&str> = vec![];
     let var = "Gleam@Assert";
     let body = maybe_block_expr(value, env);
+    let pattern1 = pattern::to_doc(pat, &mut vars, env);
+    let pattern2 = pattern::to_doc(pat, &mut vars, env);
     let clauses = docvec![
-        pattern::to_doc(pat, &mut vars, env),
+        pattern1.clone(),
         " -> ",
-        assert_return(&vars, env),
+        pattern1.clone(),
         ";",
         line(),
         env.next_local_var_name(var),
@@ -825,7 +850,7 @@ fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) ->
         .nest(INDENT)
     ];
     docvec![
-        assert_assign(&vars, env),
+        pattern2,
         " = case ",
         body,
         " of",
@@ -833,20 +858,6 @@ fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) ->
         line(),
         "end",
     ]
-}
-
-fn assert_return<'a>(vars: &[&str], env: &mut Env<'a>) -> Document<'a> {
-    match vars {
-        [v] => env.local_var_name(v),
-        _ => tuple(vars.iter().map(|v| env.local_var_name(v))),
-    }
-}
-
-fn assert_assign<'a>(vars: &[&str], env: &mut Env<'a>) -> Document<'a> {
-    match vars {
-        [v] => env.next_local_var_name(v),
-        _ => tuple(vars.iter().map(|v| env.next_local_var_name(v))),
-    }
 }
 
 fn let_<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) -> Document<'a> {
@@ -868,7 +879,7 @@ fn expr_list<'a>(
     env: &mut Env<'a>,
 ) -> Document<'a> {
     let elements = concat(Itertools::intersperse(
-        elements.into_iter().map(|e| expr(e, env)),
+        elements.iter().map(|e| expr(e, env)),
         break_(",", ", "),
     ));
     list(elements, tail.as_ref().map(|e| expr(e, env)))
@@ -895,7 +906,7 @@ fn var<'a>(name: &'a str, constructor: &'a ValueConstructor, env: &mut Env<'a>) 
                     .to_doc()
                     .append(Document::String(chars.clone()))
                     .append(") -> {")
-                    .append(Document::String(record_name.to_snake_case()))
+                    .append(atom(record_name.to_snake_case()))
                     .append(", ")
                     .append(Document::String(chars))
                     .append("} end")
@@ -1293,7 +1304,9 @@ fn begin_end(document: Document<'_>) -> Document<'_> {
 ///
 fn maybe_block_expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
     match &expression {
-        TypedExpr::Seq { .. } | TypedExpr::Assignment { .. } => begin_end(expr(expression, env)),
+        TypedExpr::Sequence { .. } | TypedExpr::Assignment { .. } => {
+            begin_end(expr(expression, env))
+        }
         _ => expr(expression, env),
     }
 }
@@ -1357,7 +1370,7 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
         TypedExpr::Int { value, .. } => int(value),
         TypedExpr::Float { value, .. } => float(value),
         TypedExpr::String { value, .. } => string(value),
-        TypedExpr::Seq { first, then, .. } => seq(first, then, env),
+        TypedExpr::Sequence { expressions, .. } => seq(expressions, env),
         TypedExpr::Pipe { left, right, .. } => pipe(left, right, env),
 
         TypedExpr::TupleIndex { tuple, index, .. } => tuple_index(tuple, *index, env),
@@ -1373,7 +1386,7 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
         TypedExpr::Call { fun, args, .. } => call(fun, args, env),
 
         TypedExpr::ModuleSelect {
-            constructor: ModuleValueConstructor::Record { name, arity: 0 },
+            constructor: ModuleValueConstructor::Record { name, arity: 0, .. },
             ..
         } => atom(name.to_snake_case()),
 
@@ -1383,7 +1396,7 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
         } => const_inline(literal, env),
 
         TypedExpr::ModuleSelect {
-            constructor: ModuleValueConstructor::Record { name, arity },
+            constructor: ModuleValueConstructor::Record { name, arity, .. },
             ..
         } => {
             let chars = incrementing_args_list(*arity);
@@ -1540,16 +1553,18 @@ fn variable_name(name: &str) -> String {
 fn id_to_type_var(id: usize) -> Document<'static> {
     if id < 26 {
         let mut name = "".to_string();
-        name.push(std::char::from_u32((id % 26 + 65) as u32).unwrap());
+        name.push(std::char::from_u32((id % 26 + 65) as u32).gleam_expect("id_to_type_var 0"));
         return Document::String(name);
     }
     let mut name = vec![];
     let mut last_char = id;
     while last_char >= 26 {
-        name.push(std::char::from_u32((last_char % 26 + 65) as u32).unwrap());
+        name.push(
+            std::char::from_u32((last_char % 26 + 65) as u32).gleam_expect("id_to_type_var 1"),
+        );
         last_char /= 26;
     }
-    name.push(std::char::from_u32((last_char % 26 + 64) as u32).unwrap());
+    name.push(std::char::from_u32((last_char % 26 + 64) as u32).gleam_expect("id_to_type_var 2"));
     name.reverse();
     Document::String(name.into_iter().collect::<String>())
 }
@@ -1578,6 +1593,13 @@ pub fn is_erlang_reserved_word(name: &str) -> bool {
             | "try"
             | "catch"
             | "after"
+            | "begin"
+            | "let"
+            | "query"
+            | "cond"
+            | "if"
+            | "of"
+            | "case"
     )
 }
 
@@ -1709,7 +1731,6 @@ fn erl_safe_type_name(mut name: String) -> String {
             | "port"
             | "reference"
             | "float"
-            | "fun"
             | "integer"
             | "list"
             | "nonempty_improper_list"
@@ -1742,12 +1763,15 @@ fn erl_safe_type_name(mut name: String) -> String {
             | "neg_integer"
     ) {
         name.push('_');
+        name
+    } else {
+        escape_atom(name)
     }
-    name
 }
 
 #[derive(Debug)]
 struct TypePrinter<'a> {
+    var_as_any: bool,
     current_module: &'a [String],
     var_usages: Option<&'a HashMap<usize, usize>>,
 }
@@ -1757,6 +1781,7 @@ impl<'a> TypePrinter<'a> {
         Self {
             current_module,
             var_usages: None,
+            var_as_any: false,
         }
     }
 
@@ -1785,6 +1810,9 @@ impl<'a> TypePrinter<'a> {
 
     fn print_var(&self, type_: &TypeVar) -> Document<'static> {
         match type_ {
+            TypeVar::Generic { .. } | TypeVar::Unbound { .. } if self.var_as_any => {
+                "any()".to_doc()
+            }
             TypeVar::Generic { id, .. } | TypeVar::Unbound { id, .. } => match &self.var_usages {
                 Some(usages) => match usages.get(id) {
                     Some(&0) => nil(),
@@ -1806,12 +1834,12 @@ impl<'a> TypePrinter<'a> {
             "Float" => "float()".to_doc(),
             "BitString" => "bitstring()".to_doc(),
             "List" => {
-                let arg0 = self.print(&args[0]);
+                let arg0 = self.print(args.get(0).gleam_expect("print_prelude_type list"));
                 "list(".to_doc().append(arg0).append(")")
             }
             "Result" => {
-                let arg_ok = self.print(&args[0]);
-                let arg_err = self.print(&args[1]);
+                let arg_ok = self.print(args.get(0).gleam_expect("print_prelude_type result ok"));
+                let arg_err = self.print(args.get(1).gleam_expect("print_prelude_type result err"));
                 let ok = tuple(vec!["ok".to_doc(), arg_ok].into_iter());
                 let error = tuple(vec!["error".to_doc(), arg_err].into_iter());
                 docvec![ok, break_(" |", " | "), error].nest(INDENT).group()
@@ -1859,5 +1887,11 @@ impl<'a> TypePrinter<'a> {
             .append(") -> ")
             .append(retrn)
             .append(")")
+    }
+
+    /// Print type vars as `any()`.
+    fn var_as_any(mut self) -> Self {
+        self.var_as_any = true;
+        self
     }
 }

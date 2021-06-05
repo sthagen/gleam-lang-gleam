@@ -10,25 +10,25 @@ pub use self::constant::{Constant, TypedConstant, UntypedConstant};
 use crate::type_::{self, ModuleValueConstructor, PatternConstructor, Type, ValueConstructor};
 use std::sync::Arc;
 
-pub const CAPTURE_VARIABLE: &str = "gleam@capture_variable";
+pub const CAPTURE_VARIABLE: &str = "_gleam_capture";
 
 pub trait HasLocation {
     fn location(&self) -> SrcSpan;
 }
 
-pub type TypedModule = Module<Arc<Type>, TypedExpr, type_::Module, String>;
+pub type TypedModule = Module<Arc<Type>, TypedExpr, type_::Module, String, String>;
 
-pub type UntypedModule = Module<(), UntypedExpr, (), ()>;
+pub type UntypedModule = Module<(), UntypedExpr, (), (), ()>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Module<T, Expr, Info, ConstantRecordTag> {
+pub struct Module<T, Expr, Info, ConstantRecordTag, PackageName> {
     pub name: Vec<String>,
     pub documentation: Vec<String>,
     pub type_info: Info,
-    pub statements: Vec<Statement<T, Expr, ConstantRecordTag>>,
+    pub statements: Vec<Statement<T, Expr, ConstantRecordTag, PackageName>>,
 }
 
-impl<A, B, C, D> Module<A, B, C, D> {
+impl<A, B, C, D, E> Module<A, B, C, D, E> {
     pub fn name_string(&self) -> String {
         self.name.join("/")
     }
@@ -105,6 +105,15 @@ pub enum ArgNames {
     NamedLabelled { name: String, label: String },
 }
 
+impl ArgNames {
+    pub fn get_variable_name(&self) -> Option<&str> {
+        match self {
+            ArgNames::Discard { .. } | ArgNames::LabelledDiscard { .. } => None,
+            ArgNames::NamedLabelled { name, .. } | ArgNames::Named { name } => Some(name),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordConstructor<T> {
     pub location: SrcSpan,
@@ -170,11 +179,11 @@ impl TypeAst {
     }
 }
 
-pub type TypedStatement = Statement<Arc<Type>, TypedExpr, String>;
-pub type UntypedStatement = Statement<(), UntypedExpr, ()>;
+pub type TypedStatement = Statement<Arc<Type>, TypedExpr, String, String>;
+pub type UntypedStatement = Statement<(), UntypedExpr, (), ()>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Statement<T, Expr, ConstantRecordTag> {
+pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
     Fn {
         end_location: usize,
         location: SrcSpan,
@@ -233,6 +242,7 @@ pub enum Statement<T, Expr, ConstantRecordTag> {
         module: Vec<String>,
         as_name: Option<String>,
         unqualified: Vec<UnqualifiedImport>,
+        package: PackageName,
     },
 
     ModuleConstant {
@@ -246,7 +256,7 @@ pub enum Statement<T, Expr, ConstantRecordTag> {
     },
 }
 
-impl<A, B, C> Statement<A, B, C> {
+impl<A, B, C, E> Statement<A, B, C, E> {
     pub fn location(&self) -> &SrcSpan {
         match self {
             Statement::Import { location, .. }
@@ -640,6 +650,7 @@ pub enum Pattern<Constructor, Type> {
         module: Option<String>,
         constructor: Constructor,
         with_spread: bool,
+        type_: Type,
     },
 
     Tuple {

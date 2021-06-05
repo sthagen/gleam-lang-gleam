@@ -286,7 +286,7 @@ where
                         &mut opstack,
                         &mut estack,
                         &do_reduce_expression,
-                    )?;
+                    );
                 } else {
                     // Is not Op
                     self.tok0 = Some((op_s, t, op_e));
@@ -297,7 +297,12 @@ where
             }
         }
 
-        handle_op(None, &mut opstack, &mut estack, &do_reduce_expression)
+        Ok(handle_op(
+            None,
+            &mut opstack,
+            &mut estack,
+            &do_reduce_expression,
+        ))
     }
 
     // examples:
@@ -603,7 +608,7 @@ where
         };
         let annotation = self.parse_type_annotation(&Token::Colon, false)?;
         let (eq_s, eq_e) = self.expect_one(&Token::Equal)?;
-        let value = self.parse_expression()?.ok_or_else(|| ParseError {
+        let value = self.parse_expression()?.ok_or(ParseError {
             error: ParseErrorType::ExpectedValue,
             location: SrcSpan {
                 start: eq_s,
@@ -677,15 +682,13 @@ where
                     },
                 ),
             }
-        } else if let Some(mut expr) = self.parse_expression()? {
-            while let Some((e, _)) = self.parse_expression_seq()? {
-                expr = UntypedExpr::Seq {
-                    first: Box::new(expr),
-                    then: Box::new(e),
-                }
+        } else if let Some(expression) = self.parse_expression()? {
+            let mut expression = expression;
+            while let Some((next, _)) = self.parse_expression_seq()? {
+                expression = expression.append_in_sequence(next);
             }
-            let end = expr.location().end;
-            Ok(Some((expr, end)))
+            let end = expression.location().end;
+            Ok(Some((expression, end)))
         } else {
             Ok(None)
         }
@@ -930,7 +933,7 @@ where
                             &mut opstack,
                             &mut estack,
                             &do_reduce_clause_guard,
-                        )?;
+                        );
                     } else {
                         // Is not Op
                         self.tok0 = Some((op_s, t, op_e));
@@ -939,7 +942,12 @@ where
                 }
             }
 
-            handle_op(None, &mut opstack, &mut estack, &do_reduce_clause_guard)
+            Ok(handle_op(
+                None,
+                &mut opstack,
+                &mut estack,
+                &do_reduce_clause_guard,
+            ))
         } else {
             Ok(None)
         }
@@ -1032,6 +1040,7 @@ where
             name,
             with_spread,
             constructor: (),
+            type_: (),
         })
     }
 
@@ -1765,6 +1774,7 @@ where
             unqualified,
             module,
             as_name,
+            package: (),
         }))
     }
 
@@ -1962,6 +1972,7 @@ where
                 args,
                 tag: (),
                 typ: (),
+                field_map: None,
             }))
         } else {
             Ok(Some(Constant::Record {
@@ -1971,6 +1982,7 @@ where
                 args: vec![],
                 tag: (),
                 typ: (),
+                field_map: None,
             }))
         }
     }
@@ -2385,19 +2397,19 @@ fn handle_op<A>(
     opstack: &mut Vec<(Spanned, u8)>,
     estack: &mut Vec<A>,
     do_reduce: &impl Fn(Spanned, &mut Vec<A>),
-) -> Result<Option<A>, ParseError> {
+) -> Option<A> {
     let mut next_op = next_op;
     loop {
         match (opstack.pop(), next_op.take()) {
             (None, None) => {
                 if let Some(fin) = estack.pop() {
                     if estack.is_empty() {
-                        return Ok(Some(fin));
+                        return Some(fin);
                     } else {
                         fatal_compiler_bug("Expression not fully reduced.")
                     }
                 } else {
-                    return Ok(None);
+                    return None;
                 }
             }
 
@@ -2424,17 +2436,14 @@ fn handle_op<A>(
             }
         }
     }
-    Ok(None)
+    None
 }
 
 fn precedence(t: &Token) -> Option<u8> {
     if t == &Token::Pipe {
         return Some(5);
     };
-    match tok_to_binop(t) {
-        Some(b) => Some(b.precedence()),
-        None => None,
-    }
+    tok_to_binop(t).map(|op| op.precedence())
 }
 
 fn tok_to_binop(t: &Token) -> Option<BinOp> {

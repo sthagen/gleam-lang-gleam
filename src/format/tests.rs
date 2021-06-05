@@ -3177,3 +3177,46 @@ fn assert_as_expression() {
 "
     );
 }
+
+#[test]
+fn block_containing_try() {
+    assert_format!(
+        "pub fn main() {
+  let _ = {
+    try _ = 1
+    2
+  }
+}
+"
+    );
+
+    assert_format!(
+        "pub fn main() {
+  #(
+    {
+      try _ = 1
+      2
+    },
+  )
+}
+"
+    );
+}
+
+#[test]
+fn case_in_call() {
+    assert_format!(
+        "fn clause_guard_tests(_fns) -> List(Test) {
+  example(fn() {
+    assert_equal(
+      0,
+      case Nil {
+        _ if yes -> 0
+        _ -> 1
+      },
+    )
+  })
+}
+"
+    );
+}

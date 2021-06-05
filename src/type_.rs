@@ -90,23 +90,43 @@ impl Type {
     }
 
     pub fn is_nil(&self) -> bool {
-        matches!(self, Self::App { module, name, .. } if "Nil" == name && module.is_empty())
+        match self {
+            Self::App { module, name, .. } if "Nil" == name && module.is_empty() => true,
+            Self::Var { type_ } => type_.borrow().is_nil(),
+            _ => false,
+        }
     }
 
     pub fn is_bool(&self) -> bool {
-        matches!(self, Self::App { module, name, .. } if "Bool" == name && module.is_empty())
+        match self {
+            Self::App { module, name, .. } if "Bool" == name && module.is_empty() => true,
+            Self::Var { type_ } => type_.borrow().is_bool(),
+            _ => false,
+        }
     }
 
     pub fn is_int(&self) -> bool {
-        matches!(self, Self::App { module, name, .. } if "Int" == name && module.is_empty())
+        match self {
+            Self::App { module, name, .. } if "Int" == name && module.is_empty() => true,
+            Self::Var { type_ } => type_.borrow().is_int(),
+            _ => false,
+        }
     }
 
     pub fn is_float(&self) -> bool {
-        matches!(self, Self::App { module, name, .. } if "Float" == name && module.is_empty())
+        match self {
+            Self::App { module, name, .. } if "Float" == name && module.is_empty() => true,
+            Self::Var { type_ } => type_.borrow().is_float(),
+            _ => false,
+        }
     }
 
     pub fn is_string(&self) -> bool {
-        matches!(self, Self::App { module, name, .. } if "String" == name && module.is_empty())
+        match self {
+            Self::App { module, name, .. } if "String" == name && module.is_empty() => true,
+            Self::Var { type_ } => type_.borrow().is_string(),
+            _ => false,
+        }
     }
 
     /// Get the args for the type if the type is a specific `Type::App`.
@@ -244,11 +264,17 @@ pub enum ValueConstructorVariant {
 }
 
 impl ValueConstructorVariant {
-    fn to_module_value_constructor(&self) -> ModuleValueConstructor {
+    fn to_module_value_constructor(&self, type_: Arc<Type>) -> ModuleValueConstructor {
         match self {
-            Self::Record { name, arity, .. } => ModuleValueConstructor::Record {
+            Self::Record {
+                name,
+                arity,
+                field_map,
+            } => ModuleValueConstructor::Record {
                 name: name.clone(),
+                field_map: field_map.clone(),
                 arity: *arity,
+                type_,
             },
 
             Self::ModuleConstant { literal } => ModuleValueConstructor::Constant {
@@ -262,14 +288,23 @@ impl ValueConstructorVariant {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModuleValueConstructor {
-    Record { name: String, arity: usize },
+    Record {
+        name: String,
+        arity: usize,
+        type_: Arc<Type>,
+        field_map: Option<FieldMap>,
+    },
     Fn,
-    Constant { literal: TypedConstant },
+    Constant {
+        literal: TypedConstant,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {
     pub name: Vec<String>,
+    pub origin: Origin,
+    pub package: String,
     pub types: HashMap<String, TypeConstructor>,
     pub values: HashMap<String, ValueConstructor>,
     pub accessors: HashMap<String, AccessorsMap>,
@@ -277,7 +312,10 @@ pub struct Module {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PatternConstructor {
-    Record { name: String },
+    Record {
+        name: String,
+        field_map: Option<FieldMap>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -290,6 +328,41 @@ pub enum TypeVar {
 impl TypeVar {
     pub fn is_unbound(&self) -> bool {
         matches!(self, Self::Unbound { .. })
+    }
+
+    pub fn is_nil(&self) -> bool {
+        match self {
+            Self::Link { type_ } => type_.is_nil(),
+            _ => false,
+        }
+    }
+
+    pub fn is_bool(&self) -> bool {
+        match self {
+            Self::Link { type_ } => type_.is_bool(),
+            _ => false,
+        }
+    }
+
+    pub fn is_int(&self) -> bool {
+        match self {
+            Self::Link { type_ } => type_.is_int(),
+            _ => false,
+        }
+    }
+
+    pub fn is_float(&self) -> bool {
+        match self {
+            Self::Link { type_ } => type_.is_float(),
+            _ => false,
+        }
+    }
+
+    pub fn is_string(&self) -> bool {
+        match self {
+            Self::Link { type_ } => type_.is_string(),
+            _ => false,
+        }
     }
 }
 
@@ -328,13 +401,16 @@ impl ValueConstructor {
     }
 }
 
+// TODO: This takes too many arguments.
 /// Crawl the AST, annotating each node with the inferred type or
 /// returning an error.
 ///
 pub fn infer_module(
     uid: &mut usize,
     module: UntypedModule,
-    modules: &HashMap<String, (Origin, Module)>,
+    origin: Origin,
+    package: &str,
+    modules: &HashMap<String, Module>,
     warnings: &mut Vec<Warning>,
 ) -> Result<TypedModule, Error> {
     let mut environment = Environment::new(uid, &module.name, modules, warnings);
@@ -399,7 +475,7 @@ pub fn infer_module(
     let statements = statements
         .into_iter()
         .map(|s| generalise_statement(s, module_name, &mut environment))
-        .try_collect()?;
+        .collect();
 
     // Generate warnings for unused items
     environment.convert_unused_to_warnings();
@@ -439,12 +515,14 @@ pub fn infer_module(
             types,
             values,
             accessors,
+            origin,
+            package: package.to_string(),
         },
     })
 }
 
 fn validate_module_name(name: &[String]) -> Result<(), Error> {
-    if name == &["gleam"] {
+    if name == ["gleam"] {
         return Err(Error::ReservedModuleName {
             name: name.join("/"),
         });
@@ -490,6 +568,21 @@ fn assert_unique_type_name<'a>(
     }
 }
 
+fn assert_unique_const_name<'a>(
+    names: &mut HashMap<&'a str, &'a SrcSpan>,
+    name: &'a str,
+    location: &'a SrcSpan,
+) -> Result<(), Error> {
+    match names.insert(name, location) {
+        Some(previous_location) => Err(Error::DuplicateConstName {
+            name: name.to_string(),
+            previous_location: *previous_location,
+            location: *location,
+        }),
+        None => Ok(()),
+    }
+}
+
 fn register_values<'a>(
     s: &'a UntypedStatement,
     module_name: &[String],
@@ -512,7 +605,9 @@ fn register_values<'a>(
             // Create the field map so we can reorder labels for usage of this function
             let mut field_map = FieldMap::new(args.len());
             for (i, arg) in args.iter().enumerate() {
-                if let ArgNames::NamedLabelled { label, .. } = &arg.names {
+                if let ArgNames::NamedLabelled { label, .. }
+                | ArgNames::LabelledDiscard { label, .. } = &arg.names
+                {
                     field_map
                         .insert(label.clone(), i)
                         .map_err(|_| Error::DuplicateField {
@@ -722,6 +817,10 @@ fn register_values<'a>(
             }
         }
 
+        Statement::ModuleConstant { name, location, .. } => {
+            assert_unique_const_name(names, name, location)?;
+        }
+
         _ => (),
     }
     Ok(())
@@ -731,7 +830,7 @@ fn generalise_statement(
     s: TypedStatement,
     module_name: &[String],
     environment: &mut Environment<'_, '_>,
-) -> Result<TypedStatement, Error> {
+) -> TypedStatement {
     match s {
         Statement::Fn {
             doc,
@@ -775,7 +874,7 @@ fn generalise_statement(
                 },
             );
 
-            Ok(Statement::Fn {
+            Statement::Fn {
                 doc,
                 location,
                 name,
@@ -785,10 +884,10 @@ fn generalise_statement(
                 return_annotation,
                 return_type,
                 body,
-            })
+            }
         }
 
-        statement => Ok(statement),
+        statement => statement,
     }
 }
 
@@ -1049,12 +1148,24 @@ fn infer_statement(
             module,
             as_name,
             unqualified,
-        } => Ok(Statement::Import {
-            location,
-            module,
-            as_name,
-            unqualified,
-        }),
+            ..
+        } => {
+            // Find imported module
+            let module_info = environment
+                .importable_modules
+                .get(&module.join("/"))
+                .gleam_expect(
+                    "Typer could not find a module being imported during inference.
+Missing modules should be detected prior to type checking",
+                );
+            Ok(Statement::Import {
+                location,
+                module,
+                as_name,
+                unqualified,
+                package: module_info.package.clone(),
+            })
+        }
 
         Statement::ModuleConstant {
             doc,
@@ -1539,8 +1650,6 @@ pub fn register_import(
 Missing modules should be detected prior to type checking",
                 );
 
-            let (_, imported_module) = module_info;
-
             // Determine local alias of imported module
             let module_name = as_name
                 .as_ref()
@@ -1561,8 +1670,16 @@ Missing modules should be detected prior to type checking",
 
                 let imported_name = as_name.as_ref().unwrap_or(name);
 
+                // Check if value already was imported
+                if let Some(value) = environment.local_values.get(name) {
+                    return Err(Error::DuplicateImport {
+                        location: *location,
+                        previous_location: value.origin,
+                        name: name.to_string(),
+                    });
+                }
                 // Register the unqualified import if it is a value
-                if let Some(value) = imported_module.values.get(name) {
+                if let Some(value) = module_info.values.get(name) {
                     environment.insert_variable(
                         imported_name.clone(),
                         value.variant.clone(),
@@ -1574,7 +1691,7 @@ Missing modules should be detected prior to type checking",
                 }
 
                 // Register the unqualified import if it is a type constructor
-                if let Some(typ) = imported_module.types.get(name) {
+                if let Some(typ) = module_info.types.get(name) {
                     let typ_info = TypeConstructor {
                         origin: *location,
                         ..typ.clone()
@@ -1618,12 +1735,12 @@ Missing modules should be detected prior to type checking",
                         location: *location,
                         name: name.clone(),
                         module_name: module.clone(),
-                        value_constructors: imported_module
+                        value_constructors: module_info
                             .values
                             .keys()
                             .map(|t| t.to_string())
                             .collect(),
-                        type_constructors: imported_module
+                        type_constructors: module_info
                             .types
                             .keys()
                             .map(|t| t.to_string())

@@ -1,5 +1,5 @@
 pub opaque type Test {
-  Test(name: String, proc: fn() -> Outcome)
+  Example(name: String, proc: fn() -> Outcome)
   Suite(name: String, tests: List(Test))
 }
 
@@ -11,8 +11,8 @@ pub type Functions(anything) {
   )
 }
 
-pub fn test(name: String, proc: fn() -> Outcome) {
-  Test(name, proc)
+pub fn example(name: String, proc: fn() -> Outcome) {
+  Example(name, proc)
 }
 
 pub fn suite(name: String, tests: List(Test)) {
@@ -23,17 +23,8 @@ pub opaque type Pass {
   Pass
 }
 
-external type Dynamic
-
-external fn erase(a) -> Dynamic =
-  "test" "identity"
-
-pub fn identity(a) {
-  a
-}
-
 pub opaque type Fail {
-  Fail(expected: Dynamic, got: Dynamic)
+  Fail
 }
 
 pub type Outcome =
@@ -46,7 +37,8 @@ pub fn pass() -> Outcome {
 pub fn assert_equal(expected: a, got: a) -> Outcome {
   case expected == got {
     True -> pass()
-    False -> Error(Fail(expected: erase(expected), got: erase(got)))
+    // TODO: print diff on failure
+    False -> Error(Fail)
   }
 }
 
@@ -61,7 +53,7 @@ pub fn operator_test(operator_name, operator, fns) {
       |> append(to_string(b))
       |> append(" == ")
       |> append(to_string(expected))
-    test(name, fn() { assert_equal(operator(a, b), expected) })
+    Example(name, fn() { assert_equal(operator(a, b), expected) })
   }
 }
 
@@ -76,7 +68,20 @@ pub type Stats {
 }
 
 pub fn run(tests: List(Test), fns: Functions(a)) -> Stats {
-  run_list_of_tests(tests, fns, Stats(0, 0), 0)
+  let stats = run_list_of_tests(tests, fns, Stats(0, 0), 0)
+  print_summary(stats, fns)
+  stats
+}
+
+fn print_summary(stats: Stats, fns) {
+  let Functions(to_string: to_string, print: print, ..) = fns
+  print("\n\n")
+  print(to_string(stats.passes + stats.failures))
+  print(" tests\n")
+  print(to_string(stats.passes))
+  print(" passes\n")
+  print(to_string(stats.failures))
+  print(" failures\n")
 }
 
 fn run_test(
@@ -86,7 +91,7 @@ fn run_test(
   indentation: Int,
 ) -> Stats {
   case test {
-    Test(name: name, proc: proc) ->
+    Example(name: name, proc: proc) ->
       run_single_test(name, proc, fns, stats, indentation)
     Suite(name: name, tests: tests) ->
       run_suite(name, tests, fns, stats, indentation)
@@ -95,12 +100,14 @@ fn run_test(
 
 fn run_suite(name, tests, fns, stats, indentation) {
   print_indentation(fns, indentation)
+  fns.print("\n")
   fns.print(name)
   fns.print("\n")
+  print_indentation(fns, indentation + 1)
   run_list_of_tests(tests, fns, stats, indentation + 1)
 }
 
-fn run_list_of_tests(tests, fns, stats, indentation) {
+fn run_list_of_tests(tests, fns, stats, indentation) -> Stats {
   case tests {
     [] -> stats
     [test, ..tests] -> {
@@ -111,26 +118,26 @@ fn run_list_of_tests(tests, fns, stats, indentation) {
 }
 
 fn run_single_test(name, proc, fns, stats, indentation) {
-  print_indentation(fns, indentation)
   case proc() {
     Ok(Pass) -> {
-      fns.print("✨ ")
-      fns.print(name)
-      fns.print("\n")
+      fns.print("✨")
       Stats(..stats, passes: stats.passes + 1)
     }
-    Error(Fail(expected: expected, got: got)) -> {
+    Error(Fail) -> {
+      fns.print("\n")
+      print_indentation(fns, indentation)
       fns.print("❌ ")
       fns.print(name)
-      fns.print("\n")
+      fns.print(" failed!\n")
       print_indentation(fns, indentation)
-      fns.print("expected: ")
-      fns.print(fns.to_string(expected))
-      fns.print("\n")
-      print_indentation(fns, indentation)
-      fns.print("     got: ")
-      fns.print(fns.to_string(got))
-      fns.print("\n")
+      // print_indentation(fns, indentation)
+      // fns.print("expected: ")
+      // fns.print(fns.to_string(expected))
+      // fns.print("\n")
+      // print_indentation(fns, indentation)
+      // fns.print("     got: ")
+      // fns.print(fns.to_string(got))
+      // fns.print("\n")
       Stats(..stats, failures: stats.failures + 1)
     }
   }

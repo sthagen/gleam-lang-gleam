@@ -80,7 +80,9 @@ fn comments_before<'a>(
     let mut comments = vec![];
     while let Some(SrcSpan { start, .. }) = comment_spans.peek() {
         if start <= &byte {
-            let comment = comment_spans.next().unwrap();
+            let comment = comment_spans
+                .next()
+                .gleam_expect("Comment before accessing next span");
             comments.push(Comment::from((comment, src)).content)
         } else {
             break;
@@ -164,10 +166,7 @@ pub fn analysed(inputs: Vec<Input>) -> Result<Vec<Analysed>, Error> {
     // TODO: Currently we do this here and also in the tests. It would be better
     // to have one place where we create all this required state for use in each
     // place.
-    let _ = modules_type_infos.insert(
-        "gleam".to_string(),
-        (Origin::Src, type_::build_prelude(&mut uid)),
-    );
+    let _ = modules_type_infos.insert("gleam".to_string(), type_::build_prelude(&mut uid));
 
     struct Out {
         source_base_path: PathBuf,
@@ -196,8 +195,14 @@ pub fn analysed(inputs: Vec<Input>) -> Result<Vec<Analysed>, Error> {
         println!("Compiling {}", name_string);
 
         let mut warnings = vec![];
-        let result =
-            crate::type_::infer_module(&mut uid, module, &modules_type_infos, &mut warnings);
+        let result = crate::type_::infer_module(
+            &mut uid,
+            module,
+            origin.to_origin(),
+            "old-build-system-doesnt-support-packages",
+            &modules_type_infos,
+            &mut warnings,
+        );
         let warnings = warnings
             .into_iter()
             .map(|warning| Warning::Type {
@@ -213,10 +218,7 @@ pub fn analysed(inputs: Vec<Input>) -> Result<Vec<Analysed>, Error> {
             error,
         })?;
 
-        let _ = modules_type_infos.insert(
-            name_string.clone(),
-            (origin.to_origin(), ast.type_info.clone()),
-        );
+        let _ = modules_type_infos.insert(name_string.clone(), ast.type_info.clone());
 
         compiled_modules.push(Out {
             name,
@@ -254,8 +256,7 @@ pub fn analysed(inputs: Vec<Input>) -> Result<Vec<Analysed>, Error> {
                 origin,
                 type_info: modules_type_infos
                     .remove(&name_string)
-                    .gleam_expect("project::compile(): Merging module type info")
-                    .1,
+                    .gleam_expect("project::compile(): Merging module type info"),
                 warnings,
                 module_extra,
             }

@@ -2,10 +2,42 @@
 
 ## Unreleased
 
+- Gleam compiler now is catching values which are being imported more than once 
+  in an unqualified fashion, this will raise a compile time error. 
 - Gleam can now compile Gleam projects without an external build tool.
 - Gleam can now run eunit without an external build tool.
 - Gleam can now run an Erlang shell without an external build tool.
 - Projects without rebar3 can be generated using the `gleam-lib` template.
+
+## v0.16.0-rc1 - 2021-06-04
+
+- Gleam can now compile to JavaScript! Specify the `--target javascript` flag to
+  `gleam compile-package` to use it today.
+- A compile time error is now raised when multiple module level constants with
+  the same name are defined.
+- Fixed a bug where declaring a type constructor using reserved erlang keyword
+  in its fields results in invalid erlang code being generated.
+- Fixed a bug where calling a function with discarded labelled arguments
+  incorrectly results in a compile error.
+- Fixed a bug where assert statements return the wrong value.
+- The `gleam new` command requires a root folder param, project name is
+  optional and if not provided the project name will be inferred from 
+  the folder name.
+- Generated Erlang record header files now contain Erlang type information.
+- New OTP application projects depend on `gleam_otp` v0.1.5.
+- The output of the formatter has been improved.
+
+## v0.15.1 - 2021-05-07
+
+- Fixed a bug where blocks that contained try expressions could be formatted
+  incorrectly.
+
+## v0.15.0 - 2021-05-06
+
+[Release Blog Post](https://gleam.run/news/gleam-v0.15-released/)
+
+## v0.15.0-rc1 - 2021-05-05
+
 - Syntax highlighting of Gleam code in generated HTML documentation has been
   improved.
 - Fixed a bug where markdown tables in rendered HTML documentation would have
@@ -19,8 +51,11 @@
   importing the `gleam` module.
 - Empty lists can now be used in constants.
 - Compiler performance has been improved when working with lists.
+- Compiler performance has been improved when working with sequences of
+  expressions.
 - Assignments using `let` and `assert` are now expressions and no longer require
-  a following expression in their containing block.
+  a following expression in their containing block. They are now themselves
+  expessions.
 - Fixed a bug where tuple indexing could incorrectly claim a tuple is not of
   type tuple in some circumstances.
 - Glean `new` command now checks if target folder exists, if so it returns
@@ -28,6 +63,8 @@
 - A compile time error is now raised if a module is defined with the name `gleam`.
 - A compile time error is now raised if a module is defined with the a keyword
   in the name.
+- New projects are generated using `gleam_stdlib` v0.15.0.
+- New projects are generated at v0.1.0.
 
 ## v0.14.4 - 2021-03-27
 

@@ -17,7 +17,7 @@ macro_rules! assert_infer {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
+        let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
         let result = ExprTyper::new(&mut Environment::new(&mut uid, &[], &modules, &mut vec![]))
             .infer(ast)
             .expect("should successfully infer");
@@ -38,9 +38,16 @@ macro_rules! assert_module_error {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
-        let ast =
-            infer_module(&mut uid, ast, &modules, &mut vec![]).expect_err("should infer an error");
+        let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
+        let ast = infer_module(
+            &mut uid,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut vec![],
+        )
+        .expect_err("should infer an error");
         assert_eq!(($src, sort_options($error)), ($src, sort_options(ast)));
     };
 
@@ -52,9 +59,16 @@ macro_rules! assert_module_error {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
-        let _ =
-            infer_module(&mut uid, ast, &modules, &mut vec![]).expect_err("should infer an error");
+        let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
+        let _ = infer_module(
+            &mut uid,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut vec![],
+        )
+        .expect_err("should infer an error");
     };
 }
 
@@ -67,7 +81,7 @@ macro_rules! assert_error {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
+        let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
         println!("new assert_error test: {}", modules.len());
         let result = ExprTyper::new(&mut Environment::new(
             &mut uid,
@@ -91,9 +105,16 @@ macro_rules! assert_module_infer {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
-        let ast =
-            infer_module(&mut uid, ast, &modules, &mut vec![]).expect("should successfully infer");
+        let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
+        let ast = infer_module(
+            &mut uid,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut vec![],
+        )
+        .expect("should successfully infer");
         let constructors: Vec<(_, _)> = ast
             .type_info
             .values
@@ -123,9 +144,16 @@ macro_rules! assert_warning {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
-        let _ = infer_module(&mut uid, ast, &modules, &mut warnings)
-            .expect("should successfully infer");
+        let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
+        let _ = infer_module(
+            &mut uid,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut warnings,
+        )
+        .expect("should successfully infer");
 
         assert!(!warnings.is_empty());
         assert_eq!($warning, warnings[0]);
@@ -144,9 +172,16 @@ macro_rules! assert_no_warnings {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
-        let _ = infer_module(&mut uid, ast, &modules, &mut warnings)
-            .expect("should successfully infer");
+        let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
+        let _ = infer_module(
+            &mut uid,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut warnings,
+        )
+        .expect("should successfully infer");
 
         assert_eq!(expected, warnings);
     };
@@ -286,12 +321,22 @@ fn infer_module_type_retention_test() {
     // TODO: Currently we do this here and also in the tests. It would be better
     // to have one place where we create all this required state for use in each
     // place.
-    let _ = modules.insert("gleam".to_string(), (Origin::Src, build_prelude(&mut uid)));
-    let module = infer_module(&mut uid, module, &modules, &mut vec![]).expect("Should infer OK");
+    let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
+    let module = infer_module(
+        &mut uid,
+        module,
+        Origin::Src,
+        "thepackage",
+        &modules,
+        &mut vec![],
+    )
+    .expect("Should infer OK");
 
     assert_eq!(
         module.type_info,
         Module {
+            origin: Origin::Src,
+            package: "thepackage".to_string(),
             name: vec!["ok".to_string()],
             types: HashMap::new(), // Core type constructors like String and Int are not included
             values: HashMap::new(),
@@ -2390,7 +2435,7 @@ fn demo() {
             situation: None,
             location: SrcSpan { start: 44, end: 51 },
             expected: list(string()),
-            given: list(int()),
+            given: list(link(int())),
         },
     );
 
@@ -2410,7 +2455,7 @@ fn demo() {
                     type_: Arc::new(RefCell::new(TypeVar::Generic { id: 9 }))
                 }))
             ]),
-            given: tuple(vec![string(), list(int())]),
+            given: tuple(vec![string(), list(link(int()))]),
         },
     );
 
@@ -2440,7 +2485,7 @@ fn demo() {
                 public: true,
                 module: vec!["my_module".to_string()],
                 name: "Box".to_string(),
-                args: vec![int()]
+                args: vec![link(int())]
             }),
         },
     );
@@ -2902,6 +2947,20 @@ fn duplicate_type_names() {
 }
 
 #[test]
+fn duplicate_const_names() {
+    // We cannot declare two const with the same name in a module
+    assert_module_error!(
+        "const duplicate = 1;
+         pub const duplicate = 1",
+        Error::DuplicateConstName {
+            location: SrcSpan { start: 40, end: 49 },
+            previous_location: SrcSpan { start: 6, end: 15 },
+            name: "duplicate".to_string(),
+        }
+    );
+}
+
+#[test]
 fn correct_pipe_arity_error_location() {
     // https://github.com/gleam-lang/gleam/issues/672
     assert_module_error!(
@@ -3040,6 +3099,13 @@ fn x() {
             valid: vec!["a".to_string(), "b".to_string()],
             supplied: vec!["a".to_string()],
         })
+    );
+
+    // https://github.com/gleam-lang/gleam/issues/1098
+    // calling function with unused labelled argument should not emit warnings
+    assert_no_warnings!(
+        r#"fn greet(name name: String, title _title: String) { name }
+           pub fn main() { greet(name: "Sam", title: "Mr") }"#,
     );
 }
 

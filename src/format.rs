@@ -8,7 +8,7 @@ use crate::{
     parse::extra::Comment,
     pretty::*,
     type_::{self, Type},
-    Error, Result,
+    Error, GleamExpect, Result,
 };
 use itertools::Itertools;
 use std::{path::PathBuf, sync::Arc};
@@ -102,7 +102,10 @@ impl<'comments> Formatter<'comments> {
             end = i + 1;
         }
 
-        self.empty_lines = &self.empty_lines[end..];
+        self.empty_lines = self
+            .empty_lines
+            .get(end..)
+            .gleam_expect("Pop empty lines slicing");
         end != 0
     }
 
@@ -541,19 +544,20 @@ impl<'comments> Formatter<'comments> {
             .group()
     }
 
-    fn seq<'a>(&mut self, first: &'a UntypedExpr, then: &'a UntypedExpr) -> Document<'a> {
-        force_break()
-            .append({
-                let doc = self.expr(first).group();
-                let _ = self.pop_empty_lines(first.location().end);
-                doc
-            })
-            .append(if self.pop_empty_lines(then.start_byte_index()) {
-                lines(2)
-            } else {
-                line()
-            })
-            .append(self.expr(then))
+    fn sequence<'a>(&mut self, expressions: &'a [UntypedExpr]) -> Document<'a> {
+        let count = expressions.len();
+        let mut documents = Vec::with_capacity(count * 2);
+        documents.push(force_break());
+        for (i, expression) in expressions.iter().enumerate() {
+            let preceeding_newline = self.pop_empty_lines(expression.start_byte_index());
+            if i != 0 && preceeding_newline {
+                documents.push(lines(2));
+            } else if i != 0 {
+                documents.push(lines(1));
+            }
+            documents.push(self.expr(expression).group());
+        }
+        documents.to_doc()
     }
 
     fn assignment<'a>(
@@ -620,7 +624,7 @@ impl<'comments> Formatter<'comments> {
 
             UntypedExpr::String { value, .. } => value.to_doc().surround("\"", "\""),
 
-            UntypedExpr::Seq { first, then, .. } => self.seq(first, then),
+            UntypedExpr::Sequence { expressions, .. } => self.sequence(expressions),
 
             UntypedExpr::Var { name, .. } if name == CAPTURE_VARIABLE => "_".to_doc(),
 
@@ -632,7 +636,7 @@ impl<'comments> Formatter<'comments> {
                 is_capture: true,
                 body,
                 ..
-            } => self.fn_capture(&body),
+            } => self.fn_capture(body),
 
             UntypedExpr::Fn {
                 return_annotation,
@@ -641,7 +645,7 @@ impl<'comments> Formatter<'comments> {
                 ..
             } => self.expr_fn(args, return_annotation.as_ref(), body),
 
-            UntypedExpr::List { elements, tail, .. } => self.list(elements, tail.as_ref()),
+            UntypedExpr::List { elements, tail, .. } => self.list(elements, tail.as_deref()),
 
             UntypedExpr::Call {
                 fun,
@@ -748,7 +752,7 @@ impl<'comments> Formatter<'comments> {
             matches!(
                 expr,
                 UntypedExpr::Fn { .. }
-                    | UntypedExpr::Seq { .. }
+                    | UntypedExpr::Sequence { .. }
                     | UntypedExpr::Assignment { .. }
                     | UntypedExpr::Call { .. }
                     | UntypedExpr::Case { .. }
@@ -785,8 +789,8 @@ impl<'comments> Formatter<'comments> {
 
         let clauses_doc = concat(clauses.iter().enumerate().map(|(i, c)| self.clause(c, i)));
 
-        "case "
-            .to_doc()
+        force_break()
+            .append("case ")
             .append(subjects_doc)
             .append(" {")
             .append(
@@ -1061,7 +1065,9 @@ impl<'comments> Formatter<'comments> {
 
     fn wrap_expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
         match expr {
-            UntypedExpr::Seq { .. } | UntypedExpr::Assignment { .. } => "{"
+            UntypedExpr::Sequence { .. }
+            | UntypedExpr::Assignment { .. }
+            | UntypedExpr::Try { .. } => "{"
                 .to_doc()
                 .append(force_break())
                 .append(line().append(self.expr(expr)).nest(INDENT))
@@ -1091,6 +1097,7 @@ impl<'comments> Formatter<'comments> {
     }
 
     fn tuple_index<'a>(&mut self, tuple: &'a UntypedExpr, index: u64) -> Document<'a> {
+        dbg!(tuple);
         match tuple {
             UntypedExpr::TupleIndex { .. } => self.expr(tuple).surround("{", "}"),
             _ => self.expr(tuple),
@@ -1101,7 +1108,9 @@ impl<'comments> Formatter<'comments> {
 
     fn case_clause_value<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
         match expr {
-            UntypedExpr::Seq { .. } | UntypedExpr::Assignment { .. } => " {"
+            UntypedExpr::Try { .. }
+            | UntypedExpr::Sequence { .. }
+            | UntypedExpr::Assignment { .. } => " {"
                 .to_doc()
                 .append(line().append(self.expr(expr)).nest(INDENT).group())
                 .append(line())
@@ -1178,7 +1187,7 @@ impl<'comments> Formatter<'comments> {
     fn list<'a>(
         &mut self,
         elements: &'a [UntypedExpr],
-        tail: Option<&'a Box<UntypedExpr>>,
+        tail: Option<&'a UntypedExpr>,
     ) -> Document<'a> {
         let comma: fn() -> Document<'a> =
             if tail.is_none() && elements.iter().all(|e| e.is_simple_constant()) {
@@ -1473,13 +1482,11 @@ fn printed_comments<'a, 'comments>(
     comments: impl Iterator<Item = &'comments str>,
 ) -> Option<Document<'a>> {
     let mut comments = comments.peekable();
-    match comments.peek() {
-        None => None,
-        Some(_) => Some(concat(Itertools::intersperse(
-            comments.map(|c| "//".to_doc().append(Document::String(c.to_string()))),
-            line(),
-        ))),
-    }
+    let _ = comments.peek()?;
+    Some(concat(Itertools::intersperse(
+        comments.map(|c| "//".to_doc().append(Document::String(c.to_string()))),
+        line(),
+    )))
 }
 
 fn commented<'a, 'comments>(
@@ -1569,6 +1576,13 @@ pub fn comments_before<'a>(
         .iter()
         .position(|c| c.start > limit)
         .unwrap_or(comments.len());
-    let popped = comments[0..end].iter().map(|c| c.content);
-    (popped, &comments[end..])
+    let popped = comments
+        .get(0..end)
+        .gleam_expect("Comments before slicing popped")
+        .iter()
+        .map(|c| c.content);
+    (
+        popped,
+        comments.get(end..).gleam_expect("Comments before slicing"),
+    )
 }

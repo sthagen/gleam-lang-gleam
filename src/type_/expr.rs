@@ -75,15 +75,18 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         match expr {
             UntypedExpr::Todo {
                 location, label, ..
-            } => self.infer_todo(location, label),
+            } => Ok(self.infer_todo(location, label)),
 
             UntypedExpr::Var { location, name, .. } => self.infer_var(name, location),
 
             UntypedExpr::Int {
                 location, value, ..
-            } => self.infer_int(value, location),
+            } => Ok(self.infer_int(value, location)),
 
-            UntypedExpr::Seq { first, then, .. } => self.infer_seq(*first, *then),
+            UntypedExpr::Sequence {
+                expressions,
+                location,
+            } => self.infer_seq(location, expressions),
 
             UntypedExpr::Tuple {
                 location, elems, ..
@@ -91,11 +94,11 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
 
             UntypedExpr::Float {
                 location, value, ..
-            } => self.infer_float(value, location),
+            } => Ok(self.infer_float(value, location)),
 
             UntypedExpr::String {
                 location, value, ..
-            } => self.infer_string(value, location),
+            } => Ok(self.infer_string(value, location)),
 
             UntypedExpr::Pipe {
                 left,
@@ -301,66 +304,82 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         })
     }
 
-    fn infer_todo(&mut self, location: SrcSpan, label: Option<String>) -> Result<TypedExpr, Error> {
+    fn infer_todo(&mut self, location: SrcSpan, label: Option<String>) -> TypedExpr {
         let typ = self.new_unbound_var(self.environment.level);
         self.environment.warnings.push(Warning::Todo {
             location,
             typ: typ.clone(),
         });
 
-        Ok(TypedExpr::Todo {
+        TypedExpr::Todo {
             location,
             label,
             typ,
-        })
+        }
     }
 
-    fn infer_string(&mut self, value: String, location: SrcSpan) -> Result<TypedExpr, Error> {
-        Ok(TypedExpr::String {
+    fn infer_string(&mut self, value: String, location: SrcSpan) -> TypedExpr {
+        TypedExpr::String {
             location,
             value,
             typ: string(),
-        })
+        }
     }
 
-    fn infer_int(&mut self, value: String, location: SrcSpan) -> Result<TypedExpr, Error> {
-        Ok(TypedExpr::Int {
+    fn infer_int(&mut self, value: String, location: SrcSpan) -> TypedExpr {
+        TypedExpr::Int {
             location,
             value,
             typ: int(),
-        })
+        }
     }
 
-    fn infer_float(&mut self, value: String, location: SrcSpan) -> Result<TypedExpr, Error> {
-        Ok(TypedExpr::Float {
+    fn infer_float(&mut self, value: String, location: SrcSpan) -> TypedExpr {
+        TypedExpr::Float {
             location,
             value,
             typ: float(),
-        })
+        }
     }
 
-    fn infer_seq(&mut self, first: UntypedExpr, then: UntypedExpr) -> Result<TypedExpr, Error> {
-        if first.is_literal() {
+    /// Emit a warning if the given expressions should not be discarded.
+    /// e.g. because it's a literal (why was it made in the first place?)
+    /// e.g. because it's of the `Result` type (errors should be handled)
+    fn expression_discarded(&mut self, discarded: &TypedExpr) {
+        if discarded.is_literal() {
             self.environment.warnings.push(Warning::UnusedLiteral {
-                location: first.location(),
+                location: discarded.location(),
             });
         }
-
-        let first = self.infer(first)?;
-        let then = self.infer(then)?;
-
-        if first.type_().is_result() && !first.is_assignment() {
+        if discarded.type_().is_result() && !discarded.is_assignment() {
             self.environment
                 .warnings
                 .push(Warning::ImplicitlyDiscardedResult {
-                    location: first.location(),
+                    location: discarded.location(),
                 });
         }
+    }
 
-        Ok(TypedExpr::Seq {
-            typ: then.type_(),
-            first: Box::new(first),
-            then: Box::new(then),
+    fn infer_seq(
+        &mut self,
+        location: SrcSpan,
+        untyped: Vec<UntypedExpr>,
+    ) -> Result<TypedExpr, Error> {
+        let count = untyped.len();
+        let mut expressions = Vec::with_capacity(count);
+        for (i, expression) in untyped.into_iter().enumerate() {
+            let expression = self.infer(expression)?;
+            // This isn't the final expression in the sequence, so call the
+            // `expression_discarded` function to see if anything is being
+            // discarded that we think shouldn't be.
+            if i < count - 1 {
+                self.expression_discarded(&expression);
+            }
+            expressions.push(expression);
+        }
+        Ok(TypedExpr::Sequence {
+            location,
+            expressions,
         })
     }
 
@@ -671,10 +690,10 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
 
         let left = self.infer(left)?;
         self.unify(input_type.clone(), left.type_())
-            .map_err(|e| e.operator_situation(name).to_error(left.location()))?;
+            .map_err(|e| e.operator_situation(name).into_error(left.location()))?;
         let right = self.infer(right)?;
         self.unify(input_type, right.type_())
-            .map_err(|e| e.operator_situation(name).to_error(right.location()))?;
+            .map_err(|e| e.operator_situation(name).into_error(right.location()))?;
 
         Ok(TypedExpr::BinOp {
             location,
@@ -694,7 +713,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
         let value = self.in_new_scope(|value_typer| value_typer.infer(value))?;
-        let value_typ = generalise(value.type_(), self.environment.level + 1);
+        let value_typ = value.type_();
 
         // Ensure the pattern matches the type of the value
         let pattern =
@@ -804,7 +823,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         for clause in clauses {
             let typed_clause = self.infer_clause(clause, &subject_types)?;
             self.unify(return_type.clone(), typed_clause.then.type_())
-                .map_err(|e| e.case_clause_mismatch().to_error(typed_clause.location()))?;
+                .map_err(|e| e.case_clause_mismatch().into_error(typed_clause.location()))?;
             typed_clauses.push(typed_clause);
         }
         Ok(TypedExpr::Case {
@@ -1192,7 +1211,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         select_location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
         let (module_name, constructor) = {
-            let (_, module) = self
+            let module = self
                 .environment
                 .imported_modules
                 .get(module_alias)
@@ -1224,13 +1243,14 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
             (module.name.clone(), constructor.clone())
         };
 
+        let type_ = self.instantiate(constructor.type_, self.environment.level, &mut hashmap![]);
         Ok(TypedExpr::ModuleSelect {
             label,
-            typ: self.instantiate(constructor.type_, self.environment.level, &mut hashmap![]),
+            typ: type_.clone(),
             location: select_location,
             module_name,
             module_alias: module_alias.to_string(),
-            constructor: constructor.variant.to_module_value_constructor(),
+            constructor: constructor.variant.to_module_value_constructor(type_),
         })
     }
 
@@ -1284,7 +1304,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                 .environment
                 .importable_modules
                 .get(&module.join("/"))
-                .and_then(|(_, module)| module.accessors.get(name)),
+                .and_then(|module| module.accessors.get(name)),
 
             _something_without_fields => return Err(unknown_field(vec![])),
         }
@@ -1492,8 +1512,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                             .keys()
                             .map(|t| t.to_string())
                             .collect(),
-                    })?
-                    .1;
+                    })?;
                 module
                     .values
                     .get(name)
@@ -1561,12 +1580,15 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                 location,
                 name,
                 args,
+                // field_map, is always None here because untyped not yet unified
                 ..
             } if args.is_empty() => {
                 let constructor = self.infer_value_constructor(&module, &name, &location)?;
 
-                let tag = match &constructor.variant {
-                    ValueConstructorVariant::Record { name, .. } => name.clone(),
+                let (tag, field_map) = match &constructor.variant {
+                    ValueConstructorVariant::Record {
+                        name, field_map, ..
+                    } => (name.clone(), field_map.as_ref().cloned()),
 
                     ValueConstructorVariant::ModuleFn { .. }
                     | ValueConstructorVariant::LocalVariable => {
@@ -1585,6 +1607,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                     args: vec![],
                     typ: constructor.type_,
                     tag,
+                    field_map,
                 })
             }
 
@@ -1593,12 +1616,15 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                 location,
                 name,
                 mut args,
+                // field_map, is always None here because untyped not yet unified
                 ..
             } => {
                 let constructor = self.infer_value_constructor(&module, &name, &location)?;
 
-                let tag = match &constructor.variant {
-                    ValueConstructorVariant::Record { name, .. } => name.clone(),
+                let (tag, field_map) = match &constructor.variant {
+                    ValueConstructorVariant::Record {
+                        name, field_map, ..
+                    } => (name.clone(), field_map.as_ref().cloned()),
 
                     ValueConstructorVariant::ModuleFn { .. }
                     | ValueConstructorVariant::LocalVariable => {
@@ -1623,12 +1649,13 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                             .imported_modules
                             .get(module_name)
                             .gleam_expect("Failed to find previously located module import")
-                            .1
                             .name
                             .clone(),
                         typ: constructor.type_.clone(),
                         module_alias: module_name.clone(),
-                        constructor: constructor.variant.to_module_value_constructor(),
+                        constructor: constructor
+                            .variant
+                            .to_module_value_constructor(constructor.type_.clone()),
                         location,
                     },
 
@@ -1684,6 +1711,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                     args,
                     typ: return_type,
                     tag,
+                    field_map,
                 })
             }
         }?;
@@ -1867,7 +1895,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         // Check that any return type type is accurate.
         if let Some(return_type) = return_type {
             self.unify(return_type, body.type_())
-                .map_err(|e| e.return_annotation_mismatch().to_error(body.location()))?;
+                .map_err(|e| e.return_annotation_mismatch().into_error(body.location()))?;
         }
 
         Ok((args, body))
