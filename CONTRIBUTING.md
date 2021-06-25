@@ -24,6 +24,10 @@ please open a ticket and we will work it out together.
 
 ## Contributing code changes
 
+Before working on code it is suggested that you read the
+[docs/architecture.md](docs/architecture.md) file.
+It outlines fundamental components and design of this project.
+
 Code changes to Gleam are welcomed via the process below.
 
 1. Find or open a GitHub issue relevant to the change you wish to make and
@@ -51,13 +55,17 @@ to be installed.
 
 ```shell
 cargo test
+
+# Or if you have watchexec installed you can run them automatically 
+# when files change
+make test-watch
 ```
 
 To run the language integration tests. This will require a recent stable
 version of Rust, Erlang, and NodeJS to be installed.
 
 ```shell
-cd test/language && make
+make language-test
 ```
 
 If you don't have Rust or Cargo installed you can run the above command in a docker sandbox.
@@ -77,7 +85,7 @@ the code in a way that makes the error impossible. If that cannot be done and
 the error is either common or due to a mistake by the user return an error
 value that will be printed with an appropriate helpful error message. If the
 error _should_ never happen and its occurrence indicates a fatal compiler bug
-the `.gleam_expect` method of the `GleamExpect` trait can be used. This is
+the `.expect` method of the `GleamExpect` trait can be used. This is
 similar to `.expect` but prints a more helpful error message to the user.
 
 The `GLEAM_LOG` environment variable can be used to cause the compiler to

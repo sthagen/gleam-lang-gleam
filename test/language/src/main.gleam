@@ -1,5 +1,6 @@
 import test.{Functions, Test, assert_equal, example, operator_test, suite}
 import importable.{NoFields}
+import gleam
 
 pub fn main(
   print: fn(String) -> String,
@@ -11,13 +12,15 @@ pub fn main(
     [
       suite("try", try_tests(fns)),
       suite("ints", int_tests(fns)),
-      suite("floats", float_tests(fns)),
       suite("pipes", pipes_tests(fns)),
+      suite("floats", float_tests(fns)),
+      suite("prelude", prelude_tests(fns)),
       suite("strings", strings_tests(fns)),
       suite("constants", constants_tests(fns)),
       suite("clause guards", clause_guard_tests(fns)),
       suite("imported custom types", imported_custom_types_test(fns)),
       suite("tail call optimisation", tail_call_optimisation_tests(fns)),
+      suite("alternative patterns", alternative_patterns_tests(fns)),
     ]
     |> test.run(fns)
 
@@ -752,4 +755,83 @@ fn clause_guard_tests(_fns) -> List(Test) {
   ]
   // TODO
   // nested operators to check precedence
+}
+
+fn prelude_tests(_fns) -> List(Test) {
+  [
+    "gleam.Ok"
+    |> example(fn() { assert_equal(Ok(1), gleam.Ok(1)) }),
+    "gleam.Error"
+    |> example(fn() { assert_equal(Error(1), gleam.Error(1)) }),
+    "gleam.Nil"
+    |> example(fn() { assert_equal(Nil, gleam.Nil) }),
+  ]
+}
+
+fn alternative_patterns_tests(_fns) -> List(Test) {
+  let int_one = make_int_zero() + 1
+  let int_two = make_int_zero() + 2
+
+  [
+    "numbers"
+    |> example(fn() {
+      assert_equal(
+        0,
+        case 4 {
+          1 | 2 | 3 | 4 -> 0
+          _ -> 1
+        },
+      )
+    }),
+    "lists"
+    |> example(fn() {
+      assert_equal(
+        0,
+        case [1, 2] {
+          [0] | [1, 2] -> 0
+          _ -> 1
+        },
+      )
+    }),
+    "assignment"
+    |> example(fn() {
+      assert_equal(
+        2,
+        case [1, 2] {
+          [x] | [_, x] -> x
+          _ -> 0
+        },
+      )
+    }),
+    "multiple assignment"
+    |> example(fn() {
+      assert_equal(
+        #(1, 2),
+        case [1, 2, 3] {
+          [x, y] | [x, y, 3] -> #(x, y)
+          _ -> #(0, 0)
+        },
+      )
+    }),
+    "guard"
+    |> example(fn() {
+      assert_equal(
+        2,
+        case [1, 2] {
+          [x] | [_, x] if x == int_two -> x
+          _ -> 0
+        },
+      )
+    }),
+    "guard left-hand side"
+    |> example(fn() {
+      assert_equal(
+        1,
+        case [1] {
+          [x] | [_, x] if x == int_one -> x
+          _ -> 0
+        },
+      )
+    }),
+  ]
 }

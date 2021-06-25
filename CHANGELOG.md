@@ -2,12 +2,43 @@
 
 ## Unreleased
 
-- Gleam compiler now is catching values which are being imported more than once 
-  in an unqualified fashion, this will raise a compile time error. 
 - Gleam can now compile Gleam projects without an external build tool.
 - Gleam can now run eunit without an external build tool.
 - Gleam can now run an Erlang shell without an external build tool.
 - Projects without rebar3 can be generated using the `gleam-lib` template.
+
+## v0.16.1 - 2021-06-21
+
+- Values which are being imported more than once in an unqualified fashion now
+  cause an error to be reported.
+- Argument docs for custom type constructors are now rendered in the HTML
+  documentation.
+- Patterns can be used with `try` expresssions when compiling to JavaScript.
+- Types and record constructors can now be aliased with an uppercase name when
+  imported.  Aliasing them with a lowercase name is no longer permitted.
+- Fixed a bug where nested import paths could be rendered incorrectly in
+  JavaScript.
+
+## v0.16.0 - 2021-06-17
+
+## v0.16.0-rc4 - 2021-06-17
+
+- Fixed a bug where if a JavaScript global function was imported as an external
+  function with the same name the generated code would diverge.
+
+## v0.16.0-rc3 - 2021-06-17
+
+- New projects are generated using `gleam_stdlib` v0.16.0.
+
+## v0.16.0-rc2 - 2021-06-08
+
+- Gleam now supports alternative patterns in case expressions for the JavaScript target.
+- The `gleam` prelude module can now be imported when compiling to JavaScript.
+- Fixed a bug where the prelude module could not be imported when using the old
+  build compiler API.
+- Fixed a bug where if a JavaScript global function was imported as an external
+  function with the same name the generated code would diverge.
+- Type error messages coming from pipe usage have been improved.
 
 ## v0.16.0-rc1 - 2021-06-04
 

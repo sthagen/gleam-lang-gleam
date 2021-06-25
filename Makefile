@@ -12,15 +12,14 @@ build: ## Build the compiler
 
 .PHONY: install
 install: ## Build the Gleam compiler and place it on PATH
-	cargo install --path . --force --locked
+	cd compiler-cli && cargo install --path . --force --locked
 
-.PHONY: test ## Run all tests
+.PHONY: test ## Run the compiler unit tests
 test:
 	cargo test
-	cd test/language && make
 
-.PHONY: test ## Run the integration tests for all targets
-test-language:
+.PHONY: test ## Run the language integration tests for all targets
+language-test:
 	cd test/language && make
 
 .PHONY: test-watch

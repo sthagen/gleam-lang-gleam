@@ -28,8 +28,6 @@ please consider sponsoring its development [on GitHub](https://github.com/sponso
 Thank you to our top sponsors! Gleam would not be possible without you.
 
 <p>
-  <a href="https://github.com/mrjoelkemp"><img width=120 src="https://avatars.githubusercontent.com/u/865203?v=4" alt="Joel Kemp"></a>
-  &nbsp;
   <a href="http://www.ninefx.com"><img width=120 src="https://gleam.run/images/sponsors/nine-fx.png" alt="NineFX"></a>
   <a href="https://skunkwerks.at/"><img width=120 src="https://avatars.githubusercontent.com/u/6563319?s=200&v=4" alt="SkunkWerks GmbH"></a>
   <a href="https://sendmemo.app/"><img width=120 src="https://gleam.run/images/sponsors/memo.png" alt="Memo"></a>
@@ -68,10 +66,10 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [Ingmar Gagen](https://github.com/igagen)
  - [Ivar Vong](https://github.com/ivarvong)
  - [James MacAulay](https://github.com/jamesmacaulay)
+ - [Jechol Lee](https://github.com/trevorite)
  - [Jeff Kreeftmeijer](https://github.com/jeffkreeftmeijer)
  - [jiangplus](https://github.com/jiangplus)
  - [Joe Corkerton](https://github.com/joecorkerton)
- - [Joel Kemp](https://github.com/mrjoelkemp)
  - [John Palgut](https://github.com/Jwsonic)
  - [José Valim](https://github.com/josevalim)
  - [João Veiga](https://github.com/jveiga)
@@ -98,13 +96,13 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [Sascha Wolf](https://github.com/sascha-wolf)
  - [Scott Wey](https://github.com/scottwey)
  - [Sean Jensen-Grey](https://github.com/seanjensengrey)
- - [Shritesh Bhattarai](https://github.com/shritesh)
  - [Shunji Lin](https://github.com/shunjilin)
  - [SkunkWerks GmbH](https://skunkwerks.at/)
+ - [Strand Communications](https://github.com/strandcom)
  - [Tomochika Hara](https://github.com/thara)
  - [Topher Hunt](https://github.com/topherhunt)
- - [Trevor](https://github.com/trevorite)
  - [Tristan Sloughter](https://github.com/tsloughter)
+ - [Wilson Silva](https://github.com/wilsonsilva)
  - [Wojtek Mach](https://github.com/wojtekmach)
  - [YourMother-really](https://github.com/YourMother-really)
  - [Yu Matsuzawa](https://github.com/ymtszw)
