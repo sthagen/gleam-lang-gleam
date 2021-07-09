@@ -142,7 +142,7 @@ impl<'module> Generator<'module> {
 
             TypedExpr::BitString { .. } => unsupported("Bitstring"),
 
-            TypedExpr::Pipe { left, right, .. } => self.pipe(left, right),
+            TypedExpr::PipeLast { left, right, .. } => self.pipe(left, right),
 
             TypedExpr::ModuleSelect {
                 module_alias,
@@ -805,7 +805,7 @@ impl<'module> Generator<'module> {
         match constructor {
             ModuleValueConstructor::Fn | ModuleValueConstructor::Constant { .. } => {
                 docvec![
-                    maybe_escape_identifier(module),
+                    Document::String(module.to_camel_case()),
                     ".",
                     maybe_escape_identifier(label)
                 ]
@@ -959,7 +959,7 @@ impl TypedExpr {
             TypedExpr::Try { .. }
                 | TypedExpr::Call { .. }
                 | TypedExpr::Case { .. }
-                | TypedExpr::Pipe { .. }
+                | TypedExpr::PipeLast { .. }
                 | TypedExpr::Sequence { .. }
                 | TypedExpr::Assignment { .. }
         )
