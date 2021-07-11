@@ -198,137 +198,13 @@ pub fn module(
     let mut type_defs = vec![];
     let mut type_exports = vec![];
     for s in &module.statements {
-        match s {
-            Statement::Fn {
-                public: true,
-                name,
-                arguments: args,
-                ..
-            } => exports.push(atom(name.to_string()).append("/").append(args.len())),
-
-            Statement::ExternalFn {
-                public: true,
-                name,
-                arguments: args,
-                ..
-            } => exports.push(atom(name.to_string()).append("/").append(args.len())),
-
-            Statement::ExternalType {
-                name,
-                arguments: args,
-                ..
-            } => {
-                // Type Exports
-                type_exports.push(
-                    Document::String(erl_safe_type_name(name.to_snake_case()))
-                        .append("/")
-                        .append(args.len()),
-                );
-                // phantom variant
-                let phantom = if args.is_empty() {
-                    nil()
-                } else {
-                    " | ".to_doc().append(tuple(
-                        std::iter::once("gleam_phantom".to_doc())
-                            .chain(args.iter().map(|a| Document::String(variable_name(a)))),
-                    ))
-                };
-
-                // Type definition
-                let args = concat(Itertools::intersperse(
-                    args.iter().map(|p| Document::String(variable_name(p))),
-                    ", ".to_doc(),
-                ));
-
-                let doc = "-type "
-                    .to_doc()
-                    .append(Document::String(erl_safe_type_name(name.to_snake_case())))
-                    .append("(")
-                    .append(args)
-                    .append(") :: any()")
-                    .append(phantom)
-                    .append(".");
-                type_defs.push(doc);
-            }
-
-            Statement::CustomType {
-                name,
-                constructors,
-                typed_parameters,
-                opaque,
-                ..
-            } => {
-                // Erlang doesn't allow phantom type variables in type definitions but gleam does
-                // so we check the type declaratinon against its constroctors and generate a phantom
-                // value that uses the unused type variables.
-                let type_var_usages =
-                    collect_type_var_usages(HashMap::new(), typed_parameters.iter());
-                let mut constructor_var_usages = HashMap::new();
-                for c in constructors {
-                    constructor_var_usages = collect_type_var_usages(
-                        constructor_var_usages,
-                        c.arguments.iter().map(|a| &a.type_),
-                    );
-                }
-                let phantom_vars: Vec<_> = type_var_usages
-                    .keys()
-                    .filter(|&id| !constructor_var_usages.contains_key(id))
-                    .map(|&id| Type::Var {
-                        type_: Arc::new(std::cell::RefCell::new(TypeVar::Generic { id })),
-                    })
-                    .collect();
-                let phantom_vars_constructor = if !phantom_vars.is_empty() {
-                    let type_printer = TypePrinter::new(&module.name);
-                    Some(tuple(
-                        std::iter::once("gleam_phantom".to_doc())
-                            .chain(phantom_vars.iter().map(|pv| type_printer.print(pv))),
-                    ))
-                } else {
-                    None
-                };
-                // Type Exports
-                type_exports.push(
-                    Document::String(erl_safe_type_name(name.to_snake_case()))
-                        .append("/")
-                        .append(typed_parameters.len()),
-                );
-                // Type definitions
-                let constructors = concat(Itertools::intersperse(
-                    constructors
-                        .iter()
-                        .map(|c| {
-                            let name = atom(c.name.to_snake_case());
-                            if c.arguments.is_empty() {
-                                name
-                            } else {
-                                let type_printer = TypePrinter::new(&module.name);
-                                let args = c.arguments.iter().map(|a| type_printer.print(&a.type_));
-                                tuple(std::iter::once(name).chain(args))
-                            }
-                        })
-                        .chain(phantom_vars_constructor),
-                    break_(" |", " | "),
-                ))
-                .nest(INDENT)
-                .group()
-                .append(".");
-                let type_printer = TypePrinter::new(&module.name);
-                let params = concat(Itertools::intersperse(
-                    typed_parameters.iter().map(|a| type_printer.print(a)),
-                    ", ".to_doc(),
-                ));
-                let doc = if *opaque { "-opaque " } else { "-type " }
-                    .to_doc()
-                    .append(Document::String(erl_safe_type_name(name.to_snake_case())))
-                    .append("(")
-                    .append(params)
-                    .append(") :: ")
-                    .append(constructors);
-                type_defs.push(doc);
-            }
-
-            _ => {}
-        }
+        register_imports(
+            s,
+            &mut exports,
+            &mut type_exports,
+            &mut type_defs,
+            &module.name,
+        );
     }
 
     let exports = match (!exports.is_empty(), !type_exports.is_empty()) {
@@ -397,18 +273,162 @@ pub fn module(
         .pretty_print(MAX_COLUMNS, writer)
 }
 
+fn register_imports(
+    s: &TypedStatement,
+    exports: &mut Vec<Document<'_>>,
+    type_exports: &mut Vec<Document<'_>>,
+    type_defs: &mut Vec<Document<'_>>,
+    module_name: &[String],
+) {
+    match s {
+        Statement::Fn {
+            public: true,
+            name,
+            arguments: args,
+            ..
+        } => exports.push(atom(name.to_string()).append("/").append(args.len())),
+
+        Statement::ExternalFn {
+            public: true,
+            name,
+            arguments: args,
+            ..
+        } => exports.push(atom(name.to_string()).append("/").append(args.len())),
+
+        Statement::ExternalType {
+            name,
+            arguments: args,
+            ..
+        } => {
+            // Type Exports
+            type_exports.push(
+                Document::String(erl_safe_type_name(name.to_snake_case()))
+                    .append("/")
+                    .append(args.len()),
+            );
+            // phantom variant
+            let phantom = if args.is_empty() {
+                nil()
+            } else {
+                " | ".to_doc().append(tuple(
+                    std::iter::once("gleam_phantom".to_doc())
+                        .chain(args.iter().map(|a| Document::String(variable_name(a)))),
+                ))
+            };
+
+            // Type definition
+            let args = concat(Itertools::intersperse(
+                args.iter().map(|p| Document::String(variable_name(p))),
+                ", ".to_doc(),
+            ));
+
+            let doc = "-type "
+                .to_doc()
+                .append(Document::String(erl_safe_type_name(name.to_snake_case())))
+                .append("(")
+                .append(args)
+                .append(") :: any()")
+                .append(phantom)
+                .append(".");
+            type_defs.push(doc);
+        }
+
+        Statement::CustomType {
+            name,
+            constructors,
+            typed_parameters,
+            opaque,
+            ..
+        } => {
+            // Erlang doesn't allow phantom type variables in type definitions but gleam does
+            // so we check the type declaratinon against its constroctors and generate a phantom
+            // value that uses the unused type variables.
+            let type_var_usages = collect_type_var_usages(HashMap::new(), typed_parameters.iter());
+            let mut constructor_var_usages = HashMap::new();
+            for c in constructors {
+                constructor_var_usages = collect_type_var_usages(
+                    constructor_var_usages,
+                    c.arguments.iter().map(|a| &a.type_),
+                );
+            }
+            let phantom_vars: Vec<_> = type_var_usages
+                .keys()
+                .filter(|&id| !constructor_var_usages.contains_key(id))
+                .map(|&id| Type::Var {
+                    type_: Arc::new(std::cell::RefCell::new(TypeVar::Generic { id })),
+                })
+                .collect();
+            let phantom_vars_constructor = if !phantom_vars.is_empty() {
+                let type_printer = TypePrinter::new(module_name);
+                Some(tuple(
+                    std::iter::once("gleam_phantom".to_doc())
+                        .chain(phantom_vars.iter().map(|pv| type_printer.print(pv))),
+                ))
+            } else {
+                None
+            };
+            // Type Exports
+            type_exports.push(
+                Document::String(erl_safe_type_name(name.to_snake_case()))
+                    .append("/")
+                    .append(typed_parameters.len()),
+            );
+            // Type definitions
+            let constructors = concat(Itertools::intersperse(
+                constructors
+                    .iter()
+                    .map(|c| {
+                        let name = atom(c.name.to_snake_case());
+                        if c.arguments.is_empty() {
+                            name
+                        } else {
+                            let type_printer = TypePrinter::new(module_name);
+                            let args = c.arguments.iter().map(|a| type_printer.print(&a.type_));
+                            tuple(std::iter::once(name).chain(args))
+                        }
+                    })
+                    .chain(phantom_vars_constructor),
+                break_(" |", " | "),
+            ))
+            .nest(INDENT)
+            .group()
+            .append(".");
+            let type_printer = TypePrinter::new(module_name);
+            let params = concat(Itertools::intersperse(
+                typed_parameters.iter().map(|a| type_printer.print(a)),
+                ", ".to_doc(),
+            ));
+            let doc = if *opaque { "-opaque " } else { "-type " }
+                .to_doc()
+                .append(Document::String(erl_safe_type_name(name.to_snake_case())))
+                .append("(")
+                .append(params)
+                .append(") :: ")
+                .append(constructors);
+            type_defs.push(doc);
+        }
+
+        Statement::Fn { .. }
+        | Statement::Import { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::ExternalFn { .. }
+        | Statement::ModuleConstant { .. } => (),
+    }
+}
+
 fn statement<'a>(
     current_module: &'a [String],
     statement: &'a TypedStatement,
     module: &'a [String],
     line_numbers: &'a LineNumbers,
-) -> Option<Document<'a>> {
+) -> Vec<Document<'a>> {
     match statement {
-        Statement::TypeAlias { .. } => None,
-        Statement::CustomType { .. } => None,
-        Statement::Import { .. } => None,
-        Statement::ExternalType { .. } => None,
-        Statement::ModuleConstant { .. } => None,
+        Statement::TypeAlias { .. }
+        | Statement::CustomType { .. }
+        | Statement::Import { .. }
+        | Statement::ExternalType { .. }
+        | Statement::ModuleConstant { .. }
+        | Statement::ExternalFn { public: false, .. } => vec![],
 
         Statement::Fn {
             arguments: args,
@@ -416,9 +436,8 @@ fn statement<'a>(
             body,
             return_type,
             ..
-        } => Some(mod_fun(name, args, body, module, return_type, line_numbers)),
+        } => vec![mod_fun(name, args, body, module, return_type, line_numbers)],
 
-        Statement::ExternalFn { public: false, .. } => None,
         Statement::ExternalFn {
             fun,
             module,
@@ -426,14 +445,14 @@ fn statement<'a>(
             name,
             return_type,
             ..
-        } => Some(external_fun(
+        } => vec![external_fun(
             current_module,
             name,
             module,
             fun,
             args,
             return_type,
-        )),
+        )],
     }
 }
 

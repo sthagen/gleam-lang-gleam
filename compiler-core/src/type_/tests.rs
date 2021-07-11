@@ -5,8 +5,9 @@ use crate::{
     bit_string,
 };
 
-use pretty_assertions::assert_eq;
+mod statement_if;
 
+#[macro_export]
 macro_rules! assert_infer {
     ($src:expr, $typ:expr $(,)?) => {
         println!("\n{}\n", $src);
@@ -42,6 +43,7 @@ macro_rules! assert_module_error {
         // place.
         let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
         let ast = infer_module(
+            Target::Erlang,
             &mut uid,
             ast,
             Origin::Src,
@@ -63,6 +65,7 @@ macro_rules! assert_module_error {
         // place.
         let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
         let _ = infer_module(
+            Target::Erlang,
             &mut uid,
             ast,
             Origin::Src,
@@ -97,9 +100,12 @@ macro_rules! assert_error {
     };
 }
 
+#[macro_export]
 macro_rules! assert_module_infer {
     ($src:expr, $module:expr $(,)?) => {{
+        use crate::type_::{build_prelude, infer_module};
         use itertools::Itertools;
+        use std::collections::HashMap;
         let (ast, _) = crate::parse::parse_module($src).expect("syntax error");
         let mut uid = 0;
         let mut modules = HashMap::new();
@@ -109,9 +115,10 @@ macro_rules! assert_module_infer {
         // place.
         let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
         let ast = infer_module(
+            crate::build::Target::Erlang,
             &mut uid,
             ast,
-            Origin::Src,
+            crate::build::Origin::Src,
             "thepackage",
             &modules,
             &mut vec![],
@@ -122,7 +129,7 @@ macro_rules! assert_module_infer {
             .values
             .iter()
             .map(|(k, v)| {
-                let mut printer = pretty::Printer::new();
+                let mut printer = crate::type_::pretty::Printer::new();
                 (k.clone(), printer.pretty_print(&v.type_, 0))
             })
             .sorted()
@@ -148,6 +155,7 @@ macro_rules! assert_warning {
         // place.
         let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
         let _ = infer_module(
+            Target::Erlang,
             &mut uid,
             ast,
             Origin::Src,
@@ -176,6 +184,7 @@ macro_rules! assert_no_warnings {
         // place.
         let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
         let _ = infer_module(
+            Target::Erlang,
             &mut uid,
             ast,
             Origin::Src,
@@ -325,6 +334,7 @@ fn infer_module_type_retention_test() {
     // place.
     let _ = modules.insert("gleam".to_string(), build_prelude(&mut uid));
     let module = infer_module(
+        Target::Erlang,
         &mut uid,
         module,
         Origin::Src,

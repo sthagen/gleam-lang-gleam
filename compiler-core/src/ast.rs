@@ -7,6 +7,7 @@ pub use self::untyped::UntypedExpr;
 
 pub use self::constant::{Constant, TypedConstant, UntypedConstant};
 
+use crate::build::Target;
 use crate::type_::{self, ModuleValueConstructor, PatternConstructor, Type, ValueConstructor};
 use std::sync::Arc;
 
@@ -22,27 +23,76 @@ pub trait HasLocation {
     fn location(&self) -> SrcSpan;
 }
 
-pub type TypedModule = Module<Arc<Type>, TypedExpr, type_::Module, String, String>;
+pub type TypedModule = Module<type_::Module, TypedStatement>;
 
-pub type UntypedModule = Module<(), UntypedExpr, (), (), ()>;
+pub type UntypedModule = Module<(), TargetGroup>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Module<T, Expr, Info, ConstantRecordTag, PackageName> {
+pub struct Module<Info, Statements> {
     pub name: Vec<String>,
     pub documentation: Vec<String>,
     pub type_info: Info,
-    pub statements: Vec<Statement<T, Expr, ConstantRecordTag, PackageName>>,
+    pub statements: Vec<Statements>,
 }
 
-impl<A, B, C, D, E> Module<A, B, C, D, E> {
+/// An if is a grouping of statements that will only be compiled if
+/// compiling to the specified target. e.g.
+///
+/// ```gleam
+/// const x: Int = 1
+///
+/// if erlang {
+///   pub external fn display(a) -> Bool = "erlang" "display"
+/// }
+/// ```
+/// Outside an if block is `Any`, inside is an `Only`.
+///
+#[derive(Debug, Clone, PartialEq)]
+pub enum TargetGroup {
+    Any(Vec<UntypedStatement>),
+    Only(Target, Vec<UntypedStatement>),
+}
+
+impl TargetGroup {
+    pub fn is_for(&self, target: Target) -> bool {
+        match self {
+            Self::Any(_) => true,
+            Self::Only(t, _) => *t == target,
+        }
+    }
+
+    pub fn statements(self) -> Vec<UntypedStatement> {
+        match self {
+            Self::Any(s) => s,
+            Self::Only(_, s) => s,
+        }
+    }
+
+    pub fn statements_ref(&self) -> &[UntypedStatement] {
+        match self {
+            Self::Any(s) => s,
+            Self::Only(_, s) => s,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.statements_ref().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<A, B> Module<A, B> {
     pub fn name_string(&self) -> String {
         self.name.join("/")
     }
+}
 
-    // TODO: return &str not String once module is a String not a Vector
-    pub fn dependencies(&self) -> Vec<(String, SrcSpan)> {
-        self.statements
-            .iter()
+impl UntypedModule {
+    pub fn dependencies(&self, target: Target) -> Vec<(String, SrcSpan)> {
+        self.iter_statements(target)
             .flat_map(|s| match s {
                 Statement::Import {
                     module, location, ..
@@ -51,20 +101,45 @@ impl<A, B, C, D, E> Module<A, B, C, D, E> {
             })
             .collect()
     }
+
+    pub fn iter_statements(&self, target: Target) -> impl Iterator<Item = &UntypedStatement> {
+        self.statements
+            .iter()
+            .filter(move |group| group.is_for(target))
+            .flat_map(|group| group.statements_ref())
+    }
+
+    pub fn into_iter_statements(self, target: Target) -> impl Iterator<Item = UntypedStatement> {
+        self.statements
+            .into_iter()
+            .filter(move |group| group.is_for(target))
+            .flat_map(|group| group.statements())
+    }
 }
 
 #[test]
 fn module_dependencies_test() {
-    let (module, _) =
-        crate::parse::parse_module("import foo import bar import foo_bar").expect("syntax error");
+    let (module, _) = crate::parse::parse_module(
+        "import one 
+         if erlang { import two } 
+         if javascript { import three } 
+         import four",
+    )
+    .expect("syntax error");
 
     assert_eq!(
         vec![
-            ("foo".to_string(), SrcSpan { start: 7, end: 10 }),
-            ("bar".to_string(), SrcSpan { start: 18, end: 21 }),
-            ("foo_bar".to_string(), SrcSpan { start: 29, end: 36 }),
+            ("one".to_string(), SrcSpan { start: 7, end: 10 }),
+            ("two".to_string(), SrcSpan { start: 40, end: 43 }),
+            (
+                "four".to_string(),
+                SrcSpan {
+                    start: 104,
+                    end: 108
+                }
+            ),
         ],
-        module.dependencies()
+        module.dependencies(Target::Erlang)
     );
 }
 
@@ -272,8 +347,8 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
 impl<A, B, C, E> Statement<A, B, C, E> {
     pub fn location(&self) -> &SrcSpan {
         match self {
-            Statement::Import { location, .. }
-            | Statement::Fn { location, .. }
+            Statement::Fn { location, .. }
+            | Statement::Import { location, .. }
             | Statement::TypeAlias { location, .. }
             | Statement::CustomType { location, .. }
             | Statement::ExternalFn { location, .. }

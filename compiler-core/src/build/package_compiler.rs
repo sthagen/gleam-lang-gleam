@@ -78,13 +78,18 @@ where
         )?;
 
         // Determine order in which modules are to be processed
-        let sequence =
-            dep_tree::toposort_deps(parsed_modules.values().map(module_deps_for_graph).collect())
-                .map_err(convert_deps_tree_error)?;
+        let sequence = dep_tree::toposort_deps(
+            parsed_modules
+                .values()
+                .map(|m| module_deps_for_graph(self.options.target, m))
+                .collect(),
+        )
+        .map_err(convert_deps_tree_error)?;
 
         tracing::info!("Type checking modules");
         let modules = type_check(
             &self.options.name,
+            self.options.target,
             sequence,
             parsed_modules,
             existing_modules,
@@ -165,6 +170,7 @@ where
 
 fn type_check(
     package_name: &str,
+    target: Target,
     sequence: Vec<String>,
     mut parsed_modules: HashMap<String, Parsed>,
     module_types: &mut HashMap<String, type_::Module>,
@@ -195,6 +201,7 @@ fn type_check(
         tracing::trace!(module = ?name, "Type checking");
         let mut type_warnings = Vec::new();
         let ast = type_::infer_module(
+            target,
             &mut uid,
             ast,
             origin,
@@ -238,11 +245,11 @@ fn convert_deps_tree_error(e: dep_tree::Error) -> Error {
     }
 }
 
-fn module_deps_for_graph(module: &Parsed) -> (String, Vec<String>) {
+fn module_deps_for_graph(target: Target, module: &Parsed) -> (String, Vec<String>) {
     let name = module.name.clone();
     let deps: Vec<_> = module
         .ast
-        .dependencies()
+        .dependencies(target)
         .into_iter()
         .map(|(dep, _span)| dep)
         .collect();

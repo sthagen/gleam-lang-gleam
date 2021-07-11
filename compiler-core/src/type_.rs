@@ -26,7 +26,7 @@ use crate::{
         UntypedRecordUpdateArg, UntypedStatement,
     },
     bit_string,
-    build::Origin,
+    build::{Origin, Target},
 };
 use expr::*;
 
@@ -408,16 +408,18 @@ impl ValueConstructor {
 /// returning an error.
 ///
 pub fn infer_module(
+    target: Target,
     uid: &mut usize,
-    module: UntypedModule,
+    mut module: UntypedModule,
     origin: Origin,
     package: &str,
     modules: &HashMap<String, Module>,
     warnings: &mut Vec<Warning>,
 ) -> Result<TypedModule, Error> {
-    let mut environment = Environment::new(uid, &module.name, modules, warnings);
-    let module_name = &module.name;
-    validate_module_name(module_name)?;
+    let name = module.name.clone();
+    let documentation = std::mem::take(&mut module.documentation);
+    let mut environment = Environment::new(uid, &name, modules, warnings);
+    validate_module_name(&name)?;
 
     let mut type_names = HashMap::with_capacity(module.statements.len());
     let mut value_names = HashMap::with_capacity(module.statements.len());
@@ -426,57 +428,49 @@ pub fn infer_module(
     // Register any modules, types, and values being imported
     // We process imports first so that anything imported can be referenced
     // anywhere in the module.
-    for s in &module.statements {
+    for s in module.iter_statements(target) {
         register_import(s, &mut environment)?;
     }
 
     // Register types so they can be used in constructors and functions
     // earlier in the module.
-    for s in &module.statements {
-        register_types(
-            s,
-            module_name,
-            &mut hydrators,
-            &mut type_names,
-            &mut environment,
-        )?;
+    for s in module.iter_statements(target) {
+        register_types(s, &name, &mut hydrators, &mut type_names, &mut environment)?;
     }
 
     // Register values so they can be used in functions earlier in the module.
-    for s in &module.statements {
-        register_values(
-            s,
-            module_name,
-            &mut hydrators,
-            &mut value_names,
-            &mut environment,
-        )?;
+    for s in module.iter_statements(target) {
+        register_values(s, &name, &mut hydrators, &mut value_names, &mut environment)?;
     }
 
     // Infer the types of each statement in the module
     // We first infer all the constants so they can be used in functions defined
     // anywhere in the module.
     let mut statements = Vec::with_capacity(module.statements.len());
+    let mut consts = vec![];
     let mut not_consts = vec![];
-    for statement in module.statements {
-        if matches!(statement, Statement::ModuleConstant { .. }) {
-            let statement =
-                infer_statement(statement, module_name, &mut hydrators, &mut environment)?;
-            statements.push(statement);
-        } else {
-            not_consts.push(statement)
+    for statement in module.into_iter_statements(target) {
+        match statement {
+            Statement::Fn { .. }
+            | Statement::TypeAlias { .. }
+            | Statement::CustomType { .. }
+            | Statement::ExternalFn { .. }
+            | Statement::ExternalType { .. }
+            | Statement::Import { .. } => not_consts.push(statement),
+
+            Statement::ModuleConstant { .. } => consts.push(statement),
         }
     }
 
-    for statement in not_consts {
-        let statement = infer_statement(statement, module_name, &mut hydrators, &mut environment)?;
+    for statement in consts.into_iter().chain(not_consts.into_iter()) {
+        let statement = infer_statement(statement, &name, &mut hydrators, &mut environment)?;
         statements.push(statement);
     }
 
     // Generalise functions now that the entire module has been inferred
     let statements = statements
         .into_iter()
-        .map(|s| generalise_statement(s, module_name, &mut environment))
+        .map(|s| generalise_statement(s, &name, &mut environment))
         .collect();
 
     // Generate warnings for unused items
@@ -485,7 +479,7 @@ pub fn infer_module(
     // Remove private and imported types and values to create the public interface
     environment
         .module_types
-        .retain(|_, info| info.public && &info.module == module_name);
+        .retain(|_, info| info.public && info.module.as_slice() == name.as_slice());
     environment.module_values.retain(|_, info| info.public);
     environment
         .accessors
@@ -509,11 +503,11 @@ pub fn infer_module(
     } = environment;
 
     Ok(ast::Module {
-        documentation: module.documentation,
-        name: module.name.clone(),
+        documentation,
+        name: name.clone(),
         statements,
         type_info: Module {
-            name: module.name,
+            name,
             types,
             values,
             accessors,
@@ -823,7 +817,8 @@ fn register_values<'a>(
             assert_unique_const_name(names, name, location)?;
         }
 
-        _ => (),
+        Statement::Import { .. } | Statement::TypeAlias { .. } | Statement::ExternalType { .. } => {
+        }
     }
     Ok(())
 }
@@ -889,7 +884,14 @@ fn generalise_statement(
             }
         }
 
-        statement => statement,
+        statement
+        @
+        (Statement::TypeAlias { .. }
+        | Statement::CustomType { .. }
+        | Statement::ExternalFn { .. }
+        | Statement::ExternalType { .. }
+        | Statement::Import { .. }
+        | Statement::ModuleConstant { .. }) => statement,
     }
 }
 
@@ -993,7 +995,7 @@ fn infer_statement(
         } => {
             let preregistered_fn = environment
                 .get_variable(&name)
-                .expect("Could not find preregistered type for function");
+                .expect("Could not find preregistered type value function");
             let preregistered_type = preregistered_fn.type_.clone();
             let (args_types, return_type) = preregistered_type
                 .fn_types()
@@ -1630,7 +1632,10 @@ pub fn register_types<'a>(
             }
         }
 
-        _ => {}
+        Statement::Fn { .. }
+        | Statement::ExternalFn { .. }
+        | Statement::Import { .. }
+        | Statement::ModuleConstant { .. } => (),
     }
 
     Ok(())
@@ -1767,6 +1772,11 @@ pub fn register_import(
             Ok(())
         }
 
-        _ => Ok(()),
+        Statement::Fn { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::CustomType { .. }
+        | Statement::ExternalFn { .. }
+        | Statement::ExternalType { .. }
+        | Statement::ModuleConstant { .. } => Ok(()),
     }
 }
