@@ -786,28 +786,22 @@ fn bin_op<'a>(
     }
 }
 
-fn pipe<'a>(value: &'a TypedExpr, fun: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
-    docs_args_call(fun, vec![maybe_block_expr(value, env)], env)
-}
-
 fn try_<'a>(
     value: &'a TypedExpr,
     pat: &'a TypedPattern,
     then: &'a TypedExpr,
     env: &mut Env<'a>,
 ) -> Document<'a> {
-    let try_error_name = "gleam@try_error";
-
     "case "
         .to_doc()
-        .append(expr(value, env))
+        .append(maybe_block_expr(value, env))
         .append(" of")
         .append(
             line()
                 .append("{error, ")
-                .append(env.next_local_var_name(try_error_name))
+                .append(env.next_local_var_name(TRY_VARIABLE))
                 .append("} -> {error, ")
-                .append(env.local_var_name(try_error_name))
+                .append(env.local_var_name(TRY_VARIABLE))
                 .append("};")
                 .nest(INDENT),
         )
@@ -826,7 +820,6 @@ fn try_<'a>(
 
 fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) -> Document<'a> {
     let mut vars: Vec<&str> = vec![];
-    let var = "Gleam@Assert";
     let body = maybe_block_expr(value, env);
     let pattern1 = pattern::to_doc(pat, &mut vars, env);
     let pattern2 = pattern::to_doc(pat, &mut vars, env);
@@ -836,7 +829,7 @@ fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) ->
         pattern1.clone(),
         ";",
         line(),
-        env.next_local_var_name(var),
+        env.next_local_var_name(ASSERT_VARIABLE),
         " ->",
         docvec![
             line(),
@@ -844,7 +837,7 @@ fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) ->
                 "assert",
                 "Assertion pattern match failed",
                 pat.location(),
-                vec![("value", env.local_var_name(var))],
+                vec![("value", env.local_var_name(ASSERT_VARIABLE))],
                 env,
             )
             .nest(INDENT)
@@ -881,7 +874,7 @@ fn expr_list<'a>(
     env: &mut Env<'a>,
 ) -> Document<'a> {
     let elements = concat(Itertools::intersperse(
-        elements.iter().map(|e| expr(e, env)),
+        elements.iter().map(|e| maybe_block_expr(e, env)),
         break_(",", ", "),
     ));
     list(elements, tail.as_ref().map(|e| expr(e, env)))
@@ -1371,7 +1364,6 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
         TypedExpr::Float { value, .. } => float(value),
         TypedExpr::String { value, .. } => string(value),
         TypedExpr::Sequence { expressions, .. } => seq(expressions, env),
-        TypedExpr::PipeLast { left, right, .. } => pipe(left, right, env),
 
         TypedExpr::TupleIndex { tuple, index, .. } => tuple_index(tuple, *index, env),
 

@@ -8,8 +8,12 @@
 - Projects without rebar3 can be generated using the `gleam-lib` template.
 - JavaScript modules are imported using a camel case variable name to avoid name
   collisions with variables.
+- Pipelines now use assignments in the generated code in order to preserve the
+  order of any side effects.
 - Fixed a bug where the compiler would crash rather than raise an error if a
   project contained a single module and attempted to import another.
+- Special variable naming has been made more consistent in rendered Erlang and
+  JavaScript.
 
 ## v0.16.1 - 2021-06-21
 

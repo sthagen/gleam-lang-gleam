@@ -65,13 +65,6 @@ pub enum TypedExpr {
         right: Box<Self>,
     },
 
-    PipeLast {
-        location: SrcSpan,
-        typ: Arc<Type>,
-        left: Box<Self>,
-        right: Box<Self>,
-    },
-
     Assignment {
         location: SrcSpan,
         typ: Arc<Type>,
@@ -167,7 +160,6 @@ impl TypedExpr {
             | Self::Todo { location, .. }
             | Self::Case { location, .. }
             | Self::Call { location, .. }
-            | Self::PipeLast { location, .. }
             | Self::List { location, .. }
             | Self::Float { location, .. }
             | Self::BinOp { location, .. }
@@ -206,7 +198,6 @@ impl TypedExpr {
             Self::Case { typ, .. } => typ.clone(),
             Self::List { typ, .. } => typ.clone(),
             Self::Call { typ, .. } => typ.clone(),
-            Self::PipeLast { typ, .. } => typ.clone(),
             Self::Float { typ, .. } => typ.clone(),
             Self::BinOp { typ, .. } => typ.clone(),
             Self::Tuple { typ, .. } => typ.clone(),
