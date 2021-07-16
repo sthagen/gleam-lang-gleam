@@ -431,3 +431,37 @@ export function export$() {
 "#
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/1208
+#[test]
+fn reserved_word_argument() {
+    assert_js!(
+        r#"pub fn main(with) {
+  with
+}
+"#,
+        r#""use strict";
+
+export function main(with$) {
+  return with$;
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/1186
+#[test]
+fn multiple_discard() {
+    assert_js!(
+        r#"pub fn main(_, _, _) {
+  1
+}
+"#,
+        r#""use strict";
+
+export function main(_, _1, _2) {
+  return 1;
+}
+"#
+    );
+}

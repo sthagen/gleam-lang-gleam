@@ -454,28 +454,43 @@ impl<'module> Generator<'module> {
                     };
                     let assignments = compiled.take_assignments_doc(subject);
 
-                    docvec!(line(), assignments, line(), consequence).nest(INDENT)
+                    docvec!(assignments, line(), consequence)
                 } else {
-                    docvec!(line(), consequence).nest(INDENT)
+                    consequence
                 };
 
                 let is_final_clause = clause_number == total_patterns;
-                doc = if is_final_clause && !compiled.has_checks() && clause.guard.is_none() {
+                let is_first_clause = clause_number == 1;
+                let is_only_clause = is_final_clause && is_first_clause;
+                let is_catch_all = !compiled.has_checks() && clause.guard.is_none();
+
+                if is_catch_all {
+                    possibility_of_no_match = false;
+                }
+
+                doc = if is_only_clause && is_catch_all {
+                    // If this is the only clause and there are no checks then we can
+                    // render just the body as the case does nothing
+                    doc.append(body)
+                } else if is_final_clause && is_catch_all {
                     // If this is the final clause and there are no checks then we can
                     // render `else` instead of `else if (...)`
-                    possibility_of_no_match = false;
                     doc.append(" else {")
+                        .append(docvec!(line(), body).nest(INDENT))
+                        .append(line())
+                        .append("}")
                 } else {
-                    doc.append(if clause_number == 1 {
+                    doc.append(if is_first_clause {
                         "if ("
                     } else {
                         " else if ("
                     })
                     .append(compiled.take_checks_doc(true))
                     .append(") {")
+                    .append(docvec!(line(), body).nest(INDENT))
+                    .append(line())
+                    .append("}")
                 };
-
-                doc = doc.append(body).append(line()).append("}");
             }
         }
 
@@ -749,6 +764,7 @@ impl<'module> Generator<'module> {
     }
 
     fn todo<'a>(&mut self, message: &'a Option<String>, location: &'a SrcSpan) -> Document<'a> {
+        let tail_position = self.tail_position;
         self.tail_position = false;
         let gleam_error = "todo";
         let message = message
@@ -758,7 +774,7 @@ impl<'module> Generator<'module> {
         let module_name = Document::String(self.module_name.join("/"));
         let line = self.line_numbers.line_number(location.start);
 
-        docvec![
+        let doc = docvec![
             "throw Object.assign",
             wrap_args(
                 vec![
@@ -785,8 +801,15 @@ impl<'module> Generator<'module> {
                     )
                 ]
                 .into_iter()
-            )
-        ]
+            ),
+            ";"
+        ];
+
+        // Reset tail position so later values are returned as needed. i.e.
+        // following clauses in a case expression.
+        self.tail_position = tail_position;
+
+        doc
     }
 
     fn module_select<'a>(
@@ -950,6 +973,7 @@ impl TypedExpr {
         matches!(
             self,
             TypedExpr::Try { .. }
+                | TypedExpr::Todo { .. }
                 | TypedExpr::Call { .. }
                 | TypedExpr::Case { .. }
                 | TypedExpr::Sequence { .. }
