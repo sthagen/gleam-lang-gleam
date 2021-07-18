@@ -3,6 +3,8 @@ mod pattern;
 #[cfg(test)]
 mod tests;
 
+use std::path::Path;
+
 use crate::{ast::*, docvec, io::Utf8Writer, line_numbers::LineNumbers, pretty::*};
 use heck::CamelCase;
 use itertools::Itertools;
@@ -182,9 +184,9 @@ impl<'a> Generator<'a> {
 
                 let alias = i.as_name.as_ref().map(|n| {
                     self.register_in_scope(n);
-                    maybe_escape_identifier(n)
+                    maybe_escape_identifier_doc(n)
                 });
-                (maybe_escape_identifier(&i.name), alias)
+                (maybe_escape_identifier_doc(&i.name), alias)
             });
 
         let matches = wrap_object(matches);
@@ -213,7 +215,7 @@ impl<'a> Generator<'a> {
         self.register_in_scope(name);
         Ok(docvec![
             head,
-            maybe_escape_identifier(name),
+            maybe_escape_identifier_doc(name),
             " = ",
             expression::constant_expression(value)?,
             ";",
@@ -252,7 +254,7 @@ impl<'a> Generator<'a> {
         };
         Ok(docvec![
             head,
-            maybe_escape_identifier(name),
+            maybe_escape_identifier_doc(name),
             fun_args(args),
             " {",
             docvec![line(), generator.function_body(body)?]
@@ -347,23 +349,23 @@ fn external_fn_args<T>(arguments: &[ExternalFnArg<T>]) -> Document<'_> {
 pub fn module(
     module: &TypedModule,
     line_numbers: &LineNumbers,
+    path: &Path,
+    src: &str,
     writer: &mut impl Utf8Writer,
 ) -> Result<(), crate::Error> {
     Generator::new(line_numbers, module)
         .compile()
-        .map_err(crate::Error::JavaScript)?
+        .map_err(|error| crate::Error::JavaScript {
+            path: path.to_path_buf(),
+            src: src.to_string(),
+            error,
+        })?
         .pretty_print(80, writer)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
-    Unsupported { feature: String },
-}
-
-fn unsupported<M: ToString, T>(label: M) -> Result<T, Error> {
-    Err(Error::Unsupported {
-        feature: label.to_string(),
-    })
+    Unsupported { feature: String, location: SrcSpan },
 }
 
 fn fun_args(args: &'_ [TypedArg]) -> Document<'_> {
@@ -379,7 +381,7 @@ fn fun_args(args: &'_ [TypedArg]) -> Document<'_> {
             doc
         }
         ArgNames::Named { name } | ArgNames::NamedLabelled { name, .. } => {
-            maybe_escape_identifier(name)
+            maybe_escape_identifier_doc(name)
         }
     }))
 }
@@ -473,14 +475,22 @@ fn is_valid_js_identifier(word: &str) -> bool {
     )
 }
 
-fn maybe_escape_identifier(word: &str) -> Document<'_> {
+fn maybe_escape_identifier_string(word: &str) -> String {
     if is_valid_js_identifier(word) {
-        word.to_doc()
+        word.to_string()
     } else {
         escape_identifier(word)
     }
 }
 
-fn escape_identifier(word: &str) -> Document<'_> {
-    Document::String(format!("{}$", word))
+fn escape_identifier(word: &str) -> String {
+    format!("{}$", word)
+}
+
+fn maybe_escape_identifier_doc(word: &str) -> Document<'_> {
+    if is_valid_js_identifier(word) {
+        word.to_doc()
+    } else {
+        Document::String(escape_identifier(word))
+    }
 }

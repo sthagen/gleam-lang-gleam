@@ -61,9 +61,9 @@ impl<'module> Generator<'module> {
         match self.current_scope_vars.get(name) {
             None => {
                 let _ = self.current_scope_vars.insert(name.to_string(), 0);
-                maybe_escape_identifier(name)
+                maybe_escape_identifier_doc(name)
             }
-            Some(0) => maybe_escape_identifier(name),
+            Some(0) => maybe_escape_identifier_doc(name),
             Some(n) if name == "$" => Document::String(format!("${}", n)),
             Some(n) => Document::String(format!("{}${}", name, n)),
         }
@@ -140,7 +140,10 @@ impl<'module> Generator<'module> {
                 label, location, ..
             } => Ok(self.todo(label, location)),
 
-            TypedExpr::BitString { .. } => unsupported("Bitstring"),
+            TypedExpr::BitString { location, .. } => Err(Error::Unsupported {
+                feature: "Bit string syntax".to_string(),
+                location: *location,
+            }),
 
             TypedExpr::ModuleSelect {
                 module_alias,
@@ -341,19 +344,17 @@ impl<'module> Generator<'module> {
                 docs.push(lines(1));
             }
 
-            // TODO: to support this we will need to adapt the `assignment`
-            // method to take a Document as a value and pass the subject
-            // document into that also rather than letting the pattern generator
-            // determine what it should be.
-            // adapting the `assignment` function would probably use `new_with_document`
-            // at which point it could be the only "new" function for a pattern generator and the name of `new_with_document` could be shortened
+            // TODO: At time of writing to support patterns in trys we will need
+            // to adapt the `assignment` method to take a Document as a value
+            // and pass the subject document into that also rather than letting
+            // the pattern generator determine what it should be.
             pattern => {
-                let value = subject_doc.append("[0]");
-                let mut pattern_generator =
-                    pattern::Generator::new_with_document(self, value.clone());
-                let compiled = pattern_generator.generate(pattern, None)?;
+                let subject = subject_doc.append("[0]");
+                let mut pattern_generator = pattern::Generator::new(self);
+                pattern_generator.traverse_pattern(&subject, pattern)?;
+                let compiled = pattern_generator.take_compiled();
                 docs.push(line());
-                docs.push(compiled.into_assignment_doc(&value));
+                docs.push(compiled.into_assignment_doc());
                 docs.push(lines(2));
             }
         }
@@ -375,8 +376,10 @@ impl<'module> Generator<'module> {
         }
 
         // Otherwise we need to compile the patterns
-        let (mut patten_generator, subject) = pattern::Generator::new(self, value)?;
-        let compiled = patten_generator.generate(pattern, None)?;
+        let (subject, subject_assignment) = pattern::assign_subject(self, value);
+        let mut pattern_generator = pattern::Generator::new(self);
+        pattern_generator.traverse_pattern(&subject, pattern)?;
+        let compiled = pattern_generator.take_compiled();
 
         let value = self.not_in_tail_position(|gen| gen.wrap_expression(value))?;
 
@@ -384,7 +387,7 @@ impl<'module> Generator<'module> {
         let afterwards = if self.tail_position {
             line()
                 .append("return ")
-                .append(subject.clone().unwrap_or_else(|| value.clone()))
+                .append(subject_assignment.clone().unwrap_or_else(|| value.clone()))
                 .append(";")
         } else {
             nil()
@@ -392,29 +395,29 @@ impl<'module> Generator<'module> {
 
         // If there is a subject name given create a variable to hold it for
         // use in patterns
-        let doc = match subject {
+        let doc = match subject_assignment {
             Some(name) => {
-                let compiled = compiled.into_assignment_doc(&name);
+                let compiled = compiled.into_assignment_doc();
                 docvec!("let ", name, " = ", value, ";", line(), compiled)
             }
-            None => compiled.into_assignment_doc(&value),
+            None => compiled.into_assignment_doc(),
         };
 
         Ok(docvec!(force_break(), doc.append(afterwards)))
     }
 
-    fn case<'a>(&mut self, subjects: &'a [TypedExpr], clauses: &'a [TypedClause]) -> Output<'a> {
+    fn case<'a>(
+        &mut self,
+        subject_values: &'a [TypedExpr],
+        clauses: &'a [TypedClause],
+    ) -> Output<'a> {
         let mut possibility_of_no_match = true;
 
-        let value = match subjects {
-            [subject] => subject,
-            _ => return unsupported("Cases with multiple subjects"),
-        };
-
-        let (mut gen, subject) = pattern::Generator::new(self, value)?;
-        let value = gen
-            .expression_generator
-            .not_in_tail_position(|gen| gen.expression(value))?;
+        let (subjects, subject_assignments): (Vec<_>, Vec<_>) =
+            pattern::assign_subjects(self, subject_values)
+                .into_iter()
+                .unzip();
+        let mut gen = pattern::Generator::new(self);
 
         let mut doc = force_break();
 
@@ -430,13 +433,12 @@ impl<'module> Generator<'module> {
 
         // TODO: handle multiple subjects gracefully
         for clause in clauses {
-            let mut patterns = vec![clause.pattern.get(0).expect("JS clause pattern indexing")];
+            let multipattern = std::iter::once(&clause.pattern);
+            let multipatterns = multipattern.chain(clause.alternative_patterns.iter());
 
-            patterns.extend(clause.alternative_patterns.iter().flatten());
-
-            for pattern in patterns {
+            for multipatterns in multipatterns {
                 let scope = gen.expression_generator.current_scope_vars.clone();
-                let mut compiled = gen.generate(pattern, clause.guard.as_ref())?;
+                let mut compiled = gen.generate(&subjects, multipatterns, clause.guard.as_ref())?;
                 let consequence = gen.expression_generator.expression(&clause.then)?;
 
                 // We've seen one more clause
@@ -448,12 +450,7 @@ impl<'module> Generator<'module> {
 
                 // If the pattern assigns any variables we need to render assignments
                 let body = if compiled.has_assignments() {
-                    let subject = match subject {
-                        None => &value,
-                        Some(ref name) => name,
-                    };
-                    let assignments = compiled.take_assignments_doc(subject);
-
+                    let assignments = compiled.take_assignments_doc();
                     docvec!(assignments, line(), consequence)
                 } else {
                     consequence
@@ -506,10 +503,17 @@ impl<'module> Generator<'module> {
 
         // If there is a subject name given create a variable to hold it for
         // use in patterns
-        Ok(match subject {
-            Some(name) => docvec!("let ", name, " = ", value, ";", line(), doc),
-            None => doc,
-        })
+        let subject_assignments: Vec<_> = subject_assignments
+            .into_iter()
+            .zip(subject_values.iter())
+            .flat_map(|(assignment_name, value)| assignment_name.map(|name| (name, value)))
+            .map(|(name, value)| {
+                let value = self.not_in_tail_position(|gen| gen.expression(value))?;
+                Ok(docvec!("let ", name, " = ", value, ";", line()))
+            })
+            .try_collect()?;
+
+        Ok(subject_assignments.to_doc().append(doc))
     }
 
     fn tuple<'a>(&mut self, elements: &'a [TypedExpr]) -> Output<'a> {
@@ -589,7 +593,8 @@ impl<'module> Generator<'module> {
                     }
                     // Create an assignment for each variable created by the function arguments
                     if let Some(name) = argument {
-                        docs.push(Document::String(format!("{} = ", name)));
+                        docs.push(Document::String(maybe_escape_identifier_string(name)));
+                        docs.push(" = ".to_doc());
                     }
                     // Render the value given to the function. Even if it is not
                     // assigned we still render it because the expression may
@@ -823,7 +828,7 @@ impl<'module> Generator<'module> {
                 docvec![
                     Document::String(module.to_camel_case()),
                     ".",
-                    maybe_escape_identifier(label)
+                    maybe_escape_identifier_doc(label)
                 ]
             }
 
@@ -877,7 +882,10 @@ pub fn constant_expression(expression: &'_ TypedConstant) -> Output<'_> {
                 field_values?.into_iter(),
             ))
         }
-        Constant::BitString { .. } => unsupported("BitString as constant"),
+        Constant::BitString { location, .. } => Err(Error::Unsupported {
+            feature: "Bit string syntax".to_string(),
+            location: *location,
+        }),
     }
 }
 
