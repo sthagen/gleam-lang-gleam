@@ -11,7 +11,6 @@ use crate::{
 };
 
 static RECORD_KEY: &str = "type";
-static BIT_STRING_VAR: &str = "_bits";
 
 #[derive(Debug)]
 pub struct Generator<'module> {
@@ -21,11 +20,11 @@ pub struct Generator<'module> {
     function_arguments: Vec<Option<&'module str>>,
     current_scope_vars: im::HashMap<String, usize>,
     pub tail_position: bool,
-    // We register whether float division or object equality are used within an
-    // expression so that the module generator can output a suitable function if
-    // it is needed.
+    // We register whether these features are used within an expression so that
+    // the module generator can output a suitable function if it is needed.
     float_division_used: &'module mut bool,
     object_equality_used: &'module mut bool,
+    bit_string_literal_used: &'module mut bool,
     // We track whether tail call recusion is used so that we can render a loop
     // at the top level of the function to use in place of pushing new stack
     // frames.
@@ -33,6 +32,7 @@ pub struct Generator<'module> {
 }
 
 impl<'module> Generator<'module> {
+    #[allow(clippy::too_many_arguments)] // TODO: FIXME
     pub fn new(
         module_name: &'module [String],
         line_numbers: &'module LineNumbers,
@@ -40,6 +40,7 @@ impl<'module> Generator<'module> {
         function_arguments: Vec<Option<&'module str>>,
         float_division_used: &'module mut bool,
         object_equality_used: &'module mut bool,
+        bit_string_literal_used: &'module mut bool,
         mut current_scope_vars: im::HashMap<String, usize>,
     ) -> Self {
         for &name in function_arguments.iter().flatten() {
@@ -55,6 +56,7 @@ impl<'module> Generator<'module> {
             tail_position: true,
             float_division_used,
             object_equality_used,
+            bit_string_literal_used,
         }
     }
 
@@ -158,39 +160,37 @@ impl<'module> Generator<'module> {
     }
 
     fn bit_string<'a>(&mut self, segments: &'a [TypedExprBitStringSegment]) -> Output<'a> {
+        use BitStringSegmentOption as Opt;
         if segments.is_empty() {
             return Ok("new ArrayBuffer(0)".to_doc());
         }
 
-        let mut docs = Vec::with_capacity(7 + segments.len() * 5 + 3);
-        let var = self.next_local_var(BIT_STRING_VAR);
-        docs.push(force_break());
-        docs.push("let ".to_doc());
-        docs.push(var.clone());
-        docs.push(" = new DataView(new ArrayBuffer(".to_doc());
-        docs.push(segments.len().to_doc());
-        docs.push("));".to_doc());
-        docs.push(line());
+        *self.bit_string_literal_used = true;
 
-        for (i, segment) in segments.iter().enumerate() {
-            if !segment.options.is_empty() {
-                return Err(Error::Unsupported {
-                    feature: "Bit string segment option syntax".to_string(),
+        // Collect all the values used in segments.
+        let segments_array = array(segments.iter().map(|segment| {
+            let value = self.not_in_tail_position(|gen| gen.wrap_expression(&segment.value))?;
+            match segment.options.as_slice() {
+                // Ints
+                [] => Ok(value),
+
+                // UTF8 strings
+                [Opt::Utf8 { .. } | Opt::Utf8Codepoint { .. }] => {
+                    Ok(docvec!["new TextEncoder().encode(", value, ")"])
+                }
+
+                // Bit strings
+                [Opt::BitString { .. }] => Ok(docvec!["new Uint8Array(", value, ")"]),
+
+                // Anything else
+                _ => Err(Error::Unsupported {
+                    feature: "This bit string segment option".to_string(),
                     location: segment.location,
-                });
+                }),
             }
-            let value = self.not_in_tail_position(|gen| gen.expression(&segment.value))?;
-            docs.push(var.clone());
-            docs.push(".setInt8".to_doc());
-            docs.push(wrap_args([i.to_doc(), value]));
-            docs.push(";".to_doc());
-            docs.push(line());
-        }
+        }))?;
 
-        docs.push("return ".to_doc());
-        docs.push(var);
-        docs.push(".buffer;".to_doc());
-        Ok(self.immediately_involked_function_expression_document(docs.to_doc()))
+        Ok(docvec!["$bit_string(", segments_array, ")"])
     }
 
     pub fn wrap_return<'a>(&self, document: Document<'a>) -> Document<'a> {
