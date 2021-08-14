@@ -33,17 +33,28 @@
   case expression would produce invalid code when compiling to JavaScript.
 - Unsupported feature error messages now include file path and line numbers for
   debugging.
-- Bit string literals with no segment options or just the `bit_string`, `:utf8`
-  or `:utf8_codepoint` options can be constructed when compiling to JavaScript.
+- Bit string literals with no segment options or just the `bit_string`, `utf8`
+  or `utf8_codepoint` options can be constructed when compiling to JavaScript.
 - The format of generated JavaScript has been improved.
 - Fixed a bug where rendered JavaScript incorrectly incremented variables when
   reassigned in patterns.
 - Added `eval` and `arguments` to JavaScript reserved words.
 - Support for the deprecated `tuple(x, y, ...)` syntax has been removed in favor
-  of the more concise (`#(x, y, ...)`). Use `gleam format` to auto-migrate.
+  of the more concise (`#(x, y, ...)`). Use `gleam format` with the previous
+  version of the compiler to auto-migrate.
 - New OTP projects are generated using `gleam_otp` v0.1.6.
 - Fixed a bug where the equality operators could return the incorrect value for
   records when compiling to JavaScript.
+- Fixed a bug where `todo` could sometimes render invalid JavaScript when used
+  as an expression in the generated code.
+- An error is now emitted if the list spread syntax is used with no prepended
+  elements `[..xs]`.
+- Fixed a bug where type errors inside piped expressions would be incorrectly be
+  reported as being an incorrect usage of the pipe operator.
+- Gleam modules with no public exports no longer render private members in
+  Erlang.
+- Fixed a bug where discard variables used in assert assignments would generate
+  invalid Erlang code.
 
 ## v0.16.1 - 2021-06-21
 

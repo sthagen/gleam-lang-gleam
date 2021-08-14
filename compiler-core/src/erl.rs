@@ -1,5 +1,6 @@
 // TODO: Refactor this module to be methods on structs rather than free
-// functions with a load of arguments
+// functions with a load of arguments. See the JavaScript code generator and the
+// formatter for examples.
 
 mod pattern;
 #[cfg(test)]
@@ -22,12 +23,7 @@ use heck::SnakeCase;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use pattern::pattern;
-use std::char;
-use std::collections::HashMap;
-use std::default::Default;
-use std::ops::Deref;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{char, collections::HashMap, ops::Deref, str::FromStr, sync::Arc};
 
 const INDENT: isize = 4;
 const MAX_COLUMNS: isize = 80;
@@ -96,9 +92,10 @@ impl<'env> Env<'env> {
         function: &'env str,
         line_numbers: &'env LineNumbers,
     ) -> Self {
+        let vars: im::HashMap<_, _> = std::iter::once(("_".to_string(), 0)).collect();
         Self {
-            current_scope_vars: Default::default(),
-            erl_function_scope_vars: Default::default(),
+            current_scope_vars: vars.clone(),
+            erl_function_scope_vars: vars,
             line_numbers,
             function,
             module,
@@ -189,14 +186,28 @@ pub fn record_definition(name: &str, fields: &[(&str, Arc<Type>)]) -> String {
     .to_pretty_string(MAX_COLUMNS)
 }
 
-pub fn module(
-    module: &TypedModule,
-    line_numbers: &LineNumbers,
+pub fn module<'a>(
+    module: &'a TypedModule,
+    line_numbers: &'a LineNumbers,
     writer: &mut impl Utf8Writer,
 ) -> Result<()> {
+    module_document(module, line_numbers)?.pretty_print(MAX_COLUMNS, writer)
+}
+
+fn module_document<'a>(
+    module: &'a TypedModule,
+    line_numbers: &'a LineNumbers,
+) -> Result<Document<'a>> {
     let mut exports = vec![];
     let mut type_defs = vec![];
     let mut type_exports = vec![];
+
+    let header = "-module("
+        .to_doc()
+        .append(module_name_join(&module.name))
+        .append(").")
+        .append(line());
+
     for s in &module.statements {
         register_imports(
             s,
@@ -208,7 +219,7 @@ pub fn module(
     }
 
     let exports = match (!exports.is_empty(), !type_exports.is_empty()) {
-        (false, false) => nil(),
+        (false, false) => return Ok(header),
         (true, false) => "-export(["
             .to_doc()
             .append(concat(Itertools::intersperse(
@@ -259,18 +270,13 @@ pub fn module(
         lines(2),
     ));
 
-    "-module("
-        .to_doc()
-        .append(module_name_join(&module.name))
-        .append(").")
-        .append(line())
+    Ok(header
         .append("-compile(no_auto_import).")
         .append(lines(2))
         .append(exports)
         .append(type_defs)
         .append(statements)
-        .append(line())
-        .pretty_print(MAX_COLUMNS, writer)
+        .append(line()))
 }
 
 fn register_imports(
