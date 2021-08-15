@@ -1,13 +1,16 @@
 mod expression;
+mod import;
 mod pattern;
 #[cfg(test)]
 mod tests;
 
-use std::path::Path;
+use std::{iter, path::Path};
 
 use crate::{ast::*, docvec, io::Utf8Writer, line_numbers::LineNumbers, pretty::*};
 use heck::CamelCase;
 use itertools::Itertools;
+
+use self::import::{Imports, Member};
 
 const INDENT: isize = 2;
 
@@ -87,6 +90,7 @@ impl<'a> Generator<'a> {
     }
 
     pub fn compile(&mut self) -> Output<'a> {
+        let imports = self.collect_imports();
         let statements = self
             .module
             .statements
@@ -112,8 +116,16 @@ impl<'a> Generator<'a> {
             statements.push(FUNCTION_BIT_STRING.to_doc());
         };
 
-        statements.push(line());
-        Ok(statements.to_doc())
+        if imports.is_empty() && statements.is_empty() {
+            Ok(docvec!("export {};", line()))
+        } else if imports.is_empty() {
+            statements.push(line());
+            Ok(statements.to_doc())
+        } else if statements.is_empty() {
+            Ok(imports.into_doc())
+        } else {
+            Ok(docvec![imports.into_doc(), line(), statements, line()])
+        }
     }
 
     pub fn statement(&mut self, statement: &'a TypedStatement) -> Vec<Output<'a>> {
@@ -122,15 +134,7 @@ impl<'a> Generator<'a> {
             | Statement::CustomType { .. }
             | Statement::ExternalType { .. } => vec![],
 
-            Statement::Import { module, .. } if module == &["gleam"] => vec![],
-
-            Statement::Import {
-                module,
-                as_name,
-                unqualified,
-                package,
-                ..
-            } => vec![Ok(self.import(package, module, as_name, unqualified))],
+            Statement::Import { .. } => vec![],
 
             Statement::ModuleConstant {
                 public,
@@ -154,37 +158,78 @@ impl<'a> Generator<'a> {
                 module,
                 fun,
                 ..
-            } => vec![Ok(
-                self.external_function(*public, name, arguments, module, fun)
+            } if module.is_empty() => vec![Ok(
+                self.global_external_function(*public, name, arguments, fun)
             )],
+
+            Statement::ExternalFn { .. } => vec![],
         }
     }
 
-    fn import_path(&mut self, package: &'a str, module: &'a [String]) -> Document<'a> {
-        let path = Document::String(module.join("/"));
+    fn collect_imports(&mut self) -> Imports<'a> {
+        let mut imports = Imports::new();
 
-        if package == self.module.type_info.package {
+        for statement in &self.module.statements {
+            match statement {
+                Statement::Fn { .. }
+                | Statement::TypeAlias { .. }
+                | Statement::CustomType { .. }
+                | Statement::ExternalType { .. }
+                | Statement::ModuleConstant { .. } => (),
+                Statement::ExternalFn { module, .. } if module.is_empty() => (),
+                Statement::Import { module, .. } if module == &["gleam"] => (),
+
+                Statement::ExternalFn {
+                    public,
+                    name,
+                    module,
+                    fun,
+                    ..
+                } => self.register_external_function(&mut imports, *public, name, module, fun),
+
+                Statement::Import {
+                    module,
+                    as_name,
+                    unqualified,
+                    package,
+                    ..
+                } => {
+                    self.register_import(&mut imports, package, module, as_name, unqualified);
+                }
+            }
+        }
+
+        imports
+    }
+
+    fn import_path(&mut self, package: &'a str, module: &'a [String]) -> String {
+        let path = module.join("/");
+
+        if package == self.module.type_info.package || package.is_empty() {
             // Same package uses relative paths
             // TODO: strip shared prefixed between current module and imported
             // module to avoid decending and climbing back out again
-            let prefix = match self.module.name.len() {
-                1 => "./".to_doc(),
-                _ => Document::String("../".repeat(self.module.name.len() - 1)),
-            };
-            docvec!["\"", prefix, path, ".js\""]
+            match self.module.name.len() {
+                1 => format!("./{}.js", path),
+                _ => {
+                    let prefix = "../".repeat(self.module.name.len() - 1);
+                    format!("{}{}.js", prefix, path)
+                }
+            }
         } else {
             // Different packages uses absolute imports
-            docvec!["\"", package, "/", path, ".js\""]
+            format!("{}/{}.js", package, path)
         }
     }
 
-    fn import(
+    fn register_import(
         &mut self,
+        imports: &mut Imports<'a>,
         package: &'a str,
         module: &'a [String],
         as_name: &'a Option<String>,
         unqualified: &'a [UnqualifiedImport],
-    ) -> Document<'a> {
+    ) {
         let module_name = as_name
             .as_ref()
             .unwrap_or_else(|| {
@@ -194,11 +239,8 @@ impl<'a> Generator<'a> {
             })
             .to_camel_case();
         self.register_in_scope(&module_name);
-        let path: Document<'a> = self.import_path(package, module);
-        let module_name = Document::String(module_name);
-        let import_line = docvec!["import * as ", module_name.clone(), " from ", path, ";"];
-        let mut any_unqualified_values = false;
-        let matches = unqualified
+        let path = self.import_path(package, module);
+        let unqualified_imports = unqualified
             .iter()
             .filter(|i| {
                 // We do not create a JS import for uppercase names are they are
@@ -210,29 +252,36 @@ impl<'a> Generator<'a> {
                     .unwrap_or(false)
             })
             .map(|i| {
-                any_unqualified_values = true;
-
                 let alias = i.as_name.as_ref().map(|n| {
                     self.register_in_scope(n);
                     maybe_escape_identifier_doc(n)
                 });
-                (maybe_escape_identifier_doc(&i.name), alias)
+                let name = maybe_escape_identifier_doc(&i.name);
+                Member { name, alias }
             });
+        imports.register_module(path, iter::once(module_name), unqualified_imports);
+    }
 
-        let matches = wrap_object(matches);
-        if any_unqualified_values {
-            docvec![
-                import_line,
-                line(),
-                "const ",
-                matches,
-                " = ",
-                module_name,
-                ";"
-            ]
-        } else {
-            import_line
+    fn register_external_function(
+        &mut self,
+        imports: &mut Imports<'a>,
+        public: bool,
+        name: &'a str,
+        module: &'a str,
+        fun: &'a str,
+    ) {
+        let member = Member {
+            name: fun.to_doc(),
+            alias: if name == fun {
+                None
+            } else {
+                Some(maybe_escape_identifier_doc(name))
+            },
+        };
+        if public {
+            imports.register_export(maybe_escape_identifier_string(name))
         }
+        imports.register_module(module.to_string(), iter::empty(), iter::once(member));
     }
 
     fn module_constant(
@@ -294,52 +343,6 @@ impl<'a> Generator<'a> {
             line(),
             "}",
         ])
-    }
-
-    fn external_function<T>(
-        &mut self,
-        public: bool,
-        name: &'a str,
-        arguments: &'a [ExternalFnArg<T>],
-        module: &'a str,
-        fun: &'a str,
-    ) -> Document<'a> {
-        if module.is_empty() {
-            self.global_external_function(public, name, arguments, fun)
-        } else {
-            self.imported_external_function(public, name, module, fun)
-        }
-    }
-
-    fn imported_external_function(
-        &mut self,
-        public: bool,
-        name: &'a str,
-        module: &'a str,
-        fun: &'a str,
-    ) -> Document<'a> {
-        let import = if name == fun {
-            docvec!["import { ", name, r#" } from ""#, module, r#"";"#]
-        } else {
-            docvec![
-                "import { ",
-                fun,
-                " as ",
-                name,
-                r#" } from ""#,
-                module,
-                r#"";"#
-            ]
-        };
-        if public {
-            import
-                .append(line())
-                .append("export { ")
-                .append(name)
-                .append(" };")
-        } else {
-            import
-        }
     }
 
     fn global_external_function<T>(

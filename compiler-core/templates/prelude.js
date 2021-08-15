@@ -1,7 +1,13 @@
-// TODO: make equality work structurally with non-global Gleam prelude classes
+function define(object, name, fallback) {
+  return (object[name] = globalThis[name] || fallback);
+}
 
-class Record {
-  inspect() {
+export const symbols = define(globalThis, "__gleam", {});
+define(symbols, "variant", Symbol("variant"));
+define(symbols, "inspect", Symbol("inspect"));
+
+export class Record {
+  [symbols.inspect]() {
     let field = (label) => {
       let value = inspect(this[label]);
       return isNaN(parseInt(label)) ? `${label}: ${value}` : value;
@@ -11,8 +17,8 @@ class Record {
   }
 }
 
-class List {
-  inspect() {
+export class List {
+  [symbols.inspect]() {
     return `[${this.toArray().map(inspect).join(", ")}]`;
   }
 
@@ -42,32 +48,34 @@ class List {
     }
     return desired <= 0;
   }
-}
 
-class Empty extends List {
   isEmpty() {
-    return true;
+    return "EmptyList" == this[symbols.variant];
   }
 }
 
-class NonEmpty extends List {
+export class Empty extends List {
+  [symbols.variant] = "EmptyList";
+}
+
+export class NonEmpty extends List {
+  [symbols.variant] = "NonEmptyList";
+
   constructor(head, tail) {
     super();
     this.head = head;
     this.tail = tail;
   }
-
-  isEmpty() {
-    return false;
-  }
 }
 
-class BitString {
+export class BitString {
+  [symbols.variant] = "BitString";
+
   constructor(buffer) {
     this.buffer = buffer;
   }
 
-  inspect() {
+  [symbols.inspect]() {
     return `<<${Array.from(this.buffer).join(", ")}>>`;
   }
 
@@ -76,7 +84,9 @@ class BitString {
   }
 }
 
-class UtfCodepoint {
+export class UtfCodepoint {
+  [symbols.variant] = "UtfCodepoint";
+
   constructor(value) {
     this.value = value;
   }
@@ -85,36 +95,36 @@ class UtfCodepoint {
     return new Uint8Array(String.fromCodePoint(this.value));
   }
 
-  inspect() {
+  [symbols.inspect]() {
     return `//utfcodepoint(${String.fromCodePoint(this.value)})`;
   }
 }
 
-class Result extends Record {}
+export class Result extends Record {
+  isOk() {
+    return "Ok" === this[symbols.variant];
+  }
+}
 
-class Ok extends Result {
+export class Ok extends Result {
+  [symbols.variant] = "Ok";
+
   constructor(value) {
     super();
     this[0] = value;
   }
-
-  isOk() {
-    return true;
-  }
 }
 
-class Error extends Result {
+export class Error extends Result {
+  [symbols.variant] = "Error";
+
   constructor(detail) {
     super();
     this[0] = detail;
   }
-
-  isOk() {
-    return false;
-  }
 }
 
-function inspect(v) {
+export function inspect(v) {
   let t = typeof v;
   if (v === true) return "True";
   if (v === false) return "False";
@@ -125,9 +135,7 @@ function inspect(v) {
   if (Array.isArray(v)) return `#(${v.map(inspect).join(", ")})`;
   if (v instanceof globalThis.Error)
     return `//js(new ${v.constructor.name}(${inspect(v.message)}))`;
-  try {
-    if (typeof v.inspect === "function") return v.inspect();
-  } catch (error) {}
+  if (v[symbols.inspect]) return v[symbols.inspect]();
   let entries = Object.entries(v);
   if (entries.length) {
     let properties = entries.map(([k, v]) => `${k}: ${inspect(v)}`).join(", ");
@@ -137,131 +145,45 @@ function inspect(v) {
   }
 }
 
-function equal(x, y) {
+export function equal(x, y) {
   let values = [x, y];
 
-  while (values.length !== 0) {
-    const a = values.pop();
-    const b = values.pop();
-
+  while (values.length) {
+    let a = values.pop();
+    let b = values.pop();
     if (a === b) continue;
-    if (a === null || a === undefined || b === null || b === undefined)
-      return false;
-    if (typeof a === "object" || typeof b === "object") {
-      if (a.valueOf() === b.valueOf()) continue;
-      if (a.constructor !== b.constructor) return false;
 
-      if (a.constructor === Date) {
-        if (dateEqual(a, b)) {
-          continue;
-        } else {
-          return false;
-        }
-      }
+    let unequal =
+      !sameTypeObjects(a, b) || unequalDates(a, b) || unequalArrayBuffers(a, b);
+    if (unequal) return false;
 
-      if (a.buffer instanceof ArrayBuffer && a.BYTES_PER_ELEMENT) {
-        if (typedArrayEqual(a, b)) {
-          continue;
-        } else {
-          return false;
-        }
-      }
-
-      for (const k of Object.getOwnPropertyNames(a)) {
-        values.push(a[k], b[k]);
-      }
-
-      continue;
+    for (const k of Object.keys(a)) {
+      values.push(a[k], b[k]);
     }
-
-    return false;
   }
 
   return true;
 }
 
-function dateEqual(a, b) {
-  return !(a > b || a < b);
+function unequalDates(a, b) {
+  return a instanceof Date && (a > b || a < b);
 }
 
-function typedArrayEqual(a, b) {
-  return a.byteLength === b.byteLength && a.every((n, i) => n === b[i]);
+function unequalArrayBuffers(a, b) {
+  return (
+    a.buffer instanceof ArrayBuffer &&
+    a.BYTES_PER_ELEMENT &&
+    !(a.byteLength === b.byteLength && a.every((n, i) => n === b[i]))
+  );
 }
 
-// Tests
-
-function assertEqual(a, b) {
-  console.assert(equal(a, b), `\n\t${inspect(a)}\n\t  !=\n\t${inspect(b)}`);
+function sameTypeObjects(a, b) {
+  return (
+    typeof a === "object" &&
+    typeof b === "object" &&
+    a !== null &&
+    b !== null &&
+    (a.constructor === b.constructor ||
+      (a[symbols.variant] && a[symbols.variant] === b[symbols.variant]))
+  );
 }
-
-class ExampleRecordImpl extends Record {
-  constructor(first, detail, boop) {
-    super();
-    this[0] = first;
-    this.detail = detail;
-    this.boop = boop;
-  }
-}
-
-console.log("\nRunning tests...");
-
-// inspect tests
-
-assertEqual(inspect(true), "True");
-assertEqual(inspect(false), "False");
-assertEqual(inspect(undefined), "Nil");
-
-assertEqual(inspect(0), "0");
-assertEqual(inspect(1), "1");
-assertEqual(inspect(2), "2");
-assertEqual(inspect(-1), "-1");
-assertEqual(inspect(-2), "-2");
-
-assertEqual(inspect(0.23), "0.23");
-assertEqual(inspect(1.23), "1.23");
-assertEqual(inspect(2.23), "2.23");
-assertEqual(inspect(-1.23), "-1.23");
-assertEqual(inspect(-2.23), "-2.23");
-
-assertEqual(inspect(new Ok(1)), "Ok(1)");
-assertEqual(inspect(new Ok(true)), "Ok(True)");
-assertEqual(inspect(new Ok(false)), "Ok(False)");
-assertEqual(inspect(new Ok(undefined)), "Ok(Nil)");
-
-assertEqual(inspect(new Error(2)), "Error(2)");
-assertEqual(inspect(new Error(true)), "Error(True)");
-assertEqual(inspect(new Error(false)), "Error(False)");
-assertEqual(inspect(new Error(undefined)), "Error(Nil)");
-
-assertEqual(
-  inspect(new ExampleRecordImpl(undefined, 1, 2.1)),
-  "ExampleRecordImpl(Nil, detail: 1, boop: 2.1)"
-);
-assertEqual(
-  inspect(new ExampleRecordImpl(new Ok(1), 1, 2.1)),
-  "ExampleRecordImpl(Ok(1), detail: 1, boop: 2.1)"
-);
-
-assertEqual(inspect([]), "#()");
-assertEqual(inspect([1, 2, 3]), "#(1, 2, 3)");
-assertEqual(inspect([new Ok(1), new Ok(2)]), "#(Ok(1), Ok(2))");
-
-assertEqual(inspect(List.fromArray([])), "[]");
-assertEqual(inspect(List.fromArray([1, 2, 3])), "[1, 2, 3]");
-assertEqual(inspect(List.fromArray([new Ok(1), new Ok(2)])), "[Ok(1), Ok(2)]");
-
-assertEqual(inspect(new BitString(new Uint8Array([]))), "<<>>");
-assertEqual(inspect(new BitString(new Uint8Array([1, 2, 3]))), "<<1, 2, 3>>");
-
-assertEqual(inspect(new UtfCodepoint(128013)), "//utfcodepoint(🐍)");
-
-// Inspecting JS values
-
-assertEqual(inspect(null), "//js(null)");
-assertEqual(inspect({}), "//js({})");
-assertEqual(inspect({ a: 1 }), "//js({ a: 1 })");
-assertEqual(inspect({ a: 1, b: 2 }), "//js({ a: 1, b: 2 })");
-assertEqual(inspect({ a: 1, b: new Ok(1) }), "//js({ a: 1, b: Ok(1) })");
-assertEqual(inspect(new globalThis.Error("stuff")), '//js(new Error("stuff"))');
-
-console.log("Done.");

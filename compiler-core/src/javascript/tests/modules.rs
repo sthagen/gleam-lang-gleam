@@ -2,6 +2,12 @@ use crate::assert_js;
 use crate::javascript::tests::CURRENT_PACKAGE;
 
 #[test]
+fn empty_module() {
+    // Renders an export statement to ensure it's an ESModule
+    assert_js!("", "export {};\n");
+}
+
+#[test]
 fn unqualified_fn_call() {
     assert_js!(
         (
@@ -13,7 +19,7 @@ fn unqualified_fn_call() {
 pub fn go() { launch() }
 "#,
         r#"import * as RocketShip from "../rocket_ship.js";
-const { launch } = RocketShip;
+import { launch } from "../rocket_ship.js";
 
 export function go() {
   return launch();
@@ -34,7 +40,7 @@ fn aliased_unqualified_fn_call() {
 pub fn go() { boom_time() }
 "#,
         r#"import * as RocketShip from "../rocket_ship.js";
-const { launch: boom_time } = RocketShip;
+import { launch as boom_time } from "../rocket_ship.js";
 
 export function go() {
   return boom_time();
@@ -57,7 +63,7 @@ pub fn b() { 2 }"#
 pub fn go() { a() + bb() }
 "#,
         r#"import * as RocketShip from "../rocket_ship.js";
-const { a, b: bb } = RocketShip;
+import { a, b as bb } from "../rocket_ship.js";
 
 export function go() {
   return a() + bb();
@@ -202,6 +208,29 @@ pub fn go() { three.go() }
 
 export function go() {
   return Three.go();
+}
+"#
+    );
+}
+
+#[test]
+fn same_import_multiple_times() {
+    assert_js!(
+        (
+            CURRENT_PACKAGE,
+            vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            r#"pub fn one() { 1 } pub fn two() { 2 }"#
+        ),
+        r#"import one/two/three.{one}
+import one/two/three.{two}
+
+pub fn go() { one() + two() }
+"#,
+        r#"import * as Three from "../one/two/three.js";
+import { one, two } from "../one/two/three.js";
+
+export function go() {
+  return one() + two();
 }
 "#
     );
