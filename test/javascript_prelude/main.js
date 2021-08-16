@@ -7,9 +7,12 @@ import {
   Ok,
   Record,
   UtfCodepoint,
-  equal,
+  divideFloat,
+  divideInt,
+  isEqual,
   inspect,
   symbols,
+  toList,
 } from "./prelude.js";
 
 let failures = 0;
@@ -27,7 +30,7 @@ function fail(message) {
 }
 
 function assertEqual(a, b) {
-  if (equal(a, b)) {
+  if (isEqual(a, b)) {
     pass();
   } else {
     fail(`\n\t${inspect(a)}\n\t!=\n\t${inspect(b)}`);
@@ -35,7 +38,7 @@ function assertEqual(a, b) {
 }
 
 function assertNotEqual(a, b) {
-  if (equal(a, b)) {
+  if (isEqual(a, b)) {
     fail(`\n\t${inspect(a)}\n\t==\n\t${inspect(b)}`);
   } else {
     pass();
@@ -130,12 +133,21 @@ assertNotEqual(
 assertEqual(new UtfCodepoint(128013), new UtfCodepoint(128013));
 assertNotEqual(new UtfCodepoint(128013), new UtfCodepoint(128014));
 
+// toList
+
+assertEqual(toList([]), List.fromArray([]));
+assertEqual(toList([1, 2, 3]), List.fromArray([1, 2, 3]));
+assertEqual(toList([1, 2], toList([3, 4])), List.fromArray([1, 2, 3, 4]));
+assertEqual(toList([1, 2, 3], toList([4, 5])), List.fromArray([1, 2, 3, 4, 5]));
+
 // Equality of JavaScript values
 
 assertEqual([], []);
 assertEqual([1, 2], [1, 2]);
 assertEqual([new Ok([1, 2])], [new Ok([1, 2])]);
 assertNotEqual([], [[]]);
+assertNotEqual([], [1, []]);
+assertNotEqual([1, []], []);
 
 assertEqual({}, {});
 assertEqual({ a: 1 }, { a: 1 });
@@ -300,6 +312,18 @@ assertEqual(List.fromArray([1]).atLeastLength(1), true);
 assertEqual(List.fromArray([1]).atLeastLength(2), false);
 assertEqual(List.fromArray([1]).atLeastLength(-1), true);
 
+// List.hasLength
+
+assertEqual(toList([]).hasLength(0), true);
+assertEqual(toList([]).hasLength(1), false);
+assertEqual(toList([]).hasLength(-1), false);
+assertEqual(toList([1]).hasLength(0), false);
+assertEqual(toList([1]).hasLength(1), true);
+assertEqual(toList([1]).hasLength(2), false);
+assertEqual(toList([1, 1]).hasLength(1), false);
+assertEqual(toList([1, 1]).hasLength(2), true);
+assertEqual(toList([1, 1]).hasLength(3), false);
+
 // Symbols
 
 assertEqual("variant" in symbols, true);
@@ -326,6 +350,42 @@ assertEqual(symbols.variant in new UtfCodepoint(128013), true);
 // records can only be equal if they share a constructor, so they have no
 // variant property.
 assertEqual(symbols.variant in new Record(), false);
+
+//
+// Division
+//
+
+assertEqual(divideInt(1, 0), 0);
+assertEqual(divideInt(1, 1), 1);
+assertEqual(divideInt(1, 2), 0);
+assertEqual(divideInt(3, 2), 1);
+assertEqual(divideInt(11, 3), 3);
+assertEqual(divideInt(-1, 0), 0);
+assertEqual(divideInt(-1, 1), -1);
+assertEqual(divideInt(-1, 2), -0);
+assertEqual(divideInt(-3, 2), -1);
+assertEqual(divideInt(-11, 3), -3);
+assertEqual(divideInt(1, -1), -1);
+assertEqual(divideInt(1, -2), 0);
+assertEqual(divideInt(3, -2), -1);
+assertEqual(divideInt(11, -3), -3);
+assertEqual(divideInt(-1, -1), 1);
+assertEqual(divideInt(-1, -2), 0);
+assertEqual(divideInt(-3, -2), 1);
+assertEqual(divideInt(-11, -3), 3);
+
+assertEqual(divideFloat(1.5, 0.0), 0.0);
+assertEqual(divideFloat(1.5, 2.0), 0.75);
+assertEqual(divideFloat(1.5, 2.5), 0.6);
+assertEqual(divideFloat(-1.5, 0.0), -0.0);
+assertEqual(divideFloat(-1.5, 2.0), -0.75);
+assertEqual(divideFloat(-1.5, 2.5), -0.6);
+assertEqual(divideFloat(1.5, -0.0), -0.0);
+assertEqual(divideFloat(1.5, -2.0), -0.75);
+assertEqual(divideFloat(1.5, -2.5), -0.6);
+assertEqual(divideFloat(-1.5, -0.0), 0.0);
+assertEqual(divideFloat(-1.5, -2.0), 0.75);
+assertEqual(divideFloat(-1.5, -2.5), 0.6);
 
 //
 // Summary

@@ -22,11 +22,9 @@ export class List {
     return `[${this.toArray().map(inspect).join(", ")}]`;
   }
 
-  static fromArray(array) {
-    return array.reduceRight(
-      (list, element) => new NonEmpty(element, list),
-      new Empty()
-    );
+  static fromArray(array, tail) {
+    let t = tail || new Empty();
+    return array.reduceRight((xs, x) => new NonEmpty(x, xs), t);
   }
 
   toArray() {
@@ -49,9 +47,23 @@ export class List {
     return desired <= 0;
   }
 
+  hasLength(desired) {
+    let current = this;
+    while (!current.isEmpty()) {
+      if (desired <= 0) return false;
+      desired--;
+      current = current.tail;
+    }
+    return desired == 0;
+  }
+
   isEmpty() {
     return "EmptyList" == this[symbols.variant];
   }
+}
+
+export function toList(elements, tail) {
+  return List.fromArray(elements, tail);
 }
 
 export class Empty extends List {
@@ -100,6 +112,32 @@ export class UtfCodepoint {
   }
 }
 
+export function toBitString(segments) {
+  let size = (segment) =>
+    segment instanceof Uint8Array ? segment.byteLength : 1;
+  let bytes = segments.reduce((acc, segment) => acc + size(segment), 0);
+  let view = new DataView(new ArrayBuffer(bytes));
+  let cursor = 0;
+  for (let segment of segments) {
+    if (segment instanceof Uint8Array) {
+      new Uint8Array(view.buffer).set(segment, cursor);
+      cursor += segment.byteLength;
+    } else {
+      view.setInt8(cursor, segment);
+      cursor++;
+    }
+  }
+  return new BitString(new Uint8Array(view.buffer));
+}
+
+export function stringBits(string) {
+  return new TextEncoder().encode(string);
+}
+
+export function codepointBits(codepoint) {
+  return utf8Bits(String.fromCodePoint(codepoint));
+}
+
 export class Result extends Record {
   isOk() {
     return "Ok" === this[symbols.variant];
@@ -145,7 +183,7 @@ export function inspect(v) {
   }
 }
 
-export function equal(x, y) {
+export function isEqual(x, y) {
   let values = [x, y];
 
   while (values.length) {
@@ -154,7 +192,10 @@ export function equal(x, y) {
     if (a === b) continue;
 
     let unequal =
-      !sameTypeObjects(a, b) || unequalDates(a, b) || unequalArrayBuffers(a, b);
+      !sameTypeObjects(a, b) ||
+      unequalDates(a, b) ||
+      unequalArrayBuffers(a, b) ||
+      unequalArrays(a, b);
     if (unequal) return false;
 
     for (const k of Object.keys(a)) {
@@ -177,6 +218,10 @@ function unequalArrayBuffers(a, b) {
   );
 }
 
+function unequalArrays(a, b) {
+  return Array.isArray(a) && a.length !== b.length;
+}
+
 function sameTypeObjects(a, b) {
   return (
     typeof a === "object" &&
@@ -186,4 +231,20 @@ function sameTypeObjects(a, b) {
     (a.constructor === b.constructor ||
       (a[symbols.variant] && a[symbols.variant] === b[symbols.variant]))
   );
+}
+
+export function divideInt(a, b) {
+  if (b === 0) {
+    return 0 | 0;
+  } else {
+    return (a / b) | 0;
+  }
+}
+
+export function divideFloat(a, b) {
+  if (b === 0) {
+    return 0;
+  } else {
+    return a / b;
+  }
 }

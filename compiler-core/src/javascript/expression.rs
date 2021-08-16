@@ -13,7 +13,7 @@ use crate::{
 static RECORD_KEY: &str = "type";
 
 #[derive(Debug)]
-pub struct Generator<'module> {
+pub(crate) struct Generator<'module> {
     module_name: &'module [String],
     line_numbers: &'module LineNumbers,
     function_name: Option<&'module str>,
@@ -22,9 +22,7 @@ pub struct Generator<'module> {
     pub tail_position: bool,
     // We register whether these features are used within an expression so that
     // the module generator can output a suitable function if it is needed.
-    float_division_used: &'module mut bool,
-    object_equality_used: &'module mut bool,
-    bit_string_literal_used: &'module mut bool,
+    pub tracker: &'module mut UsageTracker,
     // We track whether tail call recusion is used so that we can render a loop
     // at the top level of the function to use in place of pushing new stack
     // frames.
@@ -38,15 +36,14 @@ impl<'module> Generator<'module> {
         line_numbers: &'module LineNumbers,
         function_name: &'module str,
         function_arguments: Vec<Option<&'module str>>,
-        float_division_used: &'module mut bool,
-        object_equality_used: &'module mut bool,
-        bit_string_literal_used: &'module mut bool,
+        tracker: &'module mut UsageTracker,
         mut current_scope_vars: im::HashMap<String, usize>,
     ) -> Self {
         for &name in function_arguments.iter().flatten() {
             let _ = current_scope_vars.insert(name.to_string(), 0);
         }
         Self {
+            tracker,
             module_name,
             line_numbers,
             function_name: Some(function_name),
@@ -54,9 +51,6 @@ impl<'module> Generator<'module> {
             tail_recursion_used: false,
             current_scope_vars,
             tail_position: true,
-            float_division_used,
-            object_equality_used,
-            bit_string_literal_used,
         }
     }
 
@@ -99,13 +93,16 @@ impl<'module> Generator<'module> {
             TypedExpr::Int { value, .. } => Ok(int(value)),
             TypedExpr::Float { value, .. } => Ok(float(value)),
 
-            TypedExpr::List { elements, tail, .. } => self.not_in_tail_position(|gen| {
-                let tail = match tail.as_ref() {
-                    Some(tail) => Some(gen.wrap_expression(tail)?),
-                    None => None,
-                };
-                list(elements.iter().map(|e| gen.wrap_expression(e)), tail)
-            }),
+            TypedExpr::List { elements, tail, .. } => {
+                self.tracker.list_used = true;
+                self.not_in_tail_position(|gen| {
+                    let tail = match tail.as_ref() {
+                        Some(tail) => Some(gen.wrap_expression(tail)?),
+                        None => None,
+                    };
+                    list(elements.iter().map(|e| gen.wrap_expression(e)), tail)
+                })
+            }
 
             TypedExpr::Tuple { elems, .. } => self.tuple(elems),
             TypedExpr::TupleIndex { tuple, index, .. } => self.tuple_index(tuple, *index),
@@ -160,12 +157,9 @@ impl<'module> Generator<'module> {
     }
 
     fn bit_string<'a>(&mut self, segments: &'a [TypedExprBitStringSegment]) -> Output<'a> {
-        use BitStringSegmentOption as Opt;
-        if segments.is_empty() {
-            return Ok("new Uint8Array()".to_doc());
-        }
+        self.tracker.bit_string_literal_used = true;
 
-        *self.bit_string_literal_used = true;
+        use BitStringSegmentOption as Opt;
 
         // Collect all the values used in segments.
         let segments_array = array(segments.iter().map(|segment| {
@@ -175,21 +169,19 @@ impl<'module> Generator<'module> {
                 [] => Ok(value),
 
                 // UTF8 strings
-                // TODO: move encoding into prelude BitString
                 [Opt::Utf8 { .. }] => {
-                    Ok(docvec!["new globalThis.TextEncoder().encode(", value, ")"])
+                    self.tracker.string_bit_string_segment_used = true;
+                    Ok(docvec!["stringBits(", value, ")"])
                 }
 
-                // UTF8 codepoints (which are ints at runtime)
-                // TODO: move encoding into prelude BitString
-                [Opt::Utf8Codepoint { .. }] => Ok(docvec![
-                    "new globalThis.TextEncoder().encode(globalThis.String.fromCodePoint(",
-                    value,
-                    "))"
-                ]),
+                // UTF8 codepoints
+                [Opt::Utf8Codepoint { .. }] => {
+                    self.tracker.codepoint_bit_string_segment_used = true;
+                    Ok(docvec!["codepointBits(", value, ")"])
+                }
 
                 // Bit strings
-                [Opt::BitString { .. }] => Ok(value),
+                [Opt::BitString { .. }] => Ok(docvec![value, ".buffer"]),
 
                 // Anything else
                 _ => Err(Error::Unsupported {
@@ -199,7 +191,7 @@ impl<'module> Generator<'module> {
             }
         }))?;
 
-        Ok(docvec!["$bit_string(", segments_array, ")"])
+        Ok(docvec!["toBitString(", segments_array, ")"])
     }
 
     pub fn wrap_return<'a>(&self, document: Document<'a>) -> Document<'a> {
@@ -746,8 +738,8 @@ impl<'module> Generator<'module> {
             BinOp::SubInt | BinOp::SubFloat => self.print_bin_op(left, right, "-"),
             BinOp::MultInt => self.mult_int(left, right),
             BinOp::MultFloat => self.print_bin_op(left, right, "*"),
-            BinOp::DivInt => Ok(self.print_bin_op(left, right, "/")?.append(" | 0")),
             BinOp::ModuloInt => self.print_bin_op(left, right, "%"),
+            BinOp::DivInt => self.div_int(left, right),
             BinOp::DivFloat => self.div_float(left, right),
         }
     }
@@ -758,11 +750,18 @@ impl<'module> Generator<'module> {
         Ok(docvec!("Math.imul", wrap_args([left, right])))
     }
 
+    fn div_int<'a>(&mut self, left: &'a TypedExpr, right: &'a TypedExpr) -> Output<'a> {
+        let left = self.not_in_tail_position(|gen| gen.expression(left))?;
+        let right = self.not_in_tail_position(|gen| gen.expression(right))?;
+        self.tracker.int_division_used = true;
+        Ok(docvec!("divideInt", wrap_args([left, right])))
+    }
+
     fn div_float<'a>(&mut self, left: &'a TypedExpr, right: &'a TypedExpr) -> Output<'a> {
         let left = self.not_in_tail_position(|gen| gen.expression(left))?;
         let right = self.not_in_tail_position(|gen| gen.expression(right))?;
-        *self.float_division_used = true;
-        Ok(docvec!("$divide", wrap_args([left, right])))
+        self.tracker.float_division_used = true;
+        Ok(docvec!("divideFloat", wrap_args([left, right])))
     }
 
     fn equal<'a>(
@@ -782,20 +781,24 @@ impl<'module> Generator<'module> {
         // Other types must be compared using structural equality
         let left = self.not_in_tail_position(|gen| gen.wrap_expression(left))?;
         let right = self.not_in_tail_position(|gen| gen.wrap_expression(right))?;
-        Ok(self.dollar_equal_call(should_be_equal, left, right))
+        Ok(self.prelude_equal_call(should_be_equal, left, right))
     }
 
-    pub(super) fn dollar_equal_call<'a>(
+    pub(super) fn prelude_equal_call<'a>(
         &mut self,
         should_be_equal: bool,
         left: Document<'a>,
         right: Document<'a>,
     ) -> Document<'a> {
-        // Record that we need to render the $equal function into the module
-        *self.object_equality_used = true;
+        // Record that we need to import the prelude's isEqual function into the module
+        self.tracker.object_equality_used = true;
         // Construct the call
         let args = wrap_args([left, right]);
-        let operator = if should_be_equal { "$equal" } else { "!$equal" };
+        let operator = if should_be_equal {
+            "isEqual"
+        } else {
+            "!isEqual"
+        };
         docvec!(operator, args)
     }
 
@@ -884,13 +887,24 @@ pub fn float(value: &str) -> Document<'_> {
     value.to_doc()
 }
 
-pub fn constant_expression(expression: &'_ TypedConstant) -> Output<'_> {
+pub(crate) fn constant_expression<'a>(
+    tracker: &mut UsageTracker,
+    expression: &'a TypedConstant,
+) -> Output<'a> {
     match expression {
         Constant::Int { value, .. } => Ok(int(value)),
         Constant::Float { value, .. } => Ok(float(value)),
         Constant::String { value, .. } => Ok(string(value)),
-        Constant::Tuple { elements, .. } => array(elements.iter().map(|e| constant_expression(e))),
-        Constant::List { elements, .. } => list(elements.iter().map(constant_expression), None),
+        Constant::Tuple { elements, .. } => {
+            array(elements.iter().map(|e| constant_expression(tracker, e)))
+        }
+        Constant::List { elements, .. } => {
+            tracker.list_used = true;
+            list(
+                elements.iter().map(|e| constant_expression(tracker, e)),
+                None,
+            )
+        }
         Constant::Record { typ, name, .. } if typ.is_bool() && name == "True" => {
             Ok("true".to_doc())
         }
@@ -906,7 +920,7 @@ pub fn constant_expression(expression: &'_ TypedConstant) -> Output<'_> {
         } => {
             let field_values: Vec<_> = args
                 .iter()
-                .map(|arg| constant_expression(&arg.value))
+                .map(|arg| constant_expression(tracker, &arg.value))
                 .try_collect()?;
             Ok(construct_record(tag, args.len(), field_map, field_values))
         }
@@ -940,27 +954,18 @@ pub fn array<'a, Elements: IntoIterator<Item = Output<'a>>>(elements: Elements) 
 
 fn list<'a, I: IntoIterator<Item = Output<'a>>>(
     elements: I,
-    mut tail: Option<Document<'a>>,
+    tail: Option<Document<'a>>,
 ) -> Output<'a>
 where
     I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
 {
-    for (i, element) in elements.into_iter().enumerate().rev() {
-        let mut doc = match tail {
-            Some(tail) => docvec![element?.group(), break_(",", ", "), tail],
-            None => docvec![element?.group(), break_(",", ", "), "[]"],
-        };
-        if i != 0 {
-            doc = docvec!("[", doc, "]");
-        }
-        tail = Some(doc);
+    let array = array(elements);
+    if let Some(tail) = tail {
+        let args = iter::once(array).chain(iter::once(Ok(tail)));
+        Ok(docvec!["toList", call_arguments(args)?])
+    } else {
+        Ok(docvec!["toList(", array?, ")"])
     }
-    Ok(docvec![
-        "[",
-        docvec!(docvec!(break_("", ""), tail).nest(INDENT), break_(",", ""),),
-        "]"
-    ]
-    .group())
 }
 
 fn call_arguments<'a, Elements: IntoIterator<Item = Output<'a>>>(elements: Elements) -> Output<'a> {

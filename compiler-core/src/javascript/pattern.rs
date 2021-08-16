@@ -1,7 +1,4 @@
-use super::{
-    expression::{constant_expression, is_js_scalar},
-    *,
-};
+use super::{expression::is_js_scalar, *};
 use crate::type_::{FieldMap, PatternConstructor};
 
 pub static ASSIGNMENT_VAR: &str = "$";
@@ -19,7 +16,7 @@ pub struct Subjects<'a> {
 }
 
 #[derive(Debug)]
-pub struct Generator<'module_ctx, 'expression_gen, 'a> {
+pub(crate) struct Generator<'module_ctx, 'expression_gen, 'a> {
     pub expression_generator: &'expression_gen mut expression::Generator<'module_ctx>,
     path: Vec<Index<'a>>,
     checks: Vec<Check<'a>>,
@@ -54,9 +51,9 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
         self.path.push(Index::Int(i));
     }
 
-    fn push_int_times(&mut self, index: usize, times: usize) {
+    fn push_string_times(&mut self, s: &'a str, times: usize) {
         for _ in 0..times {
-            self.push_int(index);
+            self.push_string(s);
         }
     }
 
@@ -73,6 +70,7 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
     fn path_document(&self) -> Document<'a> {
         concat(self.path.iter().map(|segment| match segment {
             Index::Int(i) => Document::String(format!("[{}]", i)),
+            // TODO: escape string if needed
             Index::String(s) => docvec!(".", s),
         }))
     }
@@ -144,14 +142,14 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
                 let left = self.guard(left)?;
                 let right = self.guard(right)?;
                 self.expression_generator
-                    .dollar_equal_call(true, left, right)
+                    .prelude_equal_call(true, left, right)
             }
 
             ClauseGuard::NotEquals { left, right, .. } => {
                 let left = self.guard(left)?;
                 let right = self.guard(right)?;
                 self.expression_generator
-                    .dollar_equal_call(false, left, right)
+                    .prelude_equal_call(false, left, right)
             }
 
             ClauseGuard::GtFloat { left, right, .. } | ClauseGuard::GtInt { left, right, .. } => {
@@ -200,7 +198,9 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
                 docvec!(self.guard(tuple)?, "[", index, "]")
             }
 
-            ClauseGuard::Constant(constant) => return constant_expression(constant),
+            ClauseGuard::Constant(constant) => {
+                return expression::constant_expression(self.expression_generator.tracker, constant)
+            }
         })
     }
 
@@ -249,14 +249,14 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
             Pattern::List { elements, tail, .. } => {
                 self.push_list_length_check(subject.clone(), elements.len(), tail.is_some());
                 for pattern in elements {
-                    self.push_int(0);
+                    self.push_string("head");
                     self.traverse_pattern(subject, pattern)?;
                     self.pop();
-                    self.push_int(1);
+                    self.push_string("tail");
                 }
                 self.pop_times(elements.len());
                 if let Some(pattern) = tail {
-                    self.push_int_times(1, elements.len());
+                    self.push_string_times("tail", elements.len());
                     self.traverse_pattern(subject, pattern)?;
                     self.pop_times(elements.len());
                 }
@@ -264,7 +264,8 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
             }
 
             Pattern::Tuple { elems, .. } => {
-                // We don't check the length because type system ensures it's a tuple
+                // We don't check the length because type system ensures it's a
+                // tuple of the correct size
                 for (index, pattern) in elems.iter().enumerate() {
                     self.push_int(index);
                     self.traverse_pattern(subject, pattern)?;
@@ -525,27 +526,22 @@ impl<'a> Check<'a> {
                 expected_length,
                 has_tail_spread,
             } => {
-                let length_check = if has_tail_spread && match_desired {
-                    "?.length !== undefined".to_doc()
-                } else if has_tail_spread {
-                    "?.length === undefined".to_doc()
-                } else if match_desired {
-                    "?.length === 0".to_doc()
+                let length_check = Document::String(if has_tail_spread {
+                    format!(".atLeastLength({})", expected_length)
                 } else {
-                    "?.length !== 0".to_doc()
-                };
-                docvec![
-                    subject,
-                    path,
-                    Document::String("?.[1]".repeat(expected_length)),
-                    length_check,
-                ]
+                    format!(".hasLength({})", expected_length)
+                });
+                if match_desired {
+                    docvec![subject, path, length_check,]
+                } else {
+                    docvec!["!", subject, path, length_check,]
+                }
             }
         }
     }
 }
 
-pub fn assign_subject<'a>(
+pub(crate) fn assign_subject<'a>(
     expression_generator: &mut expression::Generator<'_>,
     subject: &'a TypedExpr,
 ) -> (Document<'a>, Option<Document<'a>>) {
@@ -565,7 +561,7 @@ pub fn assign_subject<'a>(
     }
 }
 
-pub fn assign_subjects<'a>(
+pub(crate) fn assign_subjects<'a>(
     expression_generator: &mut expression::Generator<'_>,
     subjects: &'a [TypedExpr],
 ) -> Vec<(Document<'a>, Option<Document<'a>>)> {

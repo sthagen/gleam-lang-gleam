@@ -1,11 +1,10 @@
 import test.{Test, assert_equal, example, operator_test, suite}
 import importable.{NoFields}
 import gleam
-import ffi
 
 pub fn main() -> Int {
   let stats =
-    [
+    test.run([
       suite("try", try_tests()),
       suite("ints", int_tests()),
       suite("pipes", pipes_tests()),
@@ -22,8 +21,7 @@ pub fn main() -> Int {
       suite("tail call optimisation", tail_call_optimisation_tests()),
       suite("alternative patterns", alternative_patterns_tests()),
       suite("multiple case subjects", multiple_case_subjects()),
-    ]
-    |> test.run()
+    ])
 
   case stats.failures {
     0 -> 0
@@ -1001,12 +999,12 @@ fn bit_string_tests() -> List(Test) {
 fn list_spread_tests() -> List(Test) {
   [
     "[1, ..[]]"
-    |> example(fn() { assert_equal(True, [1, ..[]] == [1]) }),
+    |> example(fn() { assert_equal([1, ..[]], [1]) }),
     "[1, 2, ..[]]"
-    |> example(fn() { assert_equal(True, [1, 2, ..[]] == [1, 2]) }),
+    |> example(fn() { assert_equal([1, 2, ..[]], [1, 2]) }),
     "[1, 2, ..[3]]"
-    |> example(fn() { assert_equal(True, [1, 2, ..[3]] == [1, 2, 3]) }),
+    |> example(fn() { assert_equal([1, 2, ..[3]], [1, 2, 3]) }),
     "[1, 2, ..[3, 4]]"
-    |> example(fn() { assert_equal(True, [1, 2, ..[3, 4]] == [1, 2, 3, 4]) }),
+    |> example(fn() { assert_equal([1, 2, ..[3, 4]], [1, 2, 3, 4]) }),
   ]
 }

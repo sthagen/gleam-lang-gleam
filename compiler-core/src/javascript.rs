@@ -14,56 +14,7 @@ use self::import::{Imports, Member};
 
 const INDENT: isize = 2;
 
-const DEEP_EQUAL: &str = "
-
-function $equal(x, y) {
-  let values = [x, y];
-  while (values.length !== 0) {
-    let a = values.pop();
-    let b = values.pop();
-    if (
-      a === b ||
-      (a instanceof Uint8Array &&
-        b instanceof Uint8Array &&
-        a.byteLength === b.byteLength &&
-        a.every((x, i) => x === b[i]))
-    )
-      continue;
-    if (!$is_object(a) || !$is_object(b) || a.length !== b.length) return false;
-    for (let k of Object.keys(a)) values.push(a[k], b[k]);
-  }
-  return true;
-}
-
-function $is_object(object) {
-  return object !== null && typeof object === 'object';
-}";
-
-const FUNCTION_DIVIDE: &str = "
-
-function $divide(a, b) {
-  if (b === 0) return 0;
-  return a / b;
-}";
-
-const FUNCTION_BIT_STRING: &str = "
-
-function $bit_string(segments) {
-  let size = segment => segment instanceof Uint8Array ? segment.byteLength : 1;
-  let bytes = segments.reduce((acc, segment) => acc + size(segment), 0);
-  let view = new DataView(new ArrayBuffer(bytes));
-  let cursor = 0;
-  for (let segment of segments) {
-    if (segment instanceof Uint8Array) {
-      new Uint8Array(view.buffer).set(segment, cursor);
-      cursor += segment.byteLength;
-    } else {
-      view.setInt8(cursor, segment);
-      cursor++;
-    }
-  }
-  return new Uint8Array(view.buffer);
-}";
+pub const PRELUDE: &str = include_str!("../templates/prelude.js");
 
 pub type Output<'a> = Result<Document<'a>, Error>;
 
@@ -71,9 +22,7 @@ pub type Output<'a> = Result<Document<'a>, Error>;
 pub struct Generator<'a> {
     line_numbers: &'a LineNumbers,
     module: &'a TypedModule,
-    float_division_used: bool,
-    object_equality_used: bool,
-    bit_string_literal_used: bool,
+    tracker: UsageTracker,
     module_scope: im::HashMap<String, usize>,
 }
 
@@ -82,15 +31,13 @@ impl<'a> Generator<'a> {
         Self {
             line_numbers,
             module,
-            float_division_used: false,
-            object_equality_used: false,
-            bit_string_literal_used: false,
+            tracker: UsageTracker::default(),
             module_scope: Default::default(),
         }
     }
 
     pub fn compile(&mut self) -> Output<'a> {
-        let imports = self.collect_imports();
+        let mut imports = self.collect_imports();
         let statements = self
             .module
             .statements
@@ -101,20 +48,37 @@ impl<'a> Generator<'a> {
         let mut statements: Vec<_> =
             Itertools::intersperse(statements, Ok(lines(2))).try_collect()?;
 
-        // If float division has been used render an appropriate function
-        if self.float_division_used {
-            statements.push(FUNCTION_DIVIDE.to_doc());
+        // Import any prelude functions that have been used
+
+        if self.tracker.list_used {
+            self.register_prelude_usage(&mut imports, "toList");
         };
 
-        // If structural equality is used render an appropriate function
-        if self.object_equality_used {
-            statements.push(DEEP_EQUAL.to_doc());
+        if self.tracker.float_division_used {
+            self.register_prelude_usage(&mut imports, "divideFloat");
         };
 
-        // If bit string literals have been used render an appropriate function
-        if self.bit_string_literal_used {
-            statements.push(FUNCTION_BIT_STRING.to_doc());
+        if self.tracker.int_division_used {
+            self.register_prelude_usage(&mut imports, "divideInt");
         };
+
+        if self.tracker.object_equality_used {
+            self.register_prelude_usage(&mut imports, "isEqual");
+        };
+
+        if self.tracker.bit_string_literal_used {
+            self.register_prelude_usage(&mut imports, "toBitString");
+        };
+
+        if self.tracker.string_bit_string_segment_used {
+            self.register_prelude_usage(&mut imports, "stringBits");
+        };
+
+        if self.tracker.codepoint_bit_string_segment_used {
+            self.register_prelude_usage(&mut imports, "codepointBits");
+        };
+
+        // Put it all together
 
         if imports.is_empty() && statements.is_empty() {
             Ok(docvec!("export {};", line()))
@@ -126,6 +90,15 @@ impl<'a> Generator<'a> {
         } else {
             Ok(docvec![imports.into_doc(), line(), statements, line()])
         }
+    }
+
+    fn register_prelude_usage(&self, imports: &mut Imports<'a>, name: &'static str) {
+        let path = self.import_path(&self.module.type_info.package, &["gleam".to_string()]);
+        let member = Member {
+            name: name.to_doc(),
+            alias: None,
+        };
+        imports.register_module(path, iter::empty(), iter::once(member));
     }
 
     pub fn statement(&mut self, statement: &'a TypedStatement) -> Vec<Output<'a>> {
@@ -202,7 +175,7 @@ impl<'a> Generator<'a> {
         imports
     }
 
-    fn import_path(&mut self, package: &'a str, module: &'a [String]) -> String {
+    fn import_path(&self, package: &'a str, module: &'a [String]) -> String {
         let path = module.join("/");
 
         if package == self.module.type_info.package || package.is_empty() {
@@ -296,7 +269,7 @@ impl<'a> Generator<'a> {
             head,
             maybe_escape_identifier_doc(name),
             " = ",
-            expression::constant_expression(value)?,
+            expression::constant_expression(&mut self.tracker, value)?,
             ";",
         ])
     }
@@ -322,9 +295,7 @@ impl<'a> Generator<'a> {
             self.line_numbers,
             name,
             argument_names,
-            &mut self.float_division_used,
-            &mut self.object_equality_used,
-            &mut self.bit_string_literal_used,
+            &mut self.tracker,
             self.module_scope.clone(),
         );
         let head = if public {
@@ -535,4 +506,16 @@ fn maybe_escape_identifier_doc(word: &str) -> Document<'_> {
     } else {
         Document::String(escape_identifier(word))
     }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct UsageTracker {
+    pub list_used: bool,
+    pub int_division_used: bool,
+    pub float_division_used: bool,
+    pub object_equality_used: bool,
+    pub bit_string_literal_used: bool,
+    pub string_bit_string_segment_used: bool,
+    pub codepoint_bit_string_segment_used: bool,
+    pub utfcodepoint_bit_string_segment_used: bool,
 }
