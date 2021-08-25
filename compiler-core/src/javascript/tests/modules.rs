@@ -1,12 +1,10 @@
-// TODO: convert to snapshots
-
 use crate::assert_js;
 use crate::javascript::tests::CURRENT_PACKAGE;
 
 #[test]
 fn empty_module() {
     // Renders an export statement to ensure it's an ESModule
-    assert_js!("", "export {};\n");
+    assert_js!("", "export {}\n");
 }
 
 #[test]
@@ -20,13 +18,6 @@ fn unqualified_fn_call() {
         r#"import rocket_ship.{launch}
 pub fn go() { launch() }
 "#,
-        r#"import * as RocketShip from "../rocket_ship.js";
-import { launch } from "../rocket_ship.js";
-
-export function go() {
-  return launch();
-}
-"#
     );
 }
 
@@ -41,13 +32,6 @@ fn aliased_unqualified_fn_call() {
         r#"import rocket_ship.{launch as boom_time}
 pub fn go() { boom_time() }
 "#,
-        r#"import * as RocketShip from "../rocket_ship.js";
-import { launch as boom_time } from "../rocket_ship.js";
-
-export function go() {
-  return boom_time();
-}
-"#
     );
 }
 
@@ -64,13 +48,6 @@ pub fn b() { 2 }"#
         r#"import rocket_ship.{a,b as bb}
 pub fn go() { a() + bb() }
 "#,
-        r#"import * as RocketShip from "../rocket_ship.js";
-import { a, b as bb } from "../rocket_ship.js";
-
-export function go() {
-  return a() + bb();
-}
-"#
     );
 }
 
@@ -86,12 +63,6 @@ fn constant() {
 import rocket_ship
 pub fn go() { rocket_ship.x }
 "#,
-        r#"import * as RocketShip from "../rocket_ship.js";
-
-export function go() {
-  return RocketShip.x;
-}
-"#
     );
 }
 
@@ -107,12 +78,6 @@ fn alias_constant() {
 import rocket_ship as boop
 pub fn go() { boop.x }
 "#,
-        r#"import * as Boop from "../rocket_ship.js";
-
-export function go() {
-  return Boop.x;
-}
-"#
     );
 }
 
@@ -128,12 +93,6 @@ fn alias_fn_call() {
 import rocket_ship as boop
 pub fn go() { boop.go() }
 "#,
-        r#"import * as Boop from "../rocket_ship.js";
-
-export function go() {
-  return Boop.go();
-}
-"#
     );
 }
 
@@ -147,12 +106,6 @@ fn nested_fn_call() {
         ),
         r#"import one/two
 pub fn go() { two.go() }"#,
-        r#"import * as Two from "../one/two.js";
-
-export function go() {
-  return Two.go();
-}
-"#
     );
 }
 
@@ -166,12 +119,6 @@ fn nested_nested_fn_call() {
         ),
         r#"import one/two/three
 pub fn go() { three.go() }"#,
-        r#"import * as Three from "../one/two/three.js";
-
-export function go() {
-  return Three.go();
-}
-"#
     );
 }
 
@@ -186,12 +133,6 @@ fn different_package_import() {
         r#"import one
 pub fn go() { one.go() }
 "#,
-        r#"import * as One from "other_package/one.js";
-
-export function go() {
-  return One.go();
-}
-"#
     );
 }
 
@@ -206,12 +147,6 @@ fn nested_same_package() {
         r#"import one/two/three
 pub fn go() { three.go() }
 "#,
-        r#"import * as Three from "../one/two/three.js";
-
-export function go() {
-  return Three.go();
-}
-"#
     );
 }
 
@@ -228,12 +163,52 @@ import one/two/three.{two}
 
 pub fn go() { one() + two() }
 "#,
-        r#"import * as Three from "../one/two/three.js";
-import { one, two } from "../one/two/three.js";
-
-export function go() {
-  return one() + two();
+    );
 }
-"#
+
+#[test]
+fn imported_external_types_dont_get_rendered() {
+    assert_js!(
+        (
+            CURRENT_PACKAGE,
+            vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            r#"pub external type External"#
+        ),
+        r#"import one/two/three.{External}
+
+pub fn go() { 1 }
+"#,
+    );
+}
+
+#[test]
+fn imported_custom_types_dont_get_rendered() {
+    assert_js!(
+        (
+            CURRENT_PACKAGE,
+            vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            r#"pub type Custom { One Two }"#
+        ),
+        r#"import one/two/three.{Custom, One, Two}
+
+pub fn go() -> List(Custom) { [One, Two] }
+"#,
+    );
+}
+
+#[test]
+fn imported_external_types_dont_get_rendered_with_value_of_same_name() {
+    assert_js!(
+        (
+            CURRENT_PACKAGE,
+            vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            r#"pub external type Thingy"#
+        ),
+        r#"import one/two/three.{Thingy}
+
+type Dup { Thingy }
+
+pub fn go(x: Thingy) -> List(Thingy) { [x, x] }
+"#,
     );
 }

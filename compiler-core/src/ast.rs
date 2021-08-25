@@ -195,6 +195,8 @@ impl ArgNames {
     }
 }
 
+pub type TypedRecordConstructor = RecordConstructor<Arc<Type>>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordConstructor<T> {
     pub location: SrcSpan,
@@ -208,6 +210,8 @@ impl<A> RecordConstructor<A> {
         self.documentation = Some(new_doc);
     }
 }
+
+pub type TypedRecordConstructorArg = RecordConstructorArg<Arc<Type>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordConstructorArg<T> {
@@ -377,6 +381,38 @@ pub struct UnqualifiedImport {
     pub location: SrcSpan,
     pub name: String,
     pub as_name: Option<String>,
+    pub layer: Layer,
+}
+
+impl UnqualifiedImport {
+    pub fn variable_name(&self) -> &str {
+        self.as_name
+            .as_deref()
+            .unwrap_or_else(|| self.name.as_str())
+    }
+
+    pub fn is_value(&self) -> bool {
+        self.layer.is_value()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum Layer {
+    Value,
+    Type,
+}
+
+impl Default for Layer {
+    fn default() -> Self {
+        Layer::Value
+    }
+}
+
+impl Layer {
+    /// Returns `true` if the layer is [`Value`].
+    pub fn is_value(&self) -> bool {
+        matches!(self, Self::Value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

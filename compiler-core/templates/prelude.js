@@ -6,14 +6,21 @@ export const symbols = define(globalThis, "__gleam", {});
 define(symbols, "variant", Symbol("variant"));
 define(symbols, "inspect", Symbol("inspect"));
 
-export class Record {
+export class CustomType {
   [symbols.inspect]() {
     let field = (label) => {
       let value = inspect(this[label]);
       return isNaN(parseInt(label)) ? `${label}: ${value}` : value;
     };
-    let props = Object.getOwnPropertyNames(this).map(field).join(", ");
+    let props = Object.keys(this).map(field).join(", ");
     return props ? `${this.constructor.name}(${props})` : this.constructor.name;
+  }
+
+  withFields(fields) {
+    let properties = Object.keys(this).map((label) =>
+      label in fields ? fields[label] : this[label]
+    );
+    return new this.constructor(...properties);
   }
 }
 
@@ -103,10 +110,6 @@ export class UtfCodepoint {
     this.value = value;
   }
 
-  toBuffer() {
-    return new Uint8Array(String.fromCodePoint(this.value));
-  }
-
   [symbols.inspect]() {
     return `//utfcodepoint(${String.fromCodePoint(this.value)})`;
   }
@@ -135,10 +138,10 @@ export function stringBits(string) {
 }
 
 export function codepointBits(codepoint) {
-  return utf8Bits(String.fromCodePoint(codepoint));
+  return stringBits(String.fromCodePoint(codepoint.value));
 }
 
-export class Result extends Record {
+export class Result extends CustomType {
   isOk() {
     return "Ok" === this[symbols.variant];
   }

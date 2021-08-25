@@ -19,11 +19,11 @@ pub use prelude::*;
 
 use crate::{
     ast::{
-        self, ArgNames, BitStringSegment, BitStringSegmentOption, CallArg, Constant, Pattern,
-        RecordConstructor, RecordConstructorArg, SrcSpan, Statement, TypeAst, TypedConstant,
-        TypedExpr, TypedModule, TypedPattern, TypedPatternBitStringSegment, TypedRecordUpdateArg,
-        TypedStatement, UnqualifiedImport, UntypedModule, UntypedMultiPattern, UntypedPattern,
-        UntypedRecordUpdateArg, UntypedStatement,
+        self, ArgNames, BitStringSegment, BitStringSegmentOption, CallArg, Constant, Layer,
+        Pattern, RecordConstructor, RecordConstructorArg, SrcSpan, Statement, TypeAst,
+        TypedConstant, TypedExpr, TypedModule, TypedPattern, TypedPatternBitStringSegment,
+        TypedRecordUpdateArg, TypedStatement, UnqualifiedImport, UntypedModule,
+        UntypedMultiPattern, UntypedPattern, UntypedRecordUpdateArg, UntypedStatement,
     },
     bit_string,
     build::{Origin, Target},
@@ -69,6 +69,13 @@ pub enum Type {
 }
 
 impl Type {
+    pub fn is_result_constructor(&self) -> bool {
+        match self {
+            Type::Fn { retrn, .. } => retrn.is_result(),
+            _ => false,
+        }
+    }
+
     pub fn is_result(&self) -> bool {
         matches!(self, Self::App { name, module, .. } if "Result" == name && module.is_empty())
     }
@@ -1163,7 +1170,7 @@ fn infer_statement(
             location,
             module,
             as_name,
-            unqualified,
+            mut unqualified,
             ..
         } => {
             let name = module.join("/");
@@ -1177,6 +1184,13 @@ fn infer_statement(
                         name,
                         imported_modules: environment.imported_modules.keys().cloned().collect(),
                     })?;
+            // Record any imports that are types only as this information is
+            // needed to prevent types being imported in generated JavaScript
+            for import in unqualified.iter_mut() {
+                if environment.imported_types.contains(import.variable_name()) {
+                    import.layer = Layer::Type;
+                }
+            }
             Ok(Statement::Import {
                 location,
                 module,
@@ -1688,6 +1702,7 @@ pub fn register_import(
                 name,
                 location,
                 as_name,
+                ..
             } in unqualified
             {
                 let mut type_imported = false;
@@ -1697,7 +1712,7 @@ pub fn register_import(
                 let imported_name = as_name.as_ref().unwrap_or(name);
 
                 // Check if value already was imported
-                if let Some(value) = environment.local_values.get(name) {
+                if let Some(value) = environment.local_values.get(imported_name) {
                     return Err(Error::DuplicateImport {
                         location: *location,
                         previous_location: value.origin,
@@ -1737,6 +1752,7 @@ pub fn register_import(
                         *location,
                     );
                 } else if type_imported {
+                    let _ = environment.imported_types.insert(imported_name.to_string());
                     let _ = environment.init_usage(
                         imported_name.to_string(),
                         EntityKind::ImportedType,

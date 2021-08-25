@@ -1,6 +1,13 @@
+//// Here are some things that have been previously been incorrectly reported as
+//// unused.
+
 import test.{Test, assert_equal, example, operator_test, suite}
 import importable.{NoFields}
+import mod_with_numbers_0123456789
+import record_update
+import shadowed_module.{ShadowPerson}
 import gleam
+import port.{Port}
 
 pub fn main() -> Int {
   let stats =
@@ -21,6 +28,14 @@ pub fn main() -> Int {
       suite("tail call optimisation", tail_call_optimisation_tests()),
       suite("alternative patterns", alternative_patterns_tests()),
       suite("multiple case subjects", multiple_case_subjects()),
+      suite("precedence", precedence_tests()),
+      suite("call returned function", call_returned_function_tests()),
+      suite("floats", floats_tests()),
+      suite("ints", ints_tests()),
+      suite("mod with numbers", mod_with_numbers_tests()),
+      suite("record update", record_update_tests()),
+      suite("shadowed module", shadowed_module_tests()),
+      suite("unicode overflow", unicode_overflow_tests()),
     ])
 
   case stats.failures {
@@ -1008,3 +1023,139 @@ fn list_spread_tests() -> List(Test) {
     |> example(fn() { assert_equal([1, 2, ..[3, 4]], [1, 2, 3, 4]) }),
   ]
 }
+
+fn precedence_tests() -> List(Test) {
+  [
+    "1 + 2 * 3"
+    |> example(fn() { assert_equal(7, 1 + 2 * 3) }),
+    "3 * 1 + 2"
+    |> example(fn() { assert_equal(5, 3 * 1 + 2) }),
+    "{ 1 + 2 } * 3"
+    |> example(fn() { assert_equal(9, { 1 + 2 } * 3) }),
+    "3 * { 1 + 2 }"
+    |> example(fn() { assert_equal(9, 3 * { 1 + 2 }) }),
+    "1 + 2 * 3 + 4"
+    |> example(fn() { assert_equal(11, 1 + 2 * 3 + 4) }),
+    "2 * 3 + 4 * 5"
+    |> example(fn() { assert_equal(26, 2 * 3 + 4 * 5) }),
+    "2 * { 3 + 1 } / 2"
+    |> example(fn() { assert_equal(4, 2 * { 3 + 1 } / 2) }),
+    "5 + 3 / 3 * 2 - 6 * 4"
+    |> example(fn() { assert_equal(-17, 5 + 3 / 3 * 2 - 6 * 4) }),
+  ]
+}
+
+type FnBox {
+  FnBox(f: fn(Int) -> Int)
+}
+
+fn call_returned_function_tests() -> List(Test) {
+  [
+    "call record access"
+    |> example(fn() {
+      let b = FnBox(f: fn(x) { x })
+      assert_equal(5, b.f(5))
+    }),
+    "call tuple access"
+    |> example(fn() {
+      let t = #(fn(x) { x })
+      assert_equal(5, t.0(5))
+    }),
+  ]
+}
+
+fn floats_tests() -> List(Test) {
+  [
+    "2.0 /. 2.0"
+    |> example(fn() { assert_equal(1.0, 2.0 /. 2.0) }),
+    "2.0 /. 0.0"
+    |> example(fn() { assert_equal(0.0, 2.0 /. 0.0) }),
+  ]
+}
+
+fn ints_tests() -> List(Test) {
+  [
+    "hex int"
+    |> example(fn() { assert_equal(15, 0xF) }),
+    "octal int"
+    |> example(fn() { assert_equal(15, 0o17) }),
+    "binary int"
+    |> example(fn() { assert_equal(15, 0b00001111) }),
+    "1-1 should lex as 1 - 1"
+    |> example(fn() { assert_equal(0, 1 - 1) }),
+    "a-1 should lex as a - 1"
+    |> example(fn() {
+      let a = 1
+      assert_equal(0, a - 1)
+    }),
+    "1- 1 should lex as 1 - 1"
+    |> example(fn() { assert_equal(0, 1 - 1) }),
+    "1 / 1"
+    |> example(fn() { assert_equal(1, 1 / 1) }),
+    "1 / 0"
+    |> example(fn() { assert_equal(0, 1 / 0) }),
+    "3 / 2"
+    |> example(fn() { assert_equal(1, 3 / 2) }),
+    "3 / 0"
+    |> example(fn() { assert_equal(0, 3 / 0) }),
+  ]
+}
+
+fn mod_with_numbers_tests() -> List(Test) {
+  [
+    "mod_with_numbers_0123456789.hello()"
+    |> example(fn() {
+      assert_equal("world", mod_with_numbers_0123456789.hello())
+    }),
+  ]
+}
+
+type Person {
+  Person(name: String, age: Int, country: String)
+}
+
+fn record_update_tests() {
+  [
+    "unqualified record update"
+    |> example(fn() {
+      let past = Person("Quinn", 27, "Canada")
+      let present = Person(..past, country: "USA", age: past.age + 1)
+      assert_equal(Person("Quinn", 28, "USA"), present)
+    }),
+    "qualified record update"
+    |> example(fn() {
+      let module_box = record_update.Box("a", 5)
+      let updated = record_update.Box(..module_box, value: 6)
+      assert_equal(record_update.Box("a", 6), updated)
+    }),
+  ]
+}
+
+fn shadowed_module_tests() {
+  [
+    "this module"
+    |> example(fn() {
+      let shadowed_module = ShadowPerson(18)
+      let shadowed_module = shadowed_module.celebrate_birthday(shadowed_module)
+      assert_equal(19, shadowed_module.age)
+    }),
+  ]
+}
+
+fn unicode_overflow_tests() {
+  // In erlang, literally creating binaries can cause entries to overflow.
+  // For example `<<"🌵">> == <<"5">>` evaluates to true.
+  // This checks that we are not doing that.
+  // See: https://github.com/gleam-lang/gleam/issues/457
+  [
+    "🌵 vs 5"
+    |> example(fn() { assert_equal(False, "🌵" == "5") }),
+  ]
+}
+
+type PortMonitorFlag {
+  Port
+}
+
+pub external fn go(Port) -> Nil =
+  "" ""

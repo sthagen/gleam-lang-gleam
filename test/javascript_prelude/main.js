@@ -1,17 +1,20 @@
 import {
   BitString,
+  CustomType,
   Empty,
   Error,
   List,
   NonEmpty,
   Ok,
-  Record,
   UtfCodepoint,
+  codepointBits,
   divideFloat,
   divideInt,
-  isEqual,
   inspect,
+  isEqual,
+  stringBits,
   symbols,
+  toBitString,
   toList,
 } from "./prelude.js";
 
@@ -45,7 +48,7 @@ function assertNotEqual(a, b) {
   }
 }
 
-class ExampleRecordImpl extends Record {
+class ExampleRecordImpl extends CustomType {
   constructor(first, detail, boop) {
     super();
     this[0] = first;
@@ -55,7 +58,7 @@ class ExampleRecordImpl extends Record {
 }
 
 let fmt = new Intl.DateTimeFormat("en-GB", { timeStyle: "medium" });
-console.log(`\nRunning tests at ${fmt.format(new Date())}\n`);
+console.log(`Running tests at ${fmt.format(new Date())}\n`);
 
 // Equality of Gleam values
 
@@ -132,6 +135,25 @@ assertNotEqual(
 
 assertEqual(new UtfCodepoint(128013), new UtfCodepoint(128013));
 assertNotEqual(new UtfCodepoint(128013), new UtfCodepoint(128014));
+
+// toBitString
+
+assertEqual(new BitString(new Uint8Array([])), toBitString([]));
+
+assertEqual(
+  new BitString(new Uint8Array([97, 98, 99])),
+  toBitString([stringBits("abc")])
+);
+
+assertEqual(
+  new BitString(new Uint8Array([97])),
+  toBitString([codepointBits(new UtfCodepoint(97))])
+);
+
+assertEqual(
+  new BitString(new Uint8Array([240, 159, 144, 141])),
+  toBitString([codepointBits(new UtfCodepoint(128013))])
+);
 
 // toList
 
@@ -334,7 +356,7 @@ assertEqual(new Set(Object.keys(symbols)).length, symbols.length);
 
 assertEqual(symbols.inspect in new Ok(1), true);
 assertEqual(symbols.inspect in new Error(1), true);
-assertEqual(symbols.inspect in new Record(), true);
+assertEqual(symbols.inspect in new CustomType(), true);
 assertEqual(symbols.inspect in new Empty(), true);
 assertEqual(symbols.inspect in new NonEmpty(1, new Empty()), true);
 assertEqual(symbols.inspect in new BitString(new Uint8Array([])), true);
@@ -349,7 +371,7 @@ assertEqual(symbols.variant in new UtfCodepoint(128013), true);
 // Unlike the above data types (which are structurally checked for equality)
 // records can only be equal if they share a constructor, so they have no
 // variant property.
-assertEqual(symbols.variant in new Record(), false);
+assertEqual(symbols.variant in new CustomType(), false);
 
 //
 // Division
@@ -386,6 +408,24 @@ assertEqual(divideFloat(1.5, -2.5), -0.6);
 assertEqual(divideFloat(-1.5, -0.0), 0.0);
 assertEqual(divideFloat(-1.5, -2.0), 0.75);
 assertEqual(divideFloat(-1.5, -2.5), 0.6);
+
+// Record updates
+
+assertEqual(new Ok(1).withFields({ 0: 2 }), new Ok(2));
+assertEqual(new Error(1).withFields({ 0: 2 }), new Error(2));
+
+assertEqual(
+  new ExampleRecordImpl(1, 2, 3).withFields({}),
+  new ExampleRecordImpl(1, 2, 3)
+);
+assertEqual(
+  new ExampleRecordImpl(1, 2, 3).withFields({ boop: 6, 0: 40 }),
+  new ExampleRecordImpl(40, 2, 6)
+);
+assertEqual(
+  new ExampleRecordImpl(1, 2, 3).withFields({ boop: 4, detail: 5, 0: 6 }),
+  new ExampleRecordImpl(6, 5, 4)
+);
 
 //
 // Summary

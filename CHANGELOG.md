@@ -55,6 +55,10 @@
   Erlang.
 - Fixed a bug where discard variables used in assert assignments would generate
   invalid Erlang code.
+- Fixed a bug where some expressions as case subjects would generate invalid
+  JavaScript code.
+- Fixed a bug where some assignments as the final expression in a function would
+  not return the correct value in JavaScript.
 
 ## v0.16.1 - 2021-06-21
 

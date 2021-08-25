@@ -7,7 +7,6 @@ mod tests;
 use std::{iter, path::Path};
 
 use crate::{ast::*, docvec, io::Utf8Writer, line_numbers::LineNumbers, pretty::*};
-use heck::CamelCase;
 use itertools::Itertools;
 
 use self::import::{Imports, Member};
@@ -50,8 +49,20 @@ impl<'a> Generator<'a> {
 
         // Import any prelude functions that have been used
 
+        if self.tracker.ok_used {
+            self.register_prelude_usage(&mut imports, "Ok");
+        };
+
+        if self.tracker.error_used {
+            self.register_prelude_usage(&mut imports, "Error");
+        };
+
         if self.tracker.list_used {
             self.register_prelude_usage(&mut imports, "toList");
+        };
+
+        if self.tracker.custom_type_used {
+            self.register_prelude_usage(&mut imports, "CustomType");
         };
 
         if self.tracker.float_division_used {
@@ -81,7 +92,7 @@ impl<'a> Generator<'a> {
         // Put it all together
 
         if imports.is_empty() && statements.is_empty() {
-            Ok(docvec!("export {};", line()))
+            Ok(docvec!("export {}", line()))
         } else if imports.is_empty() {
             statements.push(line());
             Ok(statements.to_doc())
@@ -103,11 +114,16 @@ impl<'a> Generator<'a> {
 
     pub fn statement(&mut self, statement: &'a TypedStatement) -> Vec<Output<'a>> {
         match statement {
-            Statement::TypeAlias { .. }
-            | Statement::CustomType { .. }
-            | Statement::ExternalType { .. } => vec![],
+            Statement::TypeAlias { .. } | Statement::ExternalType { .. } => vec![],
 
             Statement::Import { .. } => vec![],
+
+            Statement::CustomType {
+                public,
+                constructors,
+                opaque,
+                ..
+            } => self.custom_type_definition(constructors, *public, *opaque),
 
             Statement::ModuleConstant {
                 public,
@@ -139,6 +155,73 @@ impl<'a> Generator<'a> {
         }
     }
 
+    fn custom_type_definition(
+        &mut self,
+        constructors: &'a [TypedRecordConstructor],
+        public: bool,
+        opaque: bool,
+    ) -> Vec<Output<'a>> {
+        self.tracker.custom_type_used = true;
+        constructors
+            .iter()
+            .map(|constructor| Ok(self.record_definition(constructor, public, opaque)))
+            .collect()
+    }
+
+    fn record_definition(
+        &self,
+        constructor: &'a TypedRecordConstructor,
+        public: bool,
+        opaque: bool,
+    ) -> Document<'a> {
+        fn parameter((i, arg): (usize, &TypedRecordConstructorArg)) -> Document<'_> {
+            arg.label
+                .as_ref()
+                .map(|s| s.to_doc())
+                .unwrap_or_else(|| Document::String(format!("x{}", i)))
+        }
+
+        let head = if public && !opaque {
+            "export class "
+        } else {
+            "class "
+        };
+        let head = docvec![head, &constructor.name, " extends CustomType {"];
+
+        if constructor.arguments.is_empty() {
+            return head.append("}");
+        };
+
+        let parameters = concat(Itertools::intersperse(
+            constructor.arguments.iter().enumerate().map(parameter),
+            break_(",", ", "),
+        ));
+
+        let constructor_body = concat(Itertools::intersperse(
+            constructor.arguments.iter().enumerate().map(|(i, arg)| {
+                let var = parameter((i, arg));
+                match &arg.label {
+                    None => docvec!["this[", i, "] = ", var, ";"],
+                    Some(name) => docvec!["this.", name, " = ", var, ";"],
+                }
+            }),
+            line(),
+        ));
+
+        let class_body = docvec![
+            line(),
+            "constructor(",
+            parameters,
+            ") {",
+            docvec![line(), "super();", line(), constructor_body].nest(INDENT),
+            line(),
+            "}",
+        ]
+        .nest(INDENT);
+
+        docvec![head, class_body, line(), "}"]
+    }
+
     fn collect_imports(&mut self) -> Imports<'a> {
         let mut imports = Imports::new();
 
@@ -150,7 +233,6 @@ impl<'a> Generator<'a> {
                 | Statement::ExternalType { .. }
                 | Statement::ModuleConstant { .. } => (),
                 Statement::ExternalFn { module, .. } if module.is_empty() => (),
-                Statement::Import { module, .. } if module == &["gleam"] => (),
 
                 Statement::ExternalFn {
                     public,
@@ -203,27 +285,17 @@ impl<'a> Generator<'a> {
         as_name: &'a Option<String>,
         unqualified: &'a [UnqualifiedImport],
     ) {
-        let module_name = as_name
-            .as_ref()
-            .unwrap_or_else(|| {
-                module
-                    .last()
-                    .expect("JavaScript generator could not identify imported module name.")
-            })
-            .to_camel_case();
-        self.register_in_scope(&module_name);
+        let module_name = as_name.as_ref().unwrap_or_else(|| {
+            module
+                .last()
+                .expect("JavaScript generator could not identify imported module name.")
+        });
+        let module_name = format!("${}", module_name);
         let path = self.import_path(package, module);
         let unqualified_imports = unqualified
             .iter()
-            .filter(|i| {
-                // We do not create a JS import for uppercase names are they are
-                // type or record constructors, both of which are not used at runtime
-                i.name
-                    .chars()
-                    .next()
-                    .map(char::is_lowercase)
-                    .unwrap_or(false)
-            })
+            // We do not create a JS import for types as they are not used at runtime
+            .filter(|import| import.is_value())
             .map(|i| {
                 let alias = i.as_name.as_ref().map(|n| {
                     self.register_in_scope(n);
@@ -430,6 +502,21 @@ fn wrap_object<'a>(
     ]
 }
 
+fn try_wrap_object<'a>(items: impl IntoIterator<Item = (Document<'a>, Output<'a>)>) -> Output<'a> {
+    let fields = items
+        .into_iter()
+        .map(|(key, value)| Ok(docvec![key, ": ", value?]));
+    let fields: Vec<_> = Itertools::intersperse(fields, Ok(break_(",", ", "))).try_collect()?;
+
+    Ok(docvec![
+        docvec!["{", break_("", " "), fields]
+            .nest(INDENT)
+            .append(break_("", " "))
+            .group(),
+        "}"
+    ])
+}
+
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Lexical_grammar
 // And we add `undefined` to avoid any unintentional overriding which could
 // cause bugs.
@@ -510,7 +597,10 @@ fn maybe_escape_identifier_doc(word: &str) -> Document<'_> {
 
 #[derive(Debug, Default)]
 pub(crate) struct UsageTracker {
+    pub ok_used: bool,
     pub list_used: bool,
+    pub error_used: bool,
+    pub custom_type_used: bool,
     pub int_division_used: bool,
     pub float_division_used: bool,
     pub object_equality_used: bool,

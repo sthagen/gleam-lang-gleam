@@ -3,10 +3,14 @@ source: compiler-core/src/javascript/tests/custom_types.rs
 expression: "\ntype Mine {\n    This\n    ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant\n}\n\nfn go() {\n    This\n    ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant\n}\n"
 
 ---
+import { CustomType } from "../gleam.js";
+
+class This extends CustomType {}
+
+class ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant extends CustomType {}
+
 function go() {
-  { type: "This" };
-  return {
-    type: "ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant"
-  };
+  new This();
+  return new ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant();
 }
 

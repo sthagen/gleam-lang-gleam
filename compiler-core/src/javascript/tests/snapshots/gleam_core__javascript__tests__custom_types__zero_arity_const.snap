@@ -3,9 +3,13 @@ source: compiler-core/src/javascript/tests/custom_types.rs
 expression: "\ntype Mine {\n    This\n    ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant\n}\n\nconst this = This;\nconst that = ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant;\n"
 
 ---
-const this$ = { type: "This" };
+import { CustomType } from "../gleam.js";
 
-const that = {
-  type: "ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant"
-};
+const this$ = new This();
+
+const that = new ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant();
+
+class This extends CustomType {}
+
+class ThatOneIsAMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchMuchLongerVariant extends CustomType {}
 

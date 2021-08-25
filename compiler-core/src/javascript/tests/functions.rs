@@ -194,13 +194,6 @@ pub fn export() {
   class()
 }
 "#,
-        r#"import * as For from "../for.js";
-import { class$ } from "../for.js";
-
-export function export$() {
-  return class$();
-}
-"#
     );
 }
 
@@ -219,14 +212,6 @@ pub fn export() {
   while()
 }
 "#,
-        r#"import * as Function from "../for.js";
-import { class$ as while$ } from "../for.js";
-
-export function export$() {
-  let delete$ = Function.class$;
-  return while$();
-}
-"#
     );
 }
 
@@ -279,6 +264,26 @@ fn reserved_word_in_function_arguments() {
     assert_js!(
         r#"pub fn main(arguments, eval) {
   #(arguments, eval)
+}
+"#,
+    );
+}
+
+#[test]
+fn let_last() {
+    assert_js!(
+        r#"pub fn main() {
+  let x = 1
+}
+"#,
+    );
+}
+
+#[test]
+fn assert_last() {
+    assert_js!(
+        r#"pub fn main() {
+  assert x = 1
 }
 "#,
     );
