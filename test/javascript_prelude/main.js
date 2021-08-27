@@ -318,6 +318,7 @@ assertEqual(inspect({ a: 1 }), "//js({ a: 1 })");
 assertEqual(inspect({ a: 1, b: 2 }), "//js({ a: 1, b: 2 })");
 assertEqual(inspect({ a: 1, b: new Ok(1) }), "//js({ a: 1, b: Ok(1) })");
 assertEqual(inspect(new globalThis.Error("stuff")), '//js(new Error("stuff"))');
+assertEqual(inspect(/1[23]/g), "//js(/1[23]/g)");
 
 // Result.isOk
 
@@ -345,6 +346,12 @@ assertEqual(toList([1]).hasLength(2), false);
 assertEqual(toList([1, 1]).hasLength(1), false);
 assertEqual(toList([1, 1]).hasLength(2), true);
 assertEqual(toList([1, 1]).hasLength(3), false);
+
+// BitString.length
+
+assertEqual(new BitString(new Uint8Array([])).length, 0);
+assertEqual(new BitString(new Uint8Array([1, 2])).length, 2);
+assertEqual(new BitString(new Uint8Array([1, 2, 3, 4])).length, 4);
 
 // Symbols
 

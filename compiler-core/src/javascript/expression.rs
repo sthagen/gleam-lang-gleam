@@ -297,7 +297,10 @@ impl<'module> Generator<'module> {
         } else if type_.is_nil() {
             "undefined".to_doc()
         } else if arity == 0 {
-            docvec!["new ", name, "()"]
+            match qualifier {
+                Some(module) => docvec!["new $", module, ".", name, "()"],
+                None => docvec!["new ", name, "()"],
+            }
         } else {
             let vars = (0..arity).map(|i| Document::String(format!("var{}", i)));
             let body = docvec![
@@ -985,7 +988,7 @@ where
 {
     let array = array(elements);
     if let Some(tail) = tail {
-        let args = iter::once(array).chain(iter::once(Ok(tail)));
+        let args = [array, Ok(tail)];
         Ok(docvec!["toList", call_arguments(args)?])
     } else {
         Ok(docvec!["toList(", array?, ")"])
