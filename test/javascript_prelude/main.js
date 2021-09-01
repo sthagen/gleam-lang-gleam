@@ -13,7 +13,6 @@ import {
   inspect,
   isEqual,
   stringBits,
-  symbols,
   toBitString,
   toList,
 } from "./prelude.js";
@@ -187,6 +186,45 @@ assertNotEqual(new Uint8Array([1, 3]), new Uint8Array([1, 2]));
 assertNotEqual(new Uint16Array([1, 3]), new Uint16Array([1, 2]));
 assertNotEqual(new Uint32Array([1, 3]), new Uint32Array([1, 2]));
 
+// Promises are not equal unless they have reference equality
+let promise = Promise.resolve(1);
+assertEqual(promise, promise);
+assertNotEqual(Promise.resolve(1), Promise.resolve(1));
+
+// Functions are not equal unless they have reference equality
+let fun = () => 1;
+assertEqual(fun, fun);
+assertNotEqual(
+  () => 1,
+  () => 1
+);
+
+// Maps are compared structurally
+let map = new Map([["a", 1]]);
+assertEqual(map, map);
+assertEqual(new Map([["a", 1]]), new Map([["a", 1]]));
+assertNotEqual(new Map([["a", 1], ["b", 2]]), new Map([["a", 1]]));
+assertNotEqual(new Map([["a", 1]]), new Map([["a", 1], ["b", 2]]));
+assertNotEqual(new Map([["a", 1]]), new Map([["b", 1]]));
+
+// Sets are compared structurally
+let set = new Set(["a", 1]);
+assertEqual(set, set);
+assertEqual(new Set(["a", 1]), new Set(["a", 1]));
+assertNotEqual(new Set(["a", 1]), new Set(["b", 1]));
+assertNotEqual(new Set(["a", 1, "b"]), new Set(["a", 1]));
+assertNotEqual(new Set(["a", 1]), new Set(["a", 1, "b"]));
+
+// WeakMaps are not equal unless they have reference equality
+let weak_map = new WeakMap([[map, 1]]);
+assertEqual(weak_map, weak_map);
+assertNotEqual(new WeakMap([[map, 1]]), new WeakMap([[map, 1]]));
+
+// WeakSets are not equal unless they have reference equality
+let weak_set = new WeakSet([map, set]);
+assertEqual(weak_set, weak_set);
+assertNotEqual(new WeakSet([map, set]), new WeakSet([map, set]));
+
 class ExampleA {
   constructor(x) {
     this.x = x;
@@ -317,7 +355,17 @@ assertEqual(inspect({}), "//js({})");
 assertEqual(inspect({ a: 1 }), "//js({ a: 1 })");
 assertEqual(inspect({ a: 1, b: 2 }), "//js({ a: 1, b: 2 })");
 assertEqual(inspect({ a: 1, b: new Ok(1) }), "//js({ a: 1, b: Ok(1) })");
-assertEqual(inspect(new globalThis.Error("stuff")), '//js(new Error("stuff"))');
+
+// Generic JS objects
+assertEqual(inspect(Promise.resolve(1)), "//js(Promise {})");
+assertEqual(inspect(new Set([1, 2, 3])), "//js(Set {})");
+assertEqual(inspect(new Map([["a", 1]])), "//js(Map {})");
+
+// Special cases for Date and RegExp
+assertEqual(
+  inspect(new Date("1991-01-05")),
+  '//js(Date("1991-01-05T00:00:00.000Z"))'
+);
 assertEqual(inspect(/1[23]/g), "//js(/1[23]/g)");
 
 // Result.isOk
@@ -347,38 +395,16 @@ assertEqual(toList([1, 1]).hasLength(1), false);
 assertEqual(toList([1, 1]).hasLength(2), true);
 assertEqual(toList([1, 1]).hasLength(3), false);
 
+// List iterable interface
+
+assertEqual([...toList([])], []);
+assertEqual([...toList([1, 2, 3])], [1, 2, 3]);
+
 // BitString.length
 
 assertEqual(new BitString(new Uint8Array([])).length, 0);
 assertEqual(new BitString(new Uint8Array([1, 2])).length, 2);
 assertEqual(new BitString(new Uint8Array([1, 2, 3, 4])).length, 4);
-
-// Symbols
-
-assertEqual("variant" in symbols, true);
-assertEqual("inspect" in symbols, true);
-
-// All the symbols are distinct
-assertEqual(new Set(Object.keys(symbols)).length, symbols.length);
-
-assertEqual(symbols.inspect in new Ok(1), true);
-assertEqual(symbols.inspect in new Error(1), true);
-assertEqual(symbols.inspect in new CustomType(), true);
-assertEqual(symbols.inspect in new Empty(), true);
-assertEqual(symbols.inspect in new NonEmpty(1, new Empty()), true);
-assertEqual(symbols.inspect in new BitString(new Uint8Array([])), true);
-assertEqual(symbols.inspect in new UtfCodepoint(128013), true);
-
-assertEqual(symbols.variant in new Ok(1), true);
-assertEqual(symbols.variant in new Error(1), true);
-assertEqual(symbols.variant in new Empty(), true);
-assertEqual(symbols.variant in new NonEmpty(1, new Empty()), true);
-assertEqual(symbols.variant in new BitString(new Uint8Array([])), true);
-assertEqual(symbols.variant in new UtfCodepoint(128013), true);
-// Unlike the above data types (which are structurally checked for equality)
-// records can only be equal if they share a constructor, so they have no
-// variant property.
-assertEqual(symbols.variant in new CustomType(), false);
 
 //
 // Division

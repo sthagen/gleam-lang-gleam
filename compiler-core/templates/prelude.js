@@ -1,13 +1,5 @@
-function define(object, name, fallback) {
-  return (object[name] = globalThis[name] || fallback);
-}
-
-export const symbols = define(globalThis, "__gleam", {});
-define(symbols, "variant", Symbol("variant"));
-define(symbols, "inspect", Symbol("inspect"));
-
 export class CustomType {
-  [symbols.inspect]() {
+  inspect() {
     let field = (label) => {
       let value = inspect(this[label]);
       return isNaN(parseInt(label)) ? `${label}: ${value}` : value;
@@ -25,7 +17,7 @@ export class CustomType {
 }
 
 export class List {
-  [symbols.inspect]() {
+  inspect() {
     return `[${this.toArray().map(inspect).join(", ")}]`;
   }
 
@@ -34,38 +26,34 @@ export class List {
     return array.reduceRight((xs, x) => new NonEmpty(x, xs), t);
   }
 
+  [Symbol.iterator]() {
+    return new ListIterator(this);
+  }
+
   toArray() {
-    let current = this;
-    let array = [];
-    while (!current.isEmpty()) {
-      array.push(current.head);
-      current = current.tail;
-    }
-    return array;
+    return [...this];
   }
 
   atLeastLength(desired) {
-    let current = this;
-    while (!current.isEmpty()) {
+    for (let _ of this) {
       if (desired <= 0) return true;
       desired--;
-      current = current.tail;
     }
     return desired <= 0;
   }
 
   hasLength(desired) {
-    let current = this;
-    while (!current.isEmpty()) {
+    for (let _ of this) {
       if (desired <= 0) return false;
       desired--;
-      current = current.tail;
     }
     return desired == 0;
   }
 
-  isEmpty() {
-    return "EmptyList" == this[symbols.variant];
+  countLength() {
+    let length = 0;
+    for (let _ of this) length++;
+    return length;
   }
 }
 
@@ -73,28 +61,60 @@ export function toList(elements, tail) {
   return List.fromArray(elements, tail);
 }
 
+class ListIterator {
+  #current;
+
+  constructor(current) {
+    this.#current = current;
+  }
+
+  next() {
+    if (this.#current.isEmpty()) {
+      return { done: true };
+    } else {
+      let { head, tail } = this.#current;
+      this.#current = tail;
+      return { value: head, done: false };
+    }
+  }
+}
+
 export class Empty extends List {
-  [symbols.variant] = "EmptyList";
+  get __gleam_prelude_variant__() {
+    return "EmptyList";
+  }
+
+  isEmpty() {
+    return true;
+  }
 }
 
 export class NonEmpty extends List {
-  [symbols.variant] = "NonEmptyList";
-
   constructor(head, tail) {
     super();
     this.head = head;
     this.tail = tail;
   }
+
+  get __gleam_prelude_variant__() {
+    return "NonEmptyList";
+  }
+
+  isEmpty() {
+    return false;
+  }
 }
 
 export class BitString {
-  [symbols.variant] = "BitString";
-
   constructor(buffer) {
     this.buffer = buffer;
   }
 
-  [symbols.inspect]() {
+  get __gleam_prelude_variant__() {
+    return "BitString";
+  }
+
+  inspect() {
     return `<<${Array.from(this.buffer).join(", ")}>>`;
   }
 
@@ -104,13 +124,15 @@ export class BitString {
 }
 
 export class UtfCodepoint {
-  [symbols.variant] = "UtfCodepoint";
-
   constructor(value) {
     this.value = value;
   }
 
-  [symbols.inspect]() {
+  get __gleam_prelude_variant__() {
+    return "UtfCodepoint";
+  }
+
+  inspect() {
     return `//utfcodepoint(${String.fromCodePoint(this.value)})`;
   }
 }
@@ -141,27 +163,35 @@ export function codepointBits(codepoint) {
   return stringBits(String.fromCodePoint(codepoint.value));
 }
 
-export class Result extends CustomType {
-  isOk() {
-    return "Ok" === this[symbols.variant];
-  }
-}
+export class Result extends CustomType {}
 
 export class Ok extends Result {
-  [symbols.variant] = "Ok";
-
   constructor(value) {
     super();
     this[0] = value;
   }
+
+  get __gleam_prelude_variant__() {
+    return "Ok";
+  }
+
+  isOk() {
+    return true;
+  }
 }
 
 export class Error extends Result {
-  [symbols.variant] = "Error";
-
   constructor(detail) {
     super();
     this[0] = detail;
+  }
+
+  get __gleam_prelude_variant__() {
+    return "Error";
+  }
+
+  isOk() {
+    return false;
   }
 }
 
@@ -174,17 +204,22 @@ export function inspect(v) {
   if (t === "string") return JSON.stringify(v);
   if (t === "bigint" || t === "number") return v.toString();
   if (Array.isArray(v)) return `#(${v.map(inspect).join(", ")})`;
-  if (v instanceof globalThis.Error)
-    return `//js(new ${v.constructor.name}(${inspect(v.message)}))`;
   if (v instanceof RegExp) return `//js(${v})`;
-  if (v[symbols.inspect]) return v[symbols.inspect]();
-  let entries = Object.entries(v);
-  if (entries.length) {
-    let properties = entries.map(([k, v]) => `${k}: ${inspect(v)}`).join(", ");
-    return `//js({ ${properties} })`;
-  } else {
-    return `//js({})`;
+  if (v instanceof Date) return `//js(Date("${v.toISOString()}"))`;
+  try {
+    return v.inspect();
+  } catch (_) {
+    return inspectObject(v);
   }
+}
+
+function inspectObject(v) {
+  let property = (k) => `${k}: ${inspect(v[k])}`;
+  let name = v.constructor.name;
+  let names = Object.getOwnPropertyNames(v);
+  let props = names.length ? " " + names.map(property).join(", ") + " " : "";
+  let head = name === "Object" ? "" : name + " ";
+  return `//js(${head}{${props}})`;
 }
 
 export function isEqual(x, y) {
@@ -195,15 +230,25 @@ export function isEqual(x, y) {
     let b = values.pop();
     if (a === b) continue;
 
+    if (!isObject(a) || !isObject(b)) return false;
     let unequal =
-      !sameTypeObjects(a, b) ||
+      !structurallyCompatibleObjects(a, b) ||
       unequalDates(a, b) ||
-      unequalArrayBuffers(a, b) ||
-      unequalArrays(a, b);
+      unequalBuffers(a, b) ||
+      unequalArrays(a, b) ||
+      unequalMaps(a, b) ||
+      unequalSets(a, b);
     if (unequal) return false;
 
     for (const k of Object.keys(a)) {
       values.push(a[k], b[k]);
+    }
+
+    if (a instanceof Map) {
+      for (const k of a.keys()) {
+        values.push(a.get(k));
+        values.push(b.get(k));
+      }
     }
   }
 
@@ -214,7 +259,7 @@ function unequalDates(a, b) {
   return a instanceof Date && (a > b || a < b);
 }
 
-function unequalArrayBuffers(a, b) {
+function unequalBuffers(a, b) {
   return (
     a.buffer instanceof ArrayBuffer &&
     a.BYTES_PER_ELEMENT &&
@@ -226,14 +271,31 @@ function unequalArrays(a, b) {
   return Array.isArray(a) && a.length !== b.length;
 }
 
-function sameTypeObjects(a, b) {
+function unequalMaps(a, b) {
+  return a instanceof Map && a.size !== b.size;
+}
+
+function unequalSets(a, b) {
+  return a instanceof Set && (
+    a.size != b.size || [...a].some(e => !b.has(e))
+  )
+}
+
+function isObject(a) {
+  return typeof a === "object" && a !== null;
+}
+
+function structurallyCompatibleObjects(a, b) {
+  if (typeof a !== "object" && typeof b !== "object" && (!a || !b))
+    return false;
+
+  let nonstructural = [Promise, WeakSet, WeakMap];
+  if (nonstructural.some((c) => a instanceof c)) return false;
+
   return (
-    typeof a === "object" &&
-    typeof b === "object" &&
-    a !== null &&
-    b !== null &&
-    (a.constructor === b.constructor ||
-      (a[symbols.variant] && a[symbols.variant] === b[symbols.variant]))
+    a.constructor === b.constructor ||
+    (a.__gleam_prelude_variant__ &&
+      a.__gleam_prelude_variant__ === b.__gleam_prelude_variant__)
   );
 }
 
