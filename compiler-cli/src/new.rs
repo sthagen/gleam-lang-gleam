@@ -11,8 +11,8 @@ use strum::{Display, EnumString, EnumVariantNames};
 
 use crate::NewOptions;
 
-const GLEAM_STDLIB_VERSION: &str = "0.16.0";
-const GLEAM_OTP_VERSION: &str = "0.1.6";
+const GLEAM_STDLIB_VERSION: &str = "0.17.0";
+const GLEAM_OTP_VERSION: &str = "0.2.0";
 const ERLANG_OTP_VERSION: &str = "23.2";
 const PROJECT_VERSION: &str = "0.1.0";
 
@@ -515,11 +515,9 @@ pub fn hello_world_test() {{
             self.test.join(format!("{}_test.gleam", self.project_name)),
             &format!(
                 r#"import {name}
-import gleam/should
 
 pub fn hello_world_test() {{
-  {name}.hello_world()
-  |> should.equal("Hello, from {name}!")
+  assert "Hello, from {name}!" = {name}.hello_world()
 }}
 "#,
                 name = self.project_name

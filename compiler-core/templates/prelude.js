@@ -17,17 +17,22 @@ export class CustomType {
 }
 
 export class List {
-  inspect() {
-    return `[${this.toArray().map(inspect).join(", ")}]`;
-  }
-
   static fromArray(array, tail) {
     let t = tail || new Empty();
     return array.reduceRight((xs, x) => new NonEmpty(x, xs), t);
   }
 
+  static isList(data) {
+    let variant = data?.__gleam_prelude_variant__;
+    return variant === "EmptyList" || variant === "NonEmptyList";
+  }
+
   [Symbol.iterator]() {
     return new ListIterator(this);
+  }
+
+  inspect() {
+    return `[${this.toArray().map(inspect).join(", ")}]`;
   }
 
   toArray() {
@@ -47,7 +52,7 @@ export class List {
       if (desired <= 0) return false;
       desired--;
     }
-    return desired == 0;
+    return desired === 0;
   }
 
   countLength() {
@@ -106,6 +111,10 @@ export class NonEmpty extends List {
 }
 
 export class BitString {
+  static isBitString(data) {
+    return data?.__gleam_prelude_variant__ === "BitString";
+  }
+
   constructor(buffer) {
     this.buffer = buffer;
   }
@@ -163,7 +172,12 @@ export function codepointBits(codepoint) {
   return stringBits(String.fromCodePoint(codepoint.value));
 }
 
-export class Result extends CustomType {}
+export class Result extends CustomType {
+  static isResult(data) {
+    let variant = data?.__gleam_prelude_variant__;
+    return variant === "Ok" || variant === "Error";
+  }
+}
 
 export class Ok extends Result {
   constructor(value) {
@@ -204,6 +218,7 @@ export function inspect(v) {
   if (t === "string") return JSON.stringify(v);
   if (t === "bigint" || t === "number") return v.toString();
   if (Array.isArray(v)) return `#(${v.map(inspect).join(", ")})`;
+  if (v instanceof Set) return `//js(Set(${[...v].map(inspect).join(", ")}))`;
   if (v instanceof RegExp) return `//js(${v})`;
   if (v instanceof Date) return `//js(Date("${v.toISOString()}"))`;
   try {
@@ -214,12 +229,15 @@ export function inspect(v) {
 }
 
 function inspectObject(v) {
-  let property = (k) => `${k}: ${inspect(v[k])}`;
+  let [keys, get] = getters(v);
   let name = v.constructor.name;
-  let names = Object.getOwnPropertyNames(v);
-  let props = names.length ? " " + names.map(property).join(", ") + " " : "";
+  let props = [];
+  for (let k of keys(v)) {
+    props.push(`${inspect(k)}: ${inspect(get(v, k))}`);
+  }
+  let body = props.length ? " " + props.join(", ") + " " : "";
   let head = name === "Object" ? "" : name + " ";
-  return `//js(${head}{${props}})`;
+  return `//js(${head}{${body}})`;
 }
 
 export function isEqual(x, y) {
@@ -240,19 +258,21 @@ export function isEqual(x, y) {
       unequalSets(a, b);
     if (unequal) return false;
 
-    for (const k of Object.keys(a)) {
-      values.push(a[k], b[k]);
-    }
-
-    if (a instanceof Map) {
-      for (const k of a.keys()) {
-        values.push(a.get(k));
-        values.push(b.get(k));
-      }
+    let [keys, get] = getters(a);
+    for (const k of keys(a)) {
+      values.push(get(a, k), get(b, k));
     }
   }
 
   return true;
+}
+
+function getters(object) {
+  if (object instanceof Map) {
+    return [(x) => x.keys(), (x, y) => x.get(y)];
+  } else {
+    return [(x) => Object.keys(x), (x, y) => x[y]];
+  }
 }
 
 function unequalDates(a, b) {
@@ -276,9 +296,9 @@ function unequalMaps(a, b) {
 }
 
 function unequalSets(a, b) {
-  return a instanceof Set && (
-    a.size != b.size || [...a].some(e => !b.has(e))
-  )
+  return (
+    a instanceof Set && (a.size != b.size || [...a].some((e) => !b.has(e)))
+  );
 }
 
 function isObject(a) {
@@ -289,7 +309,7 @@ function structurallyCompatibleObjects(a, b) {
   if (typeof a !== "object" && typeof b !== "object" && (!a || !b))
     return false;
 
-  let nonstructural = [Promise, WeakSet, WeakMap];
+  let nonstructural = [Promise, WeakSet, WeakMap, Function];
   if (nonstructural.some((c) => a instanceof c)) return false;
 
   return (
@@ -300,11 +320,7 @@ function structurallyCompatibleObjects(a, b) {
 }
 
 export function divideInt(a, b) {
-  if (b === 0) {
-    return 0 | 0;
-  } else {
-    return (a / b) | 0;
-  }
+  return divideFloat(a, b) | 0;
 }
 
 export function divideFloat(a, b) {

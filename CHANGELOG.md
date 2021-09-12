@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
-
 - Gleam can now compile Gleam projects without an external build tool.
 - Gleam can now run eunit without an external build tool.
 - Gleam can now run an Erlang shell without an external build tool.
+
+## v0.17.0-rc1 - 2021-09-11
+
+- Redesigned the Gleam prelude to be a module of core classes when compiling to
+  JavaScript. This improves the resulting generated code and makes debugging and
+  interop easier.
 - Projects without rebar3 can be generated using the `gleam-lib` template.
 - JavaScript modules are imported using a camel case variable name to avoid name
   collisions with variables.
@@ -62,6 +66,15 @@
 - Gleam packages imported in JavaScript now have the path prefix
   `gleam-packages`. This can be served from your web server or aliased in your
   `package.json` for NodeJS projects.
+- Fixed a bug where the type checker would fail to generalise some type
+  variables, causing module metadata writing to fail.
+- Fixed a bug where tail call optimisation when compiling to JavaScript could
+  result in incorrect code.
+- Fixed a bug where variable names could be rendered incorrectly in closures.
+- An error is now emitted if alternative patterns fail to define all the
+  variables defined by the first pattern.
+- New projects are generated using `gleam_stdlib` v0.17.0.
+- New projects are generated using `gleam_otp` v0.2.0.
 
 ## v0.16.1 - 2021-06-21
 
