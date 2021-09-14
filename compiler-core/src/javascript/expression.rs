@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::*;
+use super::{pattern::CompiledPattern, *};
 use crate::{
     ast::*,
     line_numbers::LineNumbers,
@@ -117,8 +117,11 @@ impl<'module> Generator<'module> {
             TypedExpr::TupleIndex { tuple, index, .. } => self.tuple_index(tuple, *index),
 
             TypedExpr::Case {
-                subjects, clauses, ..
-            } => self.case(subjects, clauses),
+                location,
+                subjects,
+                clauses,
+                ..
+            } => self.case(*location, subjects, clauses),
 
             TypedExpr::Call { fun, args, .. } => self.call(fun, args),
             TypedExpr::Fn { args, body, .. } => self.fn_(args, body),
@@ -410,7 +413,11 @@ impl<'module> Generator<'module> {
                 pattern_generator.traverse_pattern(&subject, pattern)?;
                 let compiled = pattern_generator.take_compiled();
                 docs.push(line());
-                docs.push(compiled.into_assignment_doc());
+                docs.push(self.pattern_into_assignment_doc(
+                    compiled,
+                    subject,
+                    pattern.location(),
+                )?);
                 docs.push(lines(2));
             }
         }
@@ -468,10 +475,11 @@ impl<'module> Generator<'module> {
         // use in patterns
         let doc = match subject_assignment {
             Some(name) => {
-                let compiled = compiled.into_assignment_doc();
+                let compiled =
+                    self.pattern_into_assignment_doc(compiled, subject, pattern.location())?;
                 docvec!("let ", name, " = ", value, ";", line(), compiled)
             }
-            None => compiled.into_assignment_doc(),
+            None => self.pattern_into_assignment_doc(compiled, subject, pattern.location())?,
         };
 
         Ok(docvec!(force_break(), doc.append(afterwards)))
@@ -479,6 +487,7 @@ impl<'module> Generator<'module> {
 
     fn case<'a>(
         &mut self,
+        location: SrcSpan,
         subject_values: &'a [TypedExpr],
         clauses: &'a [TypedClause],
     ) -> Output<'a> {
@@ -522,7 +531,9 @@ impl<'module> Generator<'module> {
 
                 // If the pattern assigns any variables we need to render assignments
                 let body = if compiled.has_assignments() {
-                    let assignments = compiled.take_assignments_doc();
+                    let assignments = gen
+                        .expression_generator
+                        .pattern_take_assignments_doc(&mut compiled);
                     docvec!(assignments, line(), consequence)
                 } else {
                     consequence
@@ -554,7 +565,10 @@ impl<'module> Generator<'module> {
                     } else {
                         " else if ("
                     })
-                    .append(compiled.take_checks_doc(true))
+                    .append(
+                        gen.expression_generator
+                            .pattern_take_checks_doc(&mut compiled, true),
+                    )
                     .append(") {")
                     .append(docvec!(line(), body).nest(INDENT))
                     .append(line())
@@ -568,7 +582,10 @@ impl<'module> Generator<'module> {
             // We can remove this when we get exhaustiveness checking.
             doc = doc
                 .append(" else {")
-                .append(docvec!(line(), r#"throw new globalThis.Error("Bad match");"#).nest(INDENT))
+                .append(
+                    docvec!(line(), self.case_no_match(location, subjects.into_iter())?)
+                        .nest(INDENT),
+                )
                 .append(line())
                 .append("}")
         }
@@ -586,6 +603,27 @@ impl<'module> Generator<'module> {
             .try_collect()?;
 
         Ok(docvec![force_break(), subject_assignments, doc])
+    }
+
+    fn case_no_match<'a, Subjects>(&mut self, location: SrcSpan, subjects: Subjects) -> Output<'a>
+    where
+        Subjects: IntoIterator<Item = Document<'a>>,
+    {
+        Ok(self.throw_error(
+            "case_no_match",
+            "No case clause matched",
+            location,
+            vec![("values", array(subjects.into_iter().map(Ok))?)],
+        ))
+    }
+
+    fn assignment_no_match<'a>(&mut self, location: SrcSpan, subject: Document<'a>) -> Output<'a> {
+        Ok(self.throw_error(
+            "assignment_no_match",
+            "Assignment pattern did not much",
+            location,
+            vec![("value", subject)],
+        ))
     }
 
     fn tuple<'a>(&mut self, elements: &'a [TypedExpr]) -> Output<'a> {
@@ -859,41 +897,50 @@ impl<'module> Generator<'module> {
     fn todo<'a>(&mut self, message: &'a Option<String>, location: &'a SrcSpan) -> Document<'a> {
         let tail_position = self.tail_position;
         self.tail_position = false;
-        let gleam_error = "todo";
+
         let message = message
             .as_deref()
             .unwrap_or("This has not yet been implemented");
-        let module_name = Document::String(self.module_name.join("/"));
-        let line = self.line_numbers.line_number(location.start);
-
-        let doc = docvec![
-            "throw Object.assign",
-            wrap_args([
-                docvec!["new globalThis.Error", wrap_args([string(message)])],
-                wrap_object([
-                    ("gleam_error".to_doc(), Some(string(gleam_error))),
-                    ("module".to_doc(), Some(module_name.surround("\"", "\""))),
-                    (
-                        "function".to_doc(),
-                        Some(
-                            // TODO switch to use `string(self.function_name)`
-                            // This will require resolving the
-                            // difference in lifetimes 'module and 'a.
-                            Document::String(self.function_name.unwrap_or_default().to_string())
-                                .surround("\"", "\"")
-                        )
-                    ),
-                    ("line".to_doc(), Some(line.to_doc())),
-                ])
-            ]),
-            ";"
-        ];
+        let doc = self.throw_error("todo", message, *location, vec![]);
 
         // Reset tail position so later values are returned as needed. i.e.
         // following clauses in a case expression.
         self.tail_position = tail_position;
 
         doc
+    }
+
+    fn throw_error<'a, Fields>(
+        &mut self,
+        error_name: &'a str,
+        message: &'a str,
+        location: SrcSpan,
+        fields: Fields,
+    ) -> Document<'a>
+    where
+        Fields: IntoIterator<Item = (&'a str, Document<'a>)>,
+    {
+        self.tracker.throw_error_used = true;
+        let module = Document::String(self.module_name.join("/")).surround('"', '"');
+        // TODO switch to use `string(self.function_name)`
+        // This will require resolving the
+        // difference in lifetimes 'module and 'a.
+        let function = Document::String(self.function_name.unwrap_or_default().to_string())
+            .surround("\"", "\"");
+        let line = self.line_numbers.line_number(location.start).to_doc();
+        let fields = wrap_object(fields.into_iter().map(|(k, v)| (k.to_doc(), Some(v))));
+        docvec![
+            "throwError",
+            wrap_args([
+                string(error_name),
+                module,
+                line,
+                function,
+                string(message),
+                fields
+            ]),
+            ";"
+        ]
     }
 
     fn module_select<'a>(
@@ -911,6 +958,89 @@ impl<'module> Generator<'module> {
                 name, arity, type_, ..
             } => self.record_constructor(type_.clone(), Some(module), name, *arity),
         }
+    }
+
+    fn pattern_into_assignment_doc<'a>(
+        &mut self,
+        compiled_pattern: CompiledPattern<'a>,
+        subject: Document<'a>,
+        location: SrcSpan,
+    ) -> Output<'a> {
+        if compiled_pattern.checks.is_empty() {
+            return Ok(Self::pattern_assignments_doc(compiled_pattern.assignments));
+        }
+        if compiled_pattern.assignments.is_empty() {
+            return self.pattern_checks_or_throw_doc(compiled_pattern.checks, subject, location);
+        }
+
+        Ok(docvec![
+            self.pattern_checks_or_throw_doc(compiled_pattern.checks, subject, location)?,
+            line(),
+            Self::pattern_assignments_doc(compiled_pattern.assignments)
+        ])
+    }
+
+    fn pattern_checks_or_throw_doc<'a>(
+        &mut self,
+        checks: Vec<pattern::Check<'a>>,
+        subject: Document<'a>,
+        location: SrcSpan,
+    ) -> Output<'a> {
+        let checks = self.pattern_checks_doc(checks, false);
+        Ok(docvec![
+            "if (",
+            docvec![break_("", ""), checks].nest(INDENT),
+            break_("", ""),
+            ") {",
+            docvec![line(), self.assignment_no_match(location, subject)?].nest(INDENT),
+            line(),
+            "}",
+        ]
+        .group())
+    }
+
+    fn pattern_assignments_doc(assignments: Vec<pattern::Assignment<'_>>) -> Document<'_> {
+        let assignments = assignments.into_iter().map(pattern::Assignment::into_doc);
+        concat(Itertools::intersperse(assignments, line()))
+    }
+
+    fn pattern_take_assignments_doc<'a>(
+        &self,
+        compiled_pattern: &mut CompiledPattern<'a>,
+    ) -> Document<'a> {
+        let assignments = std::mem::take(&mut compiled_pattern.assignments);
+        Self::pattern_assignments_doc(assignments)
+    }
+
+    fn pattern_take_checks_doc<'a>(
+        &self,
+        compiled_pattern: &mut CompiledPattern<'a>,
+        match_desired: bool,
+    ) -> Document<'a> {
+        let checks = std::mem::take(&mut compiled_pattern.checks);
+        self.pattern_checks_doc(checks, match_desired)
+    }
+
+    fn pattern_checks_doc<'a>(
+        &self,
+        checks: Vec<pattern::Check<'a>>,
+        match_desired: bool,
+    ) -> Document<'a> {
+        if checks.is_empty() {
+            return "true".to_doc();
+        };
+        let operator = if match_desired {
+            break_(" &&", " && ")
+        } else {
+            break_(" ||", " || ")
+        };
+
+        concat(Itertools::intersperse(
+            checks
+                .into_iter()
+                .map(|check| check.into_doc(match_desired)),
+            operator,
+        ))
     }
 }
 
