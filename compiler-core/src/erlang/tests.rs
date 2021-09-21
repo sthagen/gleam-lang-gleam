@@ -37,7 +37,7 @@ fn record_definition_test() {
             "PetCat",
             &[
                 ("name", type_::generic_var(1)),
-                ("is_cute", type_::unbound_var(1, 1)),
+                ("is_cute", type_::unbound_var(1)),
                 ("linked", type_::link(type_::int()))
             ]
         ),
@@ -67,7 +67,7 @@ fn record_definition_test() {
             "PetCat",
             &[
                 ("name", type_::generic_var(1)),
-                ("is_cute", type_::unbound_var(1, 1)),
+                ("is_cute", type_::unbound_var(1)),
                 ("linked", type_::link(type_::int())),
                 (
                     "whatever",
@@ -102,7 +102,7 @@ macro_rules! assert_erl {
     ($src:expr, $erl:expr $(,)?) => {{
         use crate::{
             build::Origin,
-            erl::module,
+            erlang::module,
             line_numbers::LineNumbers,
             type_::{build_prelude, infer_module},
         };

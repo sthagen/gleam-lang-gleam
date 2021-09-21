@@ -1216,9 +1216,9 @@ fn test(t: one.T) { t.a }"
             expected: Err(Error::Type {
                 path: PathBuf::from("/src/two.gleam"),
                 src: "import one\nfn test(t: one.T) { t.a }".to_string(),
-                error: crate::type_::Error::UnknownField {
+                error: crate::type_::Error::UnknownRecordField {
                     location: SrcSpan {
-                        start: 32,
+                        start: 31,
                         end: 34,
                     },
                     typ: Arc::new(crate::type_::Type::App {
@@ -1391,7 +1391,7 @@ main(Arg1, Arg2, Arg3) ->
     ];
 
     for Case { input, expected } in cases {
-        let actual = analysed(input).map(|analysed| crate::erl::generate_erlang(&analysed));
+        let actual = analysed(input).map(|analysed| crate::erlang::generate_erlang(&analysed));
         assert_eq!(expected, actual);
     }
 }

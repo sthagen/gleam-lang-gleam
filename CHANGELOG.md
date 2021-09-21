@@ -1,10 +1,18 @@
 # Changelog
 
+## Unreleased
+
 - Gleam can now compile Gleam projects without an external build tool.
 - Gleam can now run eunit without an external build tool.
 - Gleam can now run an Erlang shell without an external build tool.
+- Fixed a bug where the error message for a record update with an unknown field
+  would point to all the fields rather than the unknown one.
 
-## Unreleased
+## v0.17.0 - 2021-09-20
+
+- Functions now get special handling when being printed from JavaScript.
+
+## v0.17.0-rc2 - 2021-09-19
 
 - Errors thrown when no case clause or assignment pattern matches the subject
   value now include more debugging information when targetting JavaScript.

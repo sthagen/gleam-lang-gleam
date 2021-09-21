@@ -8,7 +8,7 @@ use crate::{
     },
     codegen,
     config::{BuildTool, Docs, PackageConfig, Repository},
-    erl,
+    erlang,
     io::test::FilesChannel,
     javascript, type_,
 };
@@ -1386,8 +1386,8 @@ main() ->
         Err(Error::Type {
             path: PathBuf::from("/src/two.gleam"),
             src: "import one fn test(t: one.T) { t.a }".to_string(),
-            error: crate::type_::Error::UnknownField {
-                location: crate::ast::SrcSpan { start: 32, end: 34 },
+            error: crate::type_::Error::UnknownRecordField {
+                location: crate::ast::SrcSpan { start: 31, end: 34 },
                 typ: Arc::new(crate::type_::Type::App {
                     public: true,
                     module: vec!["one".to_string(),],
