@@ -1,6 +1,9 @@
 pub mod memory;
 
+use bytes::Bytes;
+
 use crate::error::{Error, FileIoAction, FileKind, Result};
+use async_trait::async_trait;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
@@ -50,10 +53,8 @@ pub struct OutputFile {
 /// but in tests and in other places other implementations may be used.
 pub trait FileSystemReader {
     fn gleam_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>>;
-
-    fn read<P>(&self, path: P) -> Result<String, Error>
-    where
-        P: AsRef<Path> + Debug;
+    fn read(&self, path: &Path) -> Result<String, Error>;
+    fn is_file(&self, path: &Path) -> bool;
 }
 
 pub trait FileSystemIO: FileSystemWriter + FileSystemReader {}
@@ -167,10 +168,11 @@ pub mod test {
             unimplemented!()
         }
 
-        fn read<P>(&self, _path: P) -> Result<String, Error>
-        where
-            P: AsRef<Path> + Debug,
-        {
+        fn read(&self, _path: &Path) -> Result<String, Error> {
+            unimplemented!()
+        }
+
+        fn is_file(&self, _path: &Path) -> bool {
             unimplemented!()
         }
     }
@@ -226,4 +228,9 @@ pub mod test {
     }
 
     impl Writer for InMemoryFile {}
+}
+
+#[async_trait]
+pub trait HttpClient {
+    async fn send(&self, request: http::Request<Vec<u8>>) -> Result<http::Response<Bytes>, Error>;
 }

@@ -127,6 +127,12 @@ pub enum Error {
         src: Src,
         error: crate::javascript::Error,
     },
+
+    DownloadPackageError {
+        package_name: String,
+        package_version: String,
+        error: String,
+    },
 }
 
 impl From<capnp::Error> for Error {
@@ -214,6 +220,7 @@ fn did_you_mean(name: &str, options: &[String], alt: &'static str) -> String {
     options
         .iter()
         .filter(|&option| option != crate::ast::CAPTURE_VARIABLE)
+        .sorted()
         .min_by_key(|option| strsim::levenshtein(option, name))
         .map(|option| format!("did you mean `{}`?", option))
         .unwrap_or_else(|| alt.to_string())
@@ -1726,6 +1733,28 @@ Fix the warnings and try again!"
                     write(buf, diagnostic, Severity::Error);
                 }
             },
+            Error::DownloadPackageError {
+                package_name,
+                package_version,
+                error,
+            } => {
+                let diagnostic = ProjectErrorDiagnostic {
+                    title: "Failed to download package".to_string(),
+                    label: format!(
+                        "A problem was encountered when downloading {} {}.",
+                        package_name, package_version
+                    ),
+                };
+                write_project(buf, diagnostic);
+                writeln!(
+                    buf,
+                    "\nThe error from the package manager client was:
+
+    {}",
+                    error
+                )
+                .unwrap();
+            }
         }
     }
 }
