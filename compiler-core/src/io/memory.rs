@@ -26,13 +26,19 @@ impl InMemoryFileSystem {
 }
 
 impl FileSystemWriter for InMemoryFileSystem {
-    fn open(&self, path: &Path) -> Result<WrappedWriter, Error> {
+    fn writer(&self, path: &Path) -> Result<WrappedWriter, Error> {
         let mut files = (*self.files).borrow_mut();
         let writer = files.entry(path.to_path_buf()).or_default();
         Ok(WrappedWriter {
             path: path.to_path_buf(),
-            inner: Box::new(writer.clone()),
+            inner: DebugIgnore(Box::new(writer.clone())),
         })
+    }
+
+    fn delete(&self, path: &Path) -> Result<(), Error> {
+        let mut files = (*self.files).borrow_mut();
+        let _ = files.remove(path);
+        Ok(())
     }
 }
 
@@ -69,6 +75,14 @@ impl FileSystemReader for InMemoryFileSystem {
 
     fn is_file(&self, path: &Path) -> bool {
         (*self.files).borrow().contains_key(path)
+    }
+
+    fn is_directory(&self, _path: &Path) -> bool {
+        unreachable!() // TODO
+    }
+
+    fn reader(&self, _path: &Path) -> Result<WrappedReader, Error> {
+        unreachable!() // TODO
     }
 }
 

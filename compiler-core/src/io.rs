@@ -2,10 +2,14 @@ pub mod memory;
 
 use crate::error::{Error, FileIoAction, FileKind, Result};
 use async_trait::async_trait;
+use debug_ignore::DebugIgnore;
+use flate2::read::GzDecoder;
 use std::{
     fmt::Debug,
+    io,
     path::{Path, PathBuf},
 };
+use tar::{Archive, Entry};
 
 pub trait Utf8Writer: std::fmt::Write {
     /// A wrapper around `fmt::Write` that has Gleam's error handling.
@@ -52,7 +56,9 @@ pub struct OutputFile {
 pub trait FileSystemReader {
     fn gleam_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>>;
     fn read(&self, path: &Path) -> Result<String, Error>;
+    fn reader(&self, path: &Path) -> Result<WrappedReader, Error>;
     fn is_file(&self, path: &Path) -> bool;
+    fn is_directory(&self, path: &Path) -> bool;
 }
 
 pub trait FileSystemIO: FileSystemWriter + FileSystemReader {}
@@ -61,16 +67,41 @@ pub trait FileSystemIO: FileSystemWriter + FileSystemReader {}
 /// Typically we use an implementation that writes to the file system,
 /// but in tests and in other places other implementations may be used.
 pub trait FileSystemWriter {
-    fn open(&self, path: &Path) -> Result<WrappedWriter, Error>;
+    fn writer(&self, path: &Path) -> Result<WrappedWriter, Error>;
+    fn delete(&self, path: &Path) -> Result<(), Error>;
 }
 
-// TODO: Remove this when the Rust compiler stops incorrectly suggesting this
-// could be derived. It can't because Write doesn't implement Debug
-#[allow(missing_debug_implementations)]
+#[derive(Debug)]
+/// A wrapper around a Read implementing object that has Gleam's error handling.
+pub struct WrappedReader {
+    path: PathBuf,
+    inner: DebugIgnore<Box<dyn std::io::Read>>,
+}
+
+impl WrappedReader {
+    pub fn new(path: &Path, inner: Box<dyn std::io::Read>) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            inner: DebugIgnore(inner),
+        }
+    }
+
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buffer)
+    }
+}
+
+impl std::io::Read for WrappedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.read(buffer)
+    }
+}
+
+#[derive(Debug)]
 /// A wrapper around a Write implementing object that has Gleam's error handling.
 pub struct WrappedWriter {
     path: PathBuf,
-    inner: Box<dyn std::io::Write>,
+    inner: DebugIgnore<Box<dyn std::io::Write>>,
 }
 
 impl Writer for WrappedWriter {}
@@ -90,7 +121,7 @@ impl WrappedWriter {
     pub fn new(path: &Path, inner: Box<dyn std::io::Write>) -> Self {
         Self {
             path: path.to_path_buf(),
-            inner,
+            inner: DebugIgnore(inner),
         }
     }
 
@@ -154,10 +185,14 @@ pub mod test {
     }
 
     impl FileSystemWriter for FilesChannel {
-        fn open<'a>(&self, path: &'a Path) -> Result<WrappedWriter, Error> {
+        fn writer<'a>(&self, path: &'a Path) -> Result<WrappedWriter, Error> {
             let file = InMemoryFile::new();
             let _ = self.0.send((path.to_path_buf(), file.clone()));
             Ok(WrappedWriter::new(path, Box::new(file)))
+        }
+
+        fn delete(&self, _path: &Path) -> Result<(), Error> {
+            panic!("FilesChannel does not support deletion")
         }
     }
 
@@ -171,6 +206,14 @@ pub mod test {
         }
 
         fn is_file(&self, _path: &Path) -> bool {
+            unimplemented!()
+        }
+
+        fn reader(&self, _path: &Path) -> Result<WrappedReader, Error> {
+            unimplemented!()
+        }
+
+        fn is_directory(&self, _path: &Path) -> bool {
             unimplemented!()
         }
     }
@@ -232,4 +275,45 @@ pub mod test {
 pub trait HttpClient {
     async fn send(&self, request: http::Request<Vec<u8>>)
         -> Result<http::Response<Vec<u8>>, Error>;
+}
+
+pub trait TarUnpacker {
+    // FIXME: The reader types are restrictive here. We should be more generic
+    // than this.
+    fn io_result_entries<'a>(
+        &self,
+        archive: &'a mut Archive<WrappedReader>,
+    ) -> io::Result<tar::Entries<'a, WrappedReader>>;
+
+    fn entries<'a>(
+        &self,
+        archive: &'a mut Archive<WrappedReader>,
+    ) -> Result<tar::Entries<'a, WrappedReader>> {
+        tracing::trace!("iterating through tar archive");
+        self.io_result_entries(archive)
+            .map_err(|e| Error::ExpandTar {
+                error: e.to_string(),
+            })
+    }
+
+    fn io_result_unpack(
+        &self,
+        path: &Path,
+        archive: Archive<GzDecoder<Entry<'_, WrappedReader>>>,
+    ) -> io::Result<()>;
+
+    fn unpack(
+        &self,
+        path: &Path,
+        archive: Archive<GzDecoder<Entry<'_, WrappedReader>>>,
+    ) -> Result<()> {
+        tracing::trace!(path = ?path, "unpacking tar archive");
+        self.io_result_unpack(path, archive)
+            .map_err(|e| Error::FileIo {
+                action: FileIoAction::WriteTo,
+                kind: FileKind::Directory,
+                path: path.to_path_buf(),
+                err: Some(e.to_string()),
+            })
+    }
 }

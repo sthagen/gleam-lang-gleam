@@ -1,7 +1,7 @@
 use flate2::{write::GzEncoder, Compression};
 use gleam_core::{
     error::{Error, FileIoAction, FileKind},
-    io::{FileSystemIO, FileSystemWriter, OutputFile, WrappedWriter},
+    io::{FileSystemIO, FileSystemWriter, OutputFile, WrappedReader, WrappedWriter},
 };
 use ignore::DirEntry;
 use lazy_static::lazy_static;
@@ -48,10 +48,18 @@ impl gleam_core::io::FileSystemReader for FileSystemAccessor {
     fn is_file(&self, path: &Path) -> bool {
         path.is_file()
     }
+
+    fn is_directory(&self, path: &Path) -> bool {
+        path.is_dir()
+    }
+
+    fn reader(&self, path: &Path) -> gleam_core::Result<WrappedReader, Error> {
+        reader(path)
+    }
 }
 
 impl FileSystemWriter for FileSystemAccessor {
-    fn open(&self, path: &Path) -> Result<WrappedWriter, Error> {
+    fn writer(&self, path: &Path) -> Result<WrappedWriter, Error> {
         tracing::trace!("Writing file {:?}", path);
 
         let dir_path = path.parent().ok_or_else(|| Error::FileIo {
@@ -76,6 +84,10 @@ impl FileSystemWriter for FileSystemAccessor {
         })?;
 
         Ok(WrappedWriter::new(path, Box::new(file)))
+    }
+
+    fn delete(&self, path: &Path) -> gleam_core::Result<(), Error> {
+        delete_dir(path) // I presume this works on files too. Let's find out.
     }
 }
 
@@ -224,7 +236,7 @@ pub fn create_tar_archive(outputs: Vec<OutputFile>) -> Result<Vec<u8>, Error> {
 
     for file in outputs {
         let mut header = tar::Header::new_gnu();
-        header.set_path(&file.path).map_err(|e| Error::Tar {
+        header.set_path(&file.path).map_err(|e| Error::AddTar {
             path: file.path.clone(),
             err: e.to_string(),
         })?;
@@ -232,7 +244,7 @@ pub fn create_tar_archive(outputs: Vec<OutputFile>) -> Result<Vec<u8>, Error> {
         header.set_cksum();
         builder
             .append(&header, file.text.as_bytes())
-            .map_err(|e| Error::Tar {
+            .map_err(|e| Error::AddTar {
                 path: file.path.clone(),
                 err: e.to_string(),
             })?;
@@ -286,6 +298,19 @@ pub fn read(path: impl AsRef<Path> + Debug) -> Result<String, Error> {
         path: PathBuf::from(path.as_ref()),
         err: Some(err.to_string()),
     })
+}
+
+pub fn reader(path: impl AsRef<Path> + Debug) -> Result<WrappedReader, Error> {
+    tracing::trace!("Reading file {:?}", path);
+
+    let reader = File::open(&path).map_err(|err| Error::FileIo {
+        action: FileIoAction::Open,
+        kind: FileKind::File,
+        path: PathBuf::from(path.as_ref()),
+        err: Some(err.to_string()),
+    })?;
+
+    Ok(WrappedReader::new(path.as_ref(), Box::new(reader)))
 }
 
 pub fn buffered_reader<P: AsRef<Path> + Debug>(path: P) -> Result<impl BufRead, Error> {

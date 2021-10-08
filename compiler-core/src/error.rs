@@ -13,26 +13,30 @@ use itertools::Itertools;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use termcolor::Buffer;
+use thiserror::Error;
 
 pub type Src = String;
 pub type Name = String;
 
 pub type Result<Ok, Err = Error> = std::result::Result<Ok, Err>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Error)]
 pub enum Error {
+    #[error("failed to parse Gleam source code")]
     Parse {
         path: PathBuf,
         src: Src,
         error: crate::parse::error::ParseError,
     },
 
+    #[error("type checking failed")]
     Type {
         path: PathBuf,
         src: Src,
         error: crate::type_::Error,
     },
 
+    #[error("unknown import {import} in {module}")]
     UnknownImport {
         module: Name,
         import: Name,
@@ -42,12 +46,14 @@ pub enum Error {
         modules: Vec<String>,
     },
 
+    #[error("duplicate module {module}")]
     DuplicateModule {
         module: Name,
         first: PathBuf,
         second: PathBuf,
     },
 
+    #[error("test module {test_module} imported into application module {src_module}")]
     SrcImportingTest {
         path: PathBuf,
         src: Src,
@@ -56,14 +62,13 @@ pub enum Error {
         test_module: Name,
     },
 
-    ImportCycle {
-        modules: Vec<String>,
-    },
+    #[error("cyclical module imports")]
+    ImportCycle { modules: Vec<String> },
 
-    PackageCycle {
-        packages: Vec<String>,
-    },
+    #[error("cyclical package dependencies")]
+    PackageCycle { packages: Vec<String> },
 
+    #[error("file operation failed")]
     FileIo {
         kind: FileKind,
         action: FileIoAction,
@@ -71,70 +76,79 @@ pub enum Error {
         err: Option<String>,
     },
 
+    #[error("io operation failed")]
     StandardIo {
         action: StandardIoAction,
         err: Option<std::io::ErrorKind>,
     },
 
-    Format {
-        problem_files: Vec<Unformatted>,
-    },
+    #[error("source code incorrectly formatted")]
+    Format { problem_files: Vec<Unformatted> },
 
+    #[error("Hex error: {0}")]
     Hex(String),
 
-    Tar {
-        path: PathBuf,
-        err: String,
-    },
+    #[error("{error}")]
+    ExpandTar { error: String },
 
+    #[error("{err}")]
+    AddTar { path: PathBuf, err: String },
+
+    #[error("{0}")]
     TarFinish(String),
 
+    #[error("{0}")]
     Gzip(String),
 
+    #[error("command failed")]
     ShellCommand {
         command: String,
         err: Option<std::io::ErrorKind>,
     },
 
+    #[error("{name} is not a valid project name")]
     InvalidProjectName {
         name: String,
         reason: InvalidProjectNameReason,
     },
 
-    ProjectRootAlreadyExist {
-        path: String,
-    },
+    #[error("{input} is not a valid version. {error}")]
+    InvalidVersionFormat { input: String, error: String },
 
-    UnableToFindProjectRoot {
-        path: String,
-    },
+    #[error("project root already exists")]
+    ProjectRootAlreadyExist { path: String },
 
-    VersionDoesNotMatch {
-        toml_ver: String,
-        app_ver: String,
-    },
+    #[error("unable to find project root")]
+    UnableToFindProjectRoot { path: String },
 
-    MetadataDecodeError {
-        error: Option<String>,
-    },
+    #[error("gleam.toml version {toml_ver} does not match .app version {app_ver}")]
+    VersionDoesNotMatch { toml_ver: String, app_ver: String },
 
-    ForbiddenWarnings {
-        count: usize,
-    },
+    #[error("metadata decoding failed")]
+    MetadataDecodeError { error: Option<String> },
 
+    #[error("warnings are not permitted")]
+    ForbiddenWarnings { count: usize },
+
+    #[error("javascript codegen failed")]
     JavaScript {
         path: PathBuf,
         src: Src,
         error: crate::javascript::Error,
     },
 
+    #[error("package downloading failed: {error}")]
     DownloadPackageError {
         package_name: String,
         package_version: String,
         error: String,
     },
 
+    #[error("{0}")]
     Http(String),
+
+    #[error("Dependency tree resolution failed: {0}")]
+    DependencyResolutionFailed(String),
 }
 
 impl Error {
@@ -150,6 +164,22 @@ impl Error {
         E: std::error::Error,
     {
         Self::Hex(error.to_string())
+    }
+
+    pub fn dependency_resolution_failed<E>(error: E) -> Error
+    where
+        E: std::error::Error,
+    {
+        Self::DependencyResolutionFailed(error.to_string())
+    }
+
+    pub fn expand_tar<E>(error: E) -> Error
+    where
+        E: std::error::Error,
+    {
+        Self::ExpandTar {
+            error: error.to_string(),
+        }
     }
 }
 
@@ -379,7 +409,7 @@ This was error from the gzip library:
                 write_project(buf, diagnostic);
             }
 
-            Error::Tar { path, err } => {
+            Error::AddTar { path, err } => {
                 let diagnostic = ProjectErrorDiagnostic {
                     title: "Failure creating tar archive".to_string(),
                     label: format!(
@@ -391,6 +421,21 @@ This was error from the tar library:
     {}",
                         path.to_str().unwrap(),
                         err.to_string()
+                    ),
+                };
+                write_project(buf, diagnostic);
+            }
+
+            Error::ExpandTar { error } => {
+                let diagnostic = ProjectErrorDiagnostic {
+                    title: "Failure opening tar archive".to_string(),
+                    label: format!(
+                        "There was a problem when attempting to expand a to a tar archive.
+
+This was error from the tar library:
+
+    {}",
+                        error.to_string()
                     ),
                 };
                 write_project(buf, diagnostic);
@@ -1783,6 +1828,40 @@ Fix the warnings and try again!"
                 writeln!(
                     buf,
                     "\nThe error from the HTTP client was:
+
+    {}",
+                    error
+                )
+                .unwrap();
+            }
+
+            Error::InvalidVersionFormat { input, error } => {
+                let diagnostic = ProjectErrorDiagnostic {
+                    title: "Invalid version format".to_string(),
+                    label: format!("I was unable to parse the version {}.", input),
+                };
+                write_project(buf, diagnostic);
+                writeln!(
+                    buf,
+                    "\nThe error from the parser was:
+
+    {}",
+                    error
+                )
+                .unwrap();
+            }
+
+            Error::DependencyResolutionFailed(error) => {
+                let diagnostic = ProjectErrorDiagnostic {
+                    title: "Dependency resolution failed".to_string(),
+                    label: "An error occured while determining what dependency packages and
+versions should be downloaded."
+                        .to_string(),
+                };
+                write_project(buf, diagnostic);
+                writeln!(
+                    buf,
+                    "\nThe error from the version resolver library was:
 
     {}",
                     error

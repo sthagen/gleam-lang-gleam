@@ -14,6 +14,7 @@ use crate::{
 };
 use std::{path::PathBuf, sync::Arc};
 
+use hexpm::version::{Range, Version};
 use pretty_assertions::assert_eq;
 
 macro_rules! assert_erlang_compile {
@@ -1779,7 +1780,7 @@ fn config_compilation_test() {
         ($config:expr, $sources:expr, $expected_output:expr $(,)?) => {
             let config = $config;
             let mut modules = HashMap::new();
-            let root = ProjectRoot::new(PathBuf::new());
+            let root = ProjectRoot::new();
             let (file_writer, file_receiver) = FilesChannel::new();
             let options = package_compiler::Options {
                 target: Target::Erlang,
@@ -1806,7 +1807,7 @@ fn config_compilation_test() {
         PackageConfig {
             dependencies: HashMap::new(),
             description: "".to_string(),
-            version: "1.0.0".to_string(),
+            version: Version::parse("1.0.0").unwrap(),
             name: "the_package".to_string(),
             repository: Repository::None,
             docs: Default::default(),
@@ -1834,7 +1835,7 @@ fn config_compilation_test() {
 
     // Version is included if given
     let mut config = make_config();
-    config.version = "1.3.5".to_string();
+    config.version = Version::parse("1.3.5").unwrap();
     assert_config_compile!(
         config,
         vec![],
@@ -1881,7 +1882,7 @@ fn config_compilation_test() {
         ("simple_json", "1.0.0"),
     ]
     .into_iter()
-    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .map(|(a, b)| (a.to_string(), Range::new(b.to_string())))
     .collect();
     assert_config_compile!(
         config,
