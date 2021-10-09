@@ -1,11 +1,31 @@
 use std::path::PathBuf;
 
+pub fn build() -> PathBuf {
+    PathBuf::from(".build")
+}
+
 pub fn package_cache_tarball(package_name: &str, version: &str) -> PathBuf {
     packages_cache().join(format!("{}-{}.tar", package_name, version))
 }
 
-pub fn target_package(package: &str) -> PathBuf {
-    PathBuf::from("target").join("dependencies").join(package)
+pub fn build_deps_package_src(package: &str) -> PathBuf {
+    build_deps_package(package).join("src")
+}
+
+pub fn build_deps_package_test(package: &str) -> PathBuf {
+    build_deps_package(package).join("test")
+}
+
+pub fn build_deps() -> PathBuf {
+    build().join("deps")
+}
+
+pub fn build_deps_package(package: &str) -> PathBuf {
+    build_deps().join(package)
+}
+
+pub fn build_scripts() -> PathBuf {
+    build().join("scripts")
 }
 
 fn packages_cache() -> PathBuf {
