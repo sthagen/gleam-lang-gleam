@@ -2,19 +2,21 @@ use codegen::ErlangApp;
 
 use crate::{
     build::{
-        dep_tree, package_compiler, package_compiler::PackageCompiler, project_root::ProjectRoot,
-        telemetry::Telemetry, Origin, Package, Target,
+        dep_tree, package_compiler, package_compiler::PackageCompiler, telemetry::Telemetry, Mode,
+        Module, Origin, Package, Target,
     },
     codegen,
     config::PackageConfig,
     io::{FileSystemIO, FileSystemWriter},
     paths, type_, warning, Error, Warning,
 };
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug)]
-pub struct ProjectCompiler<'a, IO> {
-    root: &'a ProjectRoot,
+pub struct ProjectCompiler<IO> {
     root_config: PackageConfig,
     configs: HashMap<String, PackageConfig>,
     packages: HashMap<String, Package>,
@@ -29,12 +31,11 @@ pub struct ProjectCompiler<'a, IO> {
 // TODO: test that tests cannot be imported into src
 // TODO: test that dep cycles are not allowed between packages
 
-impl<'a, IO> ProjectCompiler<'a, IO>
+impl<IO> ProjectCompiler<IO>
 where
     IO: FileSystemIO + Clone,
 {
     pub fn new(
-        root: &'a ProjectRoot,
         root_config: PackageConfig,
         configs: HashMap<String, PackageConfig>,
         telemetry: Box<dyn Telemetry>,
@@ -49,7 +50,6 @@ where
             root_config,
             telemetry,
             configs,
-            root,
             io,
         }
     }
@@ -84,8 +84,7 @@ where
             _ => None,
         };
 
-        // TODO: this isn't the right location.
-        let out_path = paths::build_deps_package_src(&name);
+        let out_path = paths::build_package(Mode::Dev, Target::Erlang, &name);
         let options = package_compiler::Options {
             target: Target::Erlang,
             src_path: paths::build_deps_package_src(&name),
@@ -96,16 +95,53 @@ where
 
         let mut compiler = options.into_compiler(self.io.clone())?;
 
-        // Compile project
+        // Compile project to Erlang source code
         let compiled = compiler.compile(
             &mut self.warnings,
             &mut self.importable_modules,
             &mut self.defined_modules,
         )?;
-        ErlangApp::new(&out_path).render(self.io.clone(), &config, &compiled.modules)?;
+
+        // Write an Erlang .app file
+        ErlangApp::new(&out_path.join("ebin")).render(
+            self.io.clone(),
+            &config,
+            &compiled.modules,
+        )?;
+
+        // Compile Erlang to .beam files
+        self.compile_erlang_to_beam(&out_path, &compiled.modules)?;
 
         let _ = self.packages.insert(name, compiled);
         Ok(())
+    }
+
+    // TODO: remove this IO from core. Inject the command runner
+    fn compile_erlang_to_beam(&self, out_path: &Path, modules: &[Module]) -> Result<(), Error> {
+        let escript_path = paths::build_scripts().join("compile_erlang.erl");
+
+        // Run escript to compile Erlang to beam files
+        let mut command = std::process::Command::new("erlc");
+        let _ = command.arg("-o");
+        let _ = command.arg(out_path.join("ebin"));
+        for module in modules {
+            let _ = command.arg(out_path.join(module.compiled_erlang_path()));
+        }
+
+        tracing::trace!("Running OS process {:?}", command);
+        let status = command.status().map_err(|e| Error::ShellCommand {
+            command: "erlc".to_string(),
+            err: Some(e.kind()),
+        })?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(Error::ShellCommand {
+                command: "erlc".to_string(),
+                err: None,
+            })
+        }
     }
 }
 

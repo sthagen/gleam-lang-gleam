@@ -5,7 +5,21 @@ use gleam_core::{
 };
 use std::process::Command;
 
-pub fn command() -> Result<(), Error> {
+#[derive(Debug, Clone, Copy)]
+pub enum Which {
+    Src,
+    Test,
+}
+
+pub fn command(which: Which) -> Result<(), Error> {
+    let config = crate::config::root_config()?;
+
+    // Determine which module to run
+    let code = match which {
+        Which::Src => config.name.to_string(),
+        Which::Test => format!("{}_test", &config.name),
+    };
+
     // Build project
     let _ = super::new_build_main()?;
 
@@ -15,16 +29,18 @@ pub fn command() -> Result<(), Error> {
     // Prepare the Erlang shell command
     let mut command = Command::new("erl");
 
-    // Print character lists as lists
-    let _ = command.arg("-stdlib").arg("shell_strings").arg("false");
-
     // Specify locations of .beam files
     let packages = paths::build_packages(Mode::Dev, Target::Erlang);
     for entry in crate::fs::read_dir(&packages)?.filter_map(Result::ok) {
         let _ = command.arg("-pa").arg(entry.path().join("ebin"));
     }
 
-    crate::cli::print_running("Erlang shell");
+    // Run the main function
+    let _ = command.arg("-noshell");
+    let _ = command.arg("-eval");
+    let _ = command.arg(format!("{}:main(),erlang:halt()", &code));
+
+    crate::cli::print_running(&format!("{}.main", code));
 
     // Run the shell
     tracing::trace!("Running OS process {:?}", command);

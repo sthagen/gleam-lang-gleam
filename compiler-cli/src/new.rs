@@ -104,7 +104,7 @@ impl Creator {
                 self.gleam_github_ci()?;
                 self.gleam_lib_readme()?;
                 self.gleam_gleam_toml()?;
-                self.src_module()?;
+                self.gleam_src_module()?;
                 self.gleam_test_module()?;
             }
         }
@@ -170,6 +170,21 @@ pub fn stop(_state: Dynamic) {
             &format!(
                 r#"pub fn hello_world() -> String {{
   "Hello, from {}!"
+}}
+"#,
+                self.project_name
+            ),
+        )
+    }
+
+    fn gleam_src_module(&self) -> Result<()> {
+        write(
+            self.src.join(format!("{}.gleam", self.project_name)),
+            &format!(
+                r#"import gleam/io
+                
+pub fn main() {{
+  io.println("Hello from {}!")
 }}
 "#,
                 self.project_name
@@ -365,16 +380,24 @@ _build/default/bin/{name}
 ## Quick start
 
 ```sh
-# Run the eunit tests
-gleam eunit
-
-# Run the Erlang REPL
-gleam shell
+gleam run   # Run the project
+gleam test  # Run the tests
+gleam shell # Run an Erlang shell
 ```
+
+## Installation
+
+If available on Hex this package can be installed by adding `{name}` 
+to your `gleam.toml` dependencies:
+
+```erlang
+[dependencies]
+{name} = "~> {version}"
 ```
 "#,
                 name = self.project_name,
-                description = self.options.description
+                description = self.options.description,
+                version = PROJECT_VERSION,
             ),
         )
     }
@@ -399,7 +422,7 @@ rebar3 shell
 
 ## Installation
 
-If [available in Hex](https://rebar3.org/docs/configuration/dependencies/#declaring-dependencies)
+If [available on Hex](https://rebar3.org/docs/configuration/dependencies/#declaring-dependencies)
 this package can be installed by adding `{name}` to your `rebar.config` dependencies:
 
 ```erlang
@@ -438,8 +461,9 @@ jobs:
       - uses: gleam-lang/setup-gleam@v1.0.2
         with:
           gleam-version: {}
-      - run: gleam eunit
       - run: gleam format --check src test
+      - run: gleam deps download
+      - run: gleam test
 "#,
                 ERLANG_OTP_VERSION, self.gleam_version
             ),
@@ -487,7 +511,7 @@ jobs:
 version = "0.1.0"
 
 [dependencies]
-gleam_stdlib = "{gleam_stdlib}"
+gleam_stdlib = "~> {gleam_stdlib}"
 "#,
                 name = self.project_name,
                 gleam_stdlib = GLEAM_STDLIB_VERSION,
@@ -511,16 +535,12 @@ gleam_stdlib = "{gleam_stdlib}"
     fn gleam_test_module(&self) -> Result<()> {
         write(
             self.test.join(format!("{}_test.gleam", self.project_name)),
-            &format!(
-                r#"import {name}
+            r#"import gleam/io
 
-pub fn hello_world_test() {{
-  assert "Hello, from {name}!" = {name}.hello_world()
-  Nil
+pub fn main() {{
+  io.println("TODO: Write some tests")
 }}
 "#,
-                name = self.project_name
-            ),
         )
     }
 
@@ -560,12 +580,11 @@ pub fn create(options: NewOptions, version: &'static str) -> Result<()> {
 
     let test_command = match &creator.options.template {
         Template::RebarLib | Template::RebarApp | Template::RebarEscript => "rebar3 eunit",
-        Template::Lib => "gleam eunit",
+        Template::Lib => "gleam test",
     };
 
     println!(
-        "
-Your Gleam project {} has been successfully created.
+        "Your Gleam project {} has been successfully created.
 The project can be compiled and tested by running these commands:
 
 {}\t{}

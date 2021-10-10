@@ -55,13 +55,13 @@ mod compile_package;
 mod config;
 mod dependencies;
 mod docs;
-mod eunit;
 mod format;
 mod fs;
 mod http;
 mod new;
 mod panic;
 mod project;
+mod run;
 mod shell;
 
 pub use gleam_core::{
@@ -70,14 +70,13 @@ pub use gleam_core::{
 };
 
 use gleam_core::{
-    build::{package_compiler, project_root::ProjectRoot, Package, ProjectCompiler, Target},
+    build::{package_compiler, Package, ProjectCompiler, Target},
     config::PackageConfig,
-    io::OutputFile,
     paths,
     project::Analysed,
 };
 
-use std::{collections::HashMap, path::PathBuf, process};
+use std::{collections::HashMap, path::PathBuf};
 use structopt::{clap::AppSettings, StructOpt};
 use strum::VariantNames;
 
@@ -86,13 +85,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(StructOpt, Debug)]
 #[structopt(global_settings = &[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands])]
 enum Command {
-    /// Compile a project
-    #[structopt(setting = AppSettings::Hidden)]
+    /// Build the project
     Build {
-        /// Location of the project root
-        #[structopt(default_value = ".")]
-        project_root: String,
-
         /// Emit compile time warnings as errors
         #[structopt(long)]
         warnings_as_errors: bool,
@@ -122,13 +116,14 @@ enum Command {
         check: bool,
     },
 
-    /// Start an erlang shell
-    #[structopt(setting = AppSettings::Hidden)]
+    /// Start an Erlang shell
     Shell,
 
-    /// Run eunit tests
-    #[structopt(setting = AppSettings::Hidden)]
-    Eunit,
+    /// Run the project
+    Run,
+
+    /// Run the project tests
+    Test,
 
     /// Compile a single Gleam package
     #[structopt(setting = AppSettings::Hidden)]
@@ -249,10 +244,7 @@ fn main() {
     panic::add_handler();
 
     let result = match Command::from_args() {
-        Command::Build {
-            project_root,
-            warnings_as_errors,
-        } => command_build(project_root, warnings_as_errors),
+        Command::Build { warnings_as_errors } => command_build(warnings_as_errors),
 
         Command::Docs(Docs::Build {
             project_root,
@@ -279,7 +271,9 @@ fn main() {
 
         Command::Shell => shell::command(),
 
-        Command::Eunit => eunit::command(),
+        Command::Run => run::command(run::Which::Src),
+
+        Command::Test => run::command(run::Which::Test),
 
         Command::CompilePackage(opts) => compile_package::command(opts),
     };
@@ -301,13 +295,12 @@ fn main() {
     }
 }
 
-fn command_build(root: String, warnings_as_errors: bool) -> Result<(), Error> {
-    let root = PathBuf::from(&root);
-    let config = config::read_project_config(&root)?;
+fn command_build(warnings_as_errors: bool) -> Result<(), Error> {
+    let root = PathBuf::from(&PathBuf::from("./"));
 
     // Use new build tool if not in a rebar or mix project
     if !root.join("rebar.config").exists() && !root.join("mix.exs").exists() {
-        return new_build_main(config).map(|_| ());
+        return new_build_main().map(|_| ());
     }
 
     // Read and type check project
@@ -345,8 +338,8 @@ fn initialise_logger() {
         .init();
 }
 
-pub fn new_build_main(root_config: PackageConfig) -> Result<HashMap<String, Package>, Error> {
-    let root = ProjectRoot::new();
+pub fn new_build_main() -> Result<HashMap<String, Package>, Error> {
+    let root_config = crate::config::root_config()?;
     let telemetry = Box::new(cli::Reporter::new());
     let io = fs::FileSystemAccessor::new();
 
@@ -357,46 +350,9 @@ pub fn new_build_main(root_config: PackageConfig) -> Result<HashMap<String, Pack
     let configs = config::package_configs(&root_config.name)?;
 
     tracing::info!("Compiling packages");
-    let packages = ProjectCompiler::new(&root, root_config, configs, telemetry, io).compile()?;
-
-    tracing::info!("Compiling Erlang source code to BEAM bytecode");
-    compile_erlang_to_beam()?;
+    let packages = ProjectCompiler::new(root_config, configs, telemetry, io).compile()?;
 
     Ok(packages)
-}
-
-fn compile_erlang_to_beam() -> Result<(), Error> {
-    crate::cli::print_compiling("Erlang code");
-
-    let escript_path = paths::build_scripts().join("compile_erlang.erl");
-    if !escript_path.exists() {
-        // TODO: a crate::fs::write(&path, &[u8]) function
-        let escript_source = std::include_str!("build/compile_erlang_escript.erl").to_string();
-        crate::fs::write_output(&OutputFile {
-            path: escript_path.clone(),
-            text: escript_source,
-        })?;
-    }
-
-    // Run escript to compile Erlang to beam files
-    let mut command = process::Command::new("escript");
-    let _ = command.arg(escript_path);
-    let _ = command.arg(paths::build());
-
-    tracing::trace!("Running OS process {:?}", command);
-    let status = command.status().map_err(|e| Error::ShellCommand {
-        command: "escript".to_string(),
-        err: Some(e.kind()),
-    })?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(Error::ShellCommand {
-            command: "escript".to_string(),
-            err: None,
-        })
-    }
 }
 
 fn copy_root_package_to_build(root_config: &PackageConfig) -> Result<(), Error> {

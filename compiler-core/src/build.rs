@@ -16,7 +16,6 @@
 mod dep_tree;
 pub mod package_compiler;
 mod project_compiler;
-pub mod project_root;
 mod telemetry;
 
 #[cfg(test)]
@@ -28,7 +27,6 @@ pub use self::telemetry::Telemetry;
 
 use crate::{
     ast::TypedModule,
-    build::project_root::ProjectRoot,
     config::{self, PackageConfig},
     erlang,
     error::{Error, FileIoAction, FileKind},
@@ -55,6 +53,15 @@ impl Target {
     }
 }
 
+#[derive(
+    Debug, Serialize, Deserialize, Display, EnumString, EnumVariantNames, Clone, Copy, PartialEq,
+)]
+#[strum(serialize_all = "lowercase")]
+pub enum Mode {
+    Dev,
+    Prod,
+}
+
 #[derive(Debug)]
 pub struct Package {
     pub name: String,
@@ -65,9 +72,17 @@ pub struct Package {
 pub struct Module {
     pub name: String,
     pub code: String,
-    pub path: PathBuf,
+    pub input_path: PathBuf,
     pub origin: Origin,
     pub ast: TypedModule,
+}
+
+impl Module {
+    pub fn compiled_erlang_path(&self) -> PathBuf {
+        let mut path = self.name.replace("/", "@");
+        path.push_str(".erl");
+        PathBuf::from(path)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

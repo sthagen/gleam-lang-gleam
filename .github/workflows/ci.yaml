@@ -152,10 +152,6 @@ jobs:
         run: make clean javascript
         working-directory: ./test/language
 
-      - name: test/build_with_gleam
-        run: gleam eunit
-        working-directory: ./test/build_with_gleam
-
       - name: test/rebar_project
         run: rebar3 eunit
         working-directory: ./test/rebar_project
@@ -192,12 +188,13 @@ jobs:
           rebar3 escriptize
           _build/default/bin/escript_project
 
-      # TODO: run tests
       - name: Test gleam-lib template
         run: |
           gleam new gleam_lib_project --template=lib
           cd gleam_lib_project
           gleam deps download
+          gleam run
+          gleam test
 
       - name: Test JavaScript prelude
         run: |
