@@ -9,9 +9,11 @@ use crate::{
     javascript,
     type_::{pretty::Printer, UnifyErrorSituation},
 };
+use hexpm::version::pubgrub_report::{DefaultStringReporter, Reporter};
+use hexpm::version::ResolutionError;
 use itertools::Itertools;
 use std::fmt::Debug;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use termcolor::Buffer;
 use thiserror::Error;
 
@@ -19,6 +21,12 @@ pub type Src = String;
 pub type Name = String;
 
 pub type Result<Ok, Err = Error> = std::result::Result<Ok, Err>;
+
+macro_rules! wrap_writeln {
+    ($buf:expr, $($tts:tt)*) => {
+        writeln!($buf, "{}", wrap(&format!($($tts)*)))
+    }
+}
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
@@ -52,6 +60,9 @@ pub enum Error {
         first: PathBuf,
         second: PathBuf,
     },
+
+    #[error("duplicate Erlang file {file}")]
+    DuplicateErlangFile { file: String },
 
     #[error("test module {test_module} imported into application module {src_module}")]
     SrcImportingTest {
@@ -149,6 +160,15 @@ pub enum Error {
 
     #[error("Dependency tree resolution failed: {0}")]
     DependencyResolutionFailed(String),
+
+    #[error("The package {0} is listed in dependencies and dev-dependencies")]
+    DuplicateDependency(String),
+
+    #[error("The package was missing required fields for publishing")]
+    MissingHexPublishFields {
+        description_missing: bool,
+        licence_missing: bool,
+    },
 }
 
 impl Error {
@@ -166,11 +186,40 @@ impl Error {
         Self::Hex(error.to_string())
     }
 
-    pub fn dependency_resolution_failed<E>(error: E) -> Error
+    pub fn add_tar<P, E>(path: P, error: E) -> Error
+    where
+        P: AsRef<Path>,
+        E: std::error::Error,
+    {
+        Self::AddTar {
+            path: path.as_ref().to_path_buf(),
+            err: error.to_string(),
+        }
+    }
+
+    pub fn finish_tar<E>(error: E) -> Error
     where
         E: std::error::Error,
     {
-        Self::DependencyResolutionFailed(error.to_string())
+        Self::TarFinish(error.to_string())
+    }
+
+    pub fn dependency_resolution_failed(error: ResolutionError) -> Error {
+        Self::DependencyResolutionFailed(match error {
+            ResolutionError::NoSolution(mut derivation_tree) => {
+                derivation_tree.collapse_no_versions();
+                let report = DefaultStringReporter::report(&derivation_tree);
+                wrap(&report)
+            }
+
+            // TODO: Custom error here
+            // ResolutionError::ErrorRetrievingDependencies {
+            //     package,
+            //     version,
+            //     source,
+            // } => Use the source, it'll provide a better error message
+            error => error.to_string(),
+        })
     }
 
     pub fn expand_tar<E>(error: E) -> Error
@@ -280,12 +329,10 @@ impl Error {
         self.pretty(&mut nocolor);
         String::from_utf8(nocolor.into_inner()).expect("Error printing produced invalid utf8")
     }
+
     pub fn pretty(&self, buf: &mut Buffer) {
         use crate::type_::Error as TypeError;
         use std::io::Write;
-
-        buf.write_all(b"\n")
-            .expect("error pretty buffer write space before");
 
         match self {
             Error::MetadataDecodeError { error } => {
@@ -486,12 +533,11 @@ This was error from the Hex client library:
                     location: *location,
                 };
                 write(buf, diagnostic, Severity::Error);
-                writeln!(
+                wrap_writeln!(
                     buf,
                     "The application module `{}` is importing the test module `{}`.
 
-Test modules are not included in production builds so test modules
-cannot import them. Perhaps move the `{}` module to the src directory.",
+Test modules are not included in production builds so test modules cannot import them. Perhaps move the `{}` module to the src directory.",
                     src_module, test_module, test_module,
                 )
                 .unwrap();
@@ -513,6 +559,14 @@ Second: {}",
                         first.to_str().expect("pretty error print PathBuf to_str"),
                         second.to_str().expect("pretty error print PathBuf to_str"),
                     ),
+                };
+                write_project(buf, diagnostic);
+            }
+
+            Error::DuplicateErlangFile { file } => {
+                let diagnostic = ProjectErrorDiagnostic {
+                    title: "Duplicate Erlang file".to_string(),
+                    label: format!("The file `{}` is defined multiple times.", file),
                 };
                 write_project(buf, diagnostic);
             }
@@ -586,13 +640,13 @@ Second: {}",
                         )
                         .unwrap();
                     } else if other_labels.is_empty() {
-                        writeln!(
+                        wrap_writeln!(
                                 buf,
                                 "You have already supplied all the labelled arguments that this constructor accepts."
                             )
                             .unwrap();
                     } else {
-                        writeln!(
+                        wrap_writeln!(
                             buf,
                             "The other labelled arguments that this constructor accepts are `{}`.",
                             other_labels.iter().join("`, `")
@@ -610,7 +664,7 @@ Second: {}",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
                         "
 This argument has been given a label but the constructor does not expect any.
@@ -629,11 +683,10 @@ Please remove the label `{}`.",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
                         "This unlablled argument has been supplied after a labelled argument.
-Once a labelled argument has been supplied all following arguments must
-also be labelled.",
+Once a labelled argument has been supplied all following arguments must also be labelled.",
                     )
                     .unwrap();
                 }
@@ -751,7 +804,7 @@ also be labelled.",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
                         "The field `{}` has already been defined. Rename this field.",
                         label
@@ -768,7 +821,7 @@ also be labelled.",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
                         "The labelled argument `{}` has already been supplied.",
                         label
@@ -1012,7 +1065,7 @@ Found type:
                     };
                     write(buf, diagnostic, Severity::Error);
 
-                    writeln!(
+                    wrap_writeln!(
                         buf,
                         "This record has {} fields and you have already assigned variables to all of them.",
                         arity
@@ -1033,7 +1086,7 @@ Found type:
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
                         "The type `{}` is not defined or imported in this module.",
                         name
@@ -1054,7 +1107,7 @@ Found type:
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(buf, "The name `{}` is not in scope here.", name).unwrap();
+                    wrap_writeln!(buf, "The name `{}` is not in scope here.", name).unwrap();
                 }
 
                 TypeError::PrivateTypeLeak { location, leaked } => {
@@ -1189,11 +1242,12 @@ Private types can only be used within the module that defines them.",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
                         "This case expression has {} subjects, but this pattern matches {}.
 Each clause must have a pattern for every subject value.",
-                        expected, given
+                        expected,
+                        given
                     )
                     .unwrap();
                 }
@@ -1207,10 +1261,9 @@ Each clause must have a pattern for every subject value.",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
-                        "Variables used in guards must be either defined in the function, or be an
-argument to the function. The variable `{}` is not defined locally.",
+                        "Variables used in guards must be either defined in the function, or be an argument to the function. The variable `{}` is not defined locally.",
                         name
                     )
                     .unwrap();
@@ -1225,10 +1278,9 @@ argument to the function. The variable `{}` is not defined locally.",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
-                        "All alternative patterns must define the same variables as the initial
-pattern. This variable `{}` has not been previously defined.",
+                        "All alternative patterns must define the same variables as the initial pattern. This variable `{}` has not been previously defined.",
                         name
                     )
                     .unwrap();
@@ -1243,12 +1295,10 @@ pattern. This variable `{}` has not been previously defined.",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
-                        buf,
-                        "All alternative patterns must define the same variables as the initial
-pattern, but the `{}` variable is missing.",
+                    buf.write_all(wrap(&format!(
+                        "All alternative patterns must define the same variables as the initial pattern, but the `{}` variable is missing.",
                         name
-                    )
+                    )).as_bytes())
                     .unwrap();
                 }
 
@@ -1264,10 +1314,13 @@ pattern, but the `{}` variable is missing.",
 
                     writeln!(
                         buf,
-                        "Variables can only be used once per pattern. This variable {} appears multiple times.
-If you used the same variable twice deliberately in order to check for equality
-please use a guard clause instead e.g. (x, y) if x == y -> ...",
-                        name
+                        "{}",
+                        wrap(&format!(
+                            "Variables can only be used once per pattern. This variable {} appears multiple times.
+If you used the same variable twice deliberately in order to check for equality please use a guard clause instead.
+e.g. (x, y) if x == y -> ...",
+                            name
+                        ))
                     )
                     .unwrap();
                 }
@@ -1283,7 +1336,7 @@ please use a guard clause instead e.g. (x, y) if x == y -> ...",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
                         "This tuple has no elements so it cannot be indexed at all!"
                     )
@@ -1303,10 +1356,9 @@ please use a guard clause instead e.g. (x, y) if x == y -> ...",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-                    writeln!(
+                    wrap_writeln!(
                         buf,
-                        "The index being accessed for this tuple is {}, but this tuple has
-{} elements so the highest valid index is {}.",
+                        "The index being accessed for this tuple is {}, but this tuple has {} elements so the highest valid index is {}.",
                         index,
                         size,
                         size - 1,
@@ -1344,11 +1396,9 @@ please use a guard clause instead e.g. (x, y) if x == y -> ...",
                         location: *location,
                     };
                     write(buf, diagnostic, Severity::Error);
-
-                    writeln!(
+                    wrap_writeln!(
                         buf,
-                        "To index into a tuple we need to know it size, but we don't know anything
-about this type yet. Please add some type annotations so we can continue.",
+                        "To index into a tuple we need to know it size, but we don't know anything about this type yet. Please add some type annotations so we can continue.",
                     )
                     .unwrap();
                 }
@@ -1363,12 +1413,9 @@ about this type yet. Please add some type annotations so we can continue.",
                     };
                     write(buf, diagnostic, Severity::Error);
 
-                    writeln!(
+                    wrap_writeln!(
                         buf,
-                        "In order to access a record field we need to know what type it is, but
-I can't tell the type here. Try adding type annotations to your function
-and try again.
-",
+                        "In order to access a record field we need to know what type it is, but I can't tell the type here. Try adding type annotations to your function and try again.",
                     )
                     .unwrap();
                 }
@@ -1417,7 +1464,7 @@ and try again.
 
                         bit_string::ErrorType::InvalidEndianness => (
                             "this option is invalid here.",
-                            vec!["Hint: signed and unsigned can only be used with int, float, utf16 and utf32 types.".to_string()],
+                            vec![wrap("Hint: signed and unsigned can only be used with int, float, utf16 and utf32 types.")],
                         ),
 
                         bit_string::ErrorType::OptionNotAllowedInValue => (
@@ -1435,15 +1482,15 @@ and try again.
                         ),
                         bit_string::ErrorType::TypeDoesNotAllowUnit { typ } => (
                             "unit cannot be specified here",
-                            vec![format!("Hint: {} segments are sized based on their value and cannot have a unit.", typ)],
+                            vec![wrap(&format!("Hint: {} segments are sized based on their value and cannot have a unit.", typ))],
                         ),
                         bit_string::ErrorType::VariableUtfSegmentInPattern => (
                             "this cannot be a variable",
-                            vec!["Hint: in patterns utf8, utf16, and utf32  must be an exact string.".to_string()],
+                            vec![wrap("Hint: in patterns utf8, utf16, and utf32  must be an exact string.")],
                         ),
                         bit_string::ErrorType::SegmentMustHaveSize => (
                             "This segment has no size",
-                            vec!["Hint: Bit string segments without a size are only allowed at the end of a bin pattern.".to_string()],
+                            vec![wrap("Hint: Bit string segments without a size are only allowed at the end of a bin pattern.")],
                         ),
                         bit_string::ErrorType::UnitMustHaveSize => (
                             "This needs an explicit size",
@@ -1513,12 +1560,11 @@ Try a different name for this module.",
                 TypeError::KeywordInModuleName { name, keyword } => {
                     let diagnostic = ProjectErrorDiagnostic {
                         title: "Invalid module name".to_string(),
-                        label: format!(
-                            "The module name `{}` contains the
-keyword `{}`, so importing it would be a syntax error.
+                        label: wrap(&format!(
+                            "The module name `{}` contains the keyword `{}`, so importing it would be a syntax error.
 Try a different name for this module.",
                             name, keyword
-                        ),
+                        )),
                     };
                     write_project(buf, diagnostic);
                 }
@@ -1566,17 +1612,16 @@ Try a different name for this module.",
                     ),
                     ParseErrorType::IncorrectName => (
                         "I'm expecting a lowercase name here.",
-                        vec![ "Hint: Variable and module names start with a lowercase letter, and can contain a-z, 0-9, or _.".to_string()]
+                        vec![ wrap("Hint: Variable and module names start with a lowercase letter, and can contain a-z, 0-9, or _.")]
                     ),
                     ParseErrorType::IncorrectUpName => (
                         "I'm expecting a type name here.",
-                        vec![ "Hint: Type names start with a uppercase letter, and can contain a-z, A-Z, or 0-9.".to_string()]
+                            vec![ wrap("Hint: Type names start with a uppercase letter, and can contain a-z, A-Z, or 0-9.")]
                     ),
                     ParseErrorType::InvalidBitStringSegment => (
                         "This is not a valid BitString segment option.",
                         vec![ "Hint: Valid BitString segment options are:".to_string(),
-                        "binary, int, float, bit_string, utf8, utf16, utf32, utf8_codepoint, utf16_codepoint".to_string(),
-                        "utf32_codepoint, signed, unsigned, big, little, native, size, unit".to_string(),
+                        wrap("binary, int, float, bit_string, utf8, utf16, utf32, utf8_codepoint, utf16_codepoint, utf32_codepoint, signed, unsigned, big, little, native, size, unit"),
                         "See: https://gleam.run/book/tour/bit-strings".to_string()]
                     ),
                     ParseErrorType::InvalidBitStringUnit => (
@@ -1680,7 +1725,7 @@ Try a different name for this module.",
             }
 
             Error::ImportCycle { modules } => {
-                crate::diagnostic::write_title(buf, "Import cycle");
+                crate::diagnostic::write_title(buf, "Import cycle", Severity::Error);
                 writeln!(
                     buf,
                     "The import statements for these modules form a cycle:\n"
@@ -1688,22 +1733,20 @@ Try a different name for this module.",
                 .unwrap();
                 import_cycle(buf, modules);
 
-                writeln!(
+                wrap_writeln!(
                     buf,
-                    "Gleam doesn't support import cycles like these, please break the
-cycle to continue."
+                    "Gleam doesn't support import cycles like these, please break the cycle to continue."
                 )
                 .unwrap();
             }
 
             Error::PackageCycle { packages } => {
-                crate::diagnostic::write_title(buf, "Dependency cycle");
+                crate::diagnostic::write_title(buf, "Dependency cycle", Severity::Error);
                 writeln!(buf, "The dependencies for these packages form a cycle:\n").unwrap();
                 import_cycle(buf, packages);
-                writeln!(
+                wrap_writeln!(
                     buf,
-                    "Gleam doesn't support dependency cycles like these, please break the
-cycle to continue."
+                    "Gleam doesn't support dependency cycles like these, please break the cycle to continue."
                 )
                 .unwrap();
             }
@@ -1724,13 +1767,11 @@ cycle to continue."
                     location: *location,
                 };
                 write(buf, diagnostic, Severity::Error);
-                writeln!(
-                    buf,
-                    "The module `{}` is trying to import the module `{}`,
-but it cannot be found.",
+                let msg = wrap(&format!(
+                    "The module `{}` is trying to import the module `{}`, but it cannot be found.",
                     module, import
-                )
-                .expect("error pretty buffer write");
+                ));
+                writeln!(buf, "{}", msg).expect("error pretty buffer write");
             }
 
             Error::StandardIo { action, err } => {
@@ -1777,9 +1818,10 @@ but it cannot be found.",
                 };
                 let diagnostic = ProjectErrorDiagnostic {
                     title: format!("{} {} generated.", count, word_warning),
-                    label: "Your project was compiled with the `--warnings-as-errors` flag.
-Fix the warnings and try again!"
-                        .to_string(),
+                    label: wrap(
+                        "Your project was compiled with the `--warnings-as-errors` flag.
+Fix the warnings and try again!",
+                    ),
                 };
                 write_project(buf, diagnostic);
             }
@@ -1854,19 +1896,48 @@ Fix the warnings and try again!"
             Error::DependencyResolutionFailed(error) => {
                 let diagnostic = ProjectErrorDiagnostic {
                     title: "Dependency resolution failed".to_string(),
-                    label: "An error occured while determining what dependency packages and
-versions should be downloaded."
-                        .to_string(),
+                    label: wrap("An error occured while determining what dependency packages and versions should be downloaded."
+                        ),
                 };
                 write_project(buf, diagnostic);
-                writeln!(
-                    buf,
-                    "\nThe error from the version resolver library was:
+                writeln!(buf, "\n{}", error).unwrap();
+            }
 
-    {}",
-                    error
-                )
-                .unwrap();
+            Error::DuplicateDependency(name) => {
+                let label = &format!("The package {name} is specified in both the dependencies and dev-dependencies sections of the gleam.toml file.", name=name);
+                let diagnostic = ProjectErrorDiagnostic {
+                    title: "Dependency duplicated".to_string(),
+                    label: wrap(label),
+                };
+                write_project(buf, diagnostic);
+            }
+
+            Error::MissingHexPublishFields {
+                description_missing,
+                licence_missing,
+            } => {
+                let label =
+                    "Licence information and package description are required to publish a package to Hex.";
+                let diagnostic = ProjectErrorDiagnostic {
+                    title: "Missing required package fields".to_string(),
+                    label: wrap(label),
+                };
+                write_project(buf, diagnostic);
+                let msg = if *description_missing && *licence_missing {
+                    r#"Add the licences and description fields to your gleam.toml file.
+                
+description = "A Gleam library"
+licences = ["Apache-2.0"]"#
+                } else if *description_missing {
+                    r#"Add the description field to your gleam.toml file.
+                
+description = "A Gleam library""#
+                } else {
+                    r#"Add the licences field to your gleam.toml file.
+                
+licences = ["Apache-2.0"]"#
+                };
+                wrap_writeln!(buf, "{}", &msg).unwrap();
             }
         }
     }
@@ -1960,9 +2031,7 @@ fn hint_numeric_message(alt: &str, type_: &str) -> String {
 }
 
 fn hint_string_message() -> String {
-    "Strings can be joined using the `append` or `concat` functions from
-the `gleam/string` module"
-        .to_string()
+    wrap("Strings can be joined using the `append` or `concat` functions from the `gleam/string` module")
 }
 
 #[derive(Debug, PartialEq)]
@@ -1971,4 +2040,8 @@ pub struct Unformatted {
     pub destination: PathBuf,
     pub input: String,
     pub output: String,
+}
+
+pub fn wrap(text: &str) -> String {
+    textwrap::fill(text, std::cmp::min(75, textwrap::termwidth()))
 }

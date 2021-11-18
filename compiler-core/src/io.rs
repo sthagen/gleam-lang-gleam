@@ -6,6 +6,7 @@ use debug_ignore::DebugIgnore;
 use flate2::read::GzDecoder;
 use std::{
     fmt::Debug,
+    fs::ReadDir,
     io,
     path::{Path, PathBuf},
 };
@@ -54,7 +55,9 @@ pub struct OutputFile {
 /// Typically we use an implementation that reads from the file system,
 /// but in tests and in other places other implementations may be used.
 pub trait FileSystemReader {
-    fn gleam_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>>;
+    fn gleam_source_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>>;
+    fn gleam_metadata_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>>;
+    fn read_dir(&self, path: &Path) -> Result<ReadDir>;
     fn read(&self, path: &Path) -> Result<String, Error>;
     fn reader(&self, path: &Path) -> Result<WrappedReader, Error>;
     fn is_file(&self, path: &Path) -> bool;
@@ -69,6 +72,7 @@ pub trait FileSystemIO: FileSystemWriter + FileSystemReader {}
 pub trait FileSystemWriter {
     fn writer(&self, path: &Path) -> Result<WrappedWriter, Error>;
     fn delete(&self, path: &Path) -> Result<(), Error>;
+    fn copy(&self, from: &Path, to: &Path) -> Result<(), Error>;
 }
 
 #[derive(Debug)]
@@ -100,8 +104,8 @@ impl std::io::Read for WrappedReader {
 #[derive(Debug)]
 /// A wrapper around a Write implementing object that has Gleam's error handling.
 pub struct WrappedWriter {
-    path: PathBuf,
-    inner: DebugIgnore<Box<dyn std::io::Write>>,
+    pub path: PathBuf,
+    pub inner: DebugIgnore<Box<dyn std::io::Write>>,
 }
 
 impl Writer for WrappedWriter {}
@@ -194,10 +198,18 @@ pub mod test {
         fn delete(&self, _path: &Path) -> Result<(), Error> {
             panic!("FilesChannel does not support deletion")
         }
+
+        fn copy(&self, _from: &Path, _to: &Path) -> Result<(), Error> {
+            panic!("FilesChannel does not support copy")
+        }
     }
 
     impl FileSystemReader for FilesChannel {
-        fn gleam_files(&self, _dir: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
+        fn gleam_source_files(&self, _dir: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
+            unimplemented!()
+        }
+
+        fn gleam_metadata_files(&self, _dir: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
             unimplemented!()
         }
 
@@ -214,6 +226,10 @@ pub mod test {
         }
 
         fn is_directory(&self, _path: &Path) -> bool {
+            unimplemented!()
+        }
+
+        fn read_dir(&self, _path: &Path) -> Result<ReadDir> {
             unimplemented!()
         }
     }
@@ -289,7 +305,7 @@ pub trait TarUnpacker {
         &self,
         archive: &'a mut Archive<WrappedReader>,
     ) -> Result<tar::Entries<'a, WrappedReader>> {
-        tracing::trace!("iterating through tar archive");
+        tracing::debug!("iterating through tar archive");
         self.io_result_entries(archive)
             .map_err(|e| Error::ExpandTar {
                 error: e.to_string(),
@@ -307,7 +323,7 @@ pub trait TarUnpacker {
         path: &Path,
         archive: Archive<GzDecoder<Entry<'_, WrappedReader>>>,
     ) -> Result<()> {
-        tracing::trace!(path = ?path, "unpacking tar archive");
+        tracing::debug!(path = ?path, "unpacking tar archive");
         self.io_result_unpack(path, archive)
             .map_err(|e| Error::FileIo {
                 action: FileIoAction::WriteTo,

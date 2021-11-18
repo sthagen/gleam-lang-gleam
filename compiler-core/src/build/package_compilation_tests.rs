@@ -24,6 +24,7 @@ macro_rules! assert_erlang_compile {
             name: "the_package".to_string(),
             src_path: PathBuf::from("_build/default/lib/the_package/src"),
             out_path: PathBuf::from("_build/default/lib/the_package/src"),
+            write_metadata: false,
             test_path: None,
         };
         let (file_writer, file_receiver) = FilesChannel::new();
@@ -45,6 +46,7 @@ macro_rules! assert_javascript_compile {
     ($sources:expr, $expected_output:expr  $(,)?) => {
         let mut modules = HashMap::new();
         let options = Options {
+            write_metadata: false,
             target: Target::JavaScript,
             name: "the_package".to_string(),
             src_path: PathBuf::from("_build/default/lib/the_package/src"),
@@ -70,6 +72,7 @@ macro_rules! assert_no_warnings {
     ($sources:expr $(,)?) => {
         let mut modules = HashMap::new();
         let options = Options {
+            write_metadata: false,
             target: Target::Erlang,
             name: "the_package".to_string(),
             src_path: PathBuf::from("_build/default/lib/the_package/src"),
@@ -1781,6 +1784,7 @@ fn config_compilation_test() {
             let mut modules = HashMap::new();
             let (file_writer, file_receiver) = FilesChannel::new();
             let options = package_compiler::Options {
+                write_metadata: false,
                 target: Target::Erlang,
                 name: config.name.clone(),
                 src_path: PathBuf::from("src"),
@@ -1804,14 +1808,39 @@ fn config_compilation_test() {
     fn make_config() -> PackageConfig {
         PackageConfig {
             dependencies: HashMap::new(),
+            dev_dependencies: HashMap::new(),
             description: "".to_string(),
             version: Version::parse("1.0.0").unwrap(),
             name: "the_package".to_string(),
             repository: Repository::None,
             docs: Default::default(),
-            otp_start_module: None,
+            licences: Default::default(),
+            erlang: Default::default(),
+            links: vec![],
         }
     }
+
+    assert_config_compile!(
+        {
+            let mut config = make_config();
+            config.erlang.otp_start_module = Some("mymod".to_string());
+            config
+        },
+        vec![],
+        vec![OutputFile {
+            text: r#"{application, the_package, [
+    {mod, 'mymod'},
+    {vsn, "1.0.0"},
+    {applications, []},
+    {description, ""},
+    {modules, []},
+    {registered, []},
+]}.
+"#
+            .to_string(),
+            path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
+        }]
+    );
 
     assert_config_compile!(
         make_config(),

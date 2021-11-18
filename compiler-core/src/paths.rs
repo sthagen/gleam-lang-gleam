@@ -2,8 +2,27 @@ use std::path::PathBuf;
 
 use crate::build::{Mode, Target};
 
+pub fn root_config() -> PathBuf {
+    PathBuf::from("gleam.toml")
+}
+
+pub fn readme() -> PathBuf {
+    PathBuf::from("README.md")
+}
 pub fn build() -> PathBuf {
-    PathBuf::from(".build")
+    PathBuf::from("build")
+}
+
+pub fn manifest() -> PathBuf {
+    PathBuf::from("manifest.toml")
+}
+
+pub fn src() -> PathBuf {
+    PathBuf::from("src")
+}
+
+pub fn test() -> PathBuf {
+    PathBuf::from("test")
 }
 
 pub fn package_cache_tarball(package_name: &str, version: &str) -> PathBuf {
@@ -14,16 +33,24 @@ pub fn build_deps_package_src(package: &str) -> PathBuf {
     build_deps_package(package).join("src")
 }
 
+pub fn build_deps_package_config(package: &str) -> PathBuf {
+    build_deps_package(package).join("gleam.toml")
+}
+
 pub fn build_deps_package_test(package: &str) -> PathBuf {
     build_deps_package(package).join("test")
 }
 
-pub fn build_deps() -> PathBuf {
-    build().join("deps")
+pub fn packages() -> PathBuf {
+    build().join("packages")
+}
+
+pub fn packages_toml() -> PathBuf {
+    packages().join("packages.toml")
 }
 
 pub fn build_deps_package(package: &str) -> PathBuf {
-    build_deps().join(package)
+    packages().join(package)
 }
 
 pub fn build_scripts() -> PathBuf {
@@ -45,6 +72,13 @@ pub fn default_gleam_cache() -> PathBuf {
 
 pub fn build_packages(mode: Mode, target: Target) -> PathBuf {
     build().join(mode.to_string()).join(target.to_string())
+}
+
+pub fn build_docs(package: &str) -> PathBuf {
+    build()
+        .join(Mode::Dev.to_string())
+        .join("docs")
+        .join(package)
 }
 
 pub fn build_package(mode: Mode, target: Target, package: &str) -> PathBuf {

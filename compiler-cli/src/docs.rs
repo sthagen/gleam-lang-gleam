@@ -1,15 +1,16 @@
-use crate::{cli, http::HttpClient, project};
+use std::time::Instant;
+
+use crate::{cli, hex::ApiKeyCommand, http::HttpClient};
 use gleam_core::{
+    build::Package,
     config::{DocsPage, PackageConfig},
     error::Error,
-    io::{HttpClient as _, OutputFile},
-    project::ModuleOrigin,
+    hex,
+    io::HttpClient as _,
+    paths, Result,
 };
-use hexpm::version::Version;
-use std::path::{Path, PathBuf};
 
 static TOKEN_NAME: &str = concat!(env!("CARGO_PKG_NAME"), " (", env!("CARGO_PKG_VERSION"), ")");
-static DOCS_DIR_NAME: &str = "docs";
 
 pub fn remove(package: String, version: String) -> Result<(), Error> {
     let config = hexpm::Config::new();
@@ -23,9 +24,9 @@ pub fn remove(package: String, version: String) -> Result<(), Error> {
     let password = cli::ask_password("https://hex.pm password")?;
 
     // Authenticate with API
-    let request = hexpm::create_api_token_request(&username, &password, TOKEN_NAME, &config);
+    let request = hexpm::create_api_key_request(&username, &password, TOKEN_NAME, &config);
     let response = runtime.block_on(http.send(request))?;
-    let token = hexpm::create_api_token_response(response).map_err(Error::hex)?;
+    let token = hexpm::create_api_key_response(response).map_err(Error::hex)?;
 
     // Remove docs from API
     let request =
@@ -41,153 +42,79 @@ pub fn remove(package: String, version: String) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn build(project_root: String, version: String, to: Option<String>) -> Result<(), Error> {
-    let project_root = PathBuf::from(&project_root).canonicalize().map_err(|_| {
-        Error::UnableToFindProjectRoot {
-            path: project_root.clone(),
-        }
-    })?;
-
-    let output_dir = to.map(PathBuf::from).unwrap_or_else(|| {
-        project_root
-            .join(project::OUTPUT_DIR_NAME)
-            .join(DOCS_DIR_NAME)
-    });
-
-    // Build
-    let (config, outputs) = build_project(&project_root, version, &output_dir)?;
+pub fn build() -> Result<()> {
+    let config = crate::config::root_config()?;
+    let out = paths::build_docs(&config.name);
+    let mut compiled = crate::build::main()?;
+    let outputs = build_documentation(&config, &mut compiled)?;
 
     // Write
-    crate::fs::delete_dir(&output_dir)?;
-    crate::fs::write_outputs(&outputs)?;
+    crate::fs::delete_dir(&out)?;
+    crate::fs::write_outputs_under(&outputs, &out)?;
 
     println!(
-        "\nThe docs for {package} have been rendered to {output_dir}",
+        "\nThe documentation for {package} has been rendered to \n./{out}/index.html",
         package = config.name,
-        output_dir = output_dir.to_string_lossy()
-    );
-    // We're done!
-    Ok(())
-}
-
-pub fn publish(project_root: String, version: String) -> Result<(), Error> {
-    let project_root = PathBuf::from(&project_root).canonicalize().map_err(|_| {
-        Error::UnableToFindProjectRoot {
-            path: project_root.clone(),
-        }
-    })?;
-
-    let output_dir = PathBuf::new();
-    let http = HttpClient::new();
-    let hex_config = hexpm::Config::new();
-
-    // Build
-    let (config, outputs) = build_project(&project_root, version.clone(), &output_dir)?;
-
-    // Create gzipped tarball of docs
-    let archive = crate::fs::create_tar_archive(outputs)?;
-
-    // Start event loop so we can run async functions to call the Hex API
-    let runtime = tokio::runtime::Runtime::new().expect("Unable to start Tokio async runtime");
-
-    // Get login creds from user
-    let username = cli::ask("https://hex.pm username")?;
-    let password = cli::ask_password("https://hex.pm password")?;
-
-    // Authenticate with API
-    let request = hexpm::create_api_token_request(&username, &password, TOKEN_NAME, &hex_config);
-    let response = runtime.block_on(http.send(request))?;
-    let token = hexpm::create_api_token_response(response).map_err(Error::hex)?;
-
-    // Upload to hex
-    let request = hexpm::publish_docs_request(&config.name, &version, archive, &token, &hex_config)
-        .map_err(Error::hex)?;
-    let response = runtime.block_on(http.send(request))?;
-    hexpm::publish_docs_response(response).map_err(Error::hex)?;
-
-    println!(
-        "
-The docs for {package} have been published to HexDocs:
-
-    https://hexdocs.pm/{package}",
-        package = config.name
+        out = out.to_string_lossy()
     );
 
     // We're done!
     Ok(())
 }
 
-pub fn build_project(
-    project_root: impl AsRef<Path>,
-    version: String,
-    output_dir: &Path,
-) -> Result<(PackageConfig, Vec<OutputFile>), Error> {
-    // Read and type check project
-    let (mut config, analysed) = project::read_and_analyse(&project_root)?;
-    config.version = Version::parse(&version).map_err(|e| Error::InvalidVersionFormat {
-        input: version.to_string(),
-        error: e.to_string(),
-    })?;
-    check_app_file_version_matches(&project_root, &config)?;
-
-    // Attach documentation to Src modules
-    let analysed: Vec<_> = analysed
-        .into_iter()
-        .filter(|a| a.origin == ModuleOrigin::Src)
-        .map(|mut a| {
-            a.attach_doc_and_module_comments();
-            a
-        })
-        .collect();
-
-    // Initialize pages with the README
+pub(crate) fn build_documentation(
+    config: &PackageConfig,
+    compiled: &mut Package,
+) -> Result<Vec<gleam_core::io::OutputFile>, Error> {
+    compiled.attach_doc_and_module_comments();
+    cli::print_generating_documentation();
     let mut pages = vec![DocsPage {
         title: "README".to_string(),
         path: "index.html".to_string(),
-        source: project_root.as_ref().join("README.md"),
+        source: paths::readme(), // TODO: support non markdown READMEs. Or a default if there is none.
     }];
-
-    // Add any user-supplied pages
     pages.extend(config.docs.pages.iter().cloned());
-
-    // Generate HTML
-    let outputs =
-        gleam_core::docs::generate_html(project_root, &config, &analysed, &pages, output_dir);
-    Ok((config, outputs))
+    let outputs = gleam_core::docs::generate_html(config, compiled.modules.as_slice(), &pages);
+    Ok(outputs)
 }
 
-fn check_app_file_version_matches(
-    root: impl AsRef<Path>,
-    project_config: &PackageConfig,
-) -> Result<(), Error> {
-    let mut app_src_path = root.as_ref().to_path_buf();
-    app_src_path.push("src");
-    app_src_path.push(format!("{}.app.src", &project_config.name));
+pub struct PublishCommand {
+    config: PackageConfig,
+    archive: Vec<u8>,
+}
 
-    let re =
-        regex::Regex::new("\\{ *vsn *, *\"([^\"]*)\" *\\}").expect("Could not compile vsn regex");
+impl PublishCommand {
+    pub fn new() -> Result<Self> {
+        let config = crate::config::root_config()?;
+        let mut compiled = crate::build::main()?;
+        let outputs = build_documentation(&config, &mut compiled)?;
+        let archive = crate::fs::create_tar_archive(outputs)?;
+        Ok(Self { config, archive })
+    }
 
-    std::fs::read_to_string(&app_src_path)
-        // Remove all new lines so we can regex easily across the content
-        .map(|contents| contents.replace("\n", ""))
-        .ok()
-        .and_then(|contents| {
-            // Extract the vsn if we can
-            re.captures(&contents)
-                .and_then(|captures| captures.get(1))
-                .map(|capture| capture.as_str().to_string())
-        })
-        .map(|version| {
-            if version == project_config.version.to_string() {
-                Ok(())
-            } else {
-                // Error if we've found the version and it doesn't match
-                Err(Error::VersionDoesNotMatch {
-                    toml_ver: project_config.version.to_string(),
-                    app_ver: version,
-                })
-            }
-        })
-        // Don't mind if we never found the version
-        .unwrap_or(Ok(()))
+    pub fn publish() -> Result<()> {
+        Self::new()?.run()
+    }
+}
+
+impl ApiKeyCommand for PublishCommand {
+    fn with_api_key(
+        &mut self,
+        handle: &tokio::runtime::Handle,
+        hex_config: &hexpm::Config,
+        api_key: &str,
+    ) -> Result<()> {
+        let start = Instant::now();
+        cli::print_publishing_documentation();
+        handle.block_on(hex::publish_documentation(
+            &self.config.name,
+            &self.config.version,
+            std::mem::take(&mut self.archive),
+            api_key,
+            hex_config,
+            &HttpClient::new(),
+        ))?;
+        cli::print_published(start.elapsed());
+        Ok(())
+    }
 }

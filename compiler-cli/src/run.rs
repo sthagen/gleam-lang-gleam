@@ -11,7 +11,7 @@ pub enum Which {
     Test,
 }
 
-pub fn command(which: Which) -> Result<(), Error> {
+pub fn command(arguments: &[String], which: Which) -> Result<(), Error> {
     let config = crate::config::root_config()?;
 
     // Determine which module to run
@@ -20,8 +20,8 @@ pub fn command(which: Which) -> Result<(), Error> {
         Which::Test => format!("{}_test", &config.name),
     };
 
-    // Build project
-    let _ = super::new_build_main()?;
+    // Build project so we have bytecode to run
+    let _ = crate::build::main()?;
 
     // Don't exit on ctrl+c as it is used by child erlang shell
     ctrlc::set_handler(move || {}).expect("Error setting Ctrl-C handler");
@@ -43,12 +43,15 @@ pub fn command(which: Which) -> Result<(), Error> {
     let _ = command.arg("-noshell");
 
     // Tell the BEAM that any following argument are for the program
-    let _ = command.arg("-extra"); // TODO: Pass any user specified command line flags
+    let _ = command.arg("-extra");
+    for argument in arguments {
+        let _ = command.arg(argument);
+    }
 
     crate::cli::print_running(&format!("{}.main", module));
 
     // Run the shell
-    tracing::trace!("Running OS process {:?}", command);
+    tracing::info!("Running OS process {:?}", command);
     let status = command.status().map_err(|e| Error::ShellCommand {
         command: "erl".to_string(),
         err: Some(e.kind()),

@@ -6,6 +6,7 @@ use crate::{
     error,
     io::{FileSystemIO, FileSystemReader, FileSystemWriter},
     metadata::ModuleEncoder,
+    parse::extra::ModuleExtra,
     type_, Error, Result, Warning,
 };
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ pub struct Options {
     pub src_path: PathBuf,
     pub test_path: Option<PathBuf>,
     pub out_path: PathBuf,
+    pub write_metadata: bool,
 }
 
 impl Options {
@@ -28,7 +30,6 @@ impl Options {
         let mut compiler = PackageCompiler {
             options: self,
             sources: vec![],
-            write_metadata: false,
             io,
         };
         compiler.read_source_files()?;
@@ -41,7 +42,6 @@ pub struct PackageCompiler<IO> {
     pub options: Options,
     pub sources: Vec<Source>,
     pub io: IO,
-    pub write_metadata: bool,
 }
 
 // TODO: ensure this is not a duplicate module
@@ -57,7 +57,6 @@ where
             io,
             options,
             sources: vec![],
-            write_metadata: false,
         }
     }
 
@@ -67,7 +66,7 @@ where
         existing_modules: &mut HashMap<String, type_::Module>,
         already_defined_modules: &mut HashMap<String, PathBuf>,
     ) -> Result<Package, Error> {
-        let span = tracing::info_span!("compile", package = self.options.name.as_str());
+        let span = tracing::info_span!("compile", package = %self.options.name.as_str());
         let _enter = span.enter();
 
         tracing::info!("Parsing source code");
@@ -99,7 +98,6 @@ where
         tracing::info!("Performing code generation");
         self.perform_codegen(&modules)?;
 
-        tracing::info!("Writing package metadata to disc");
         self.encode_and_write_metadata(&modules)?;
 
         Ok(Package {
@@ -109,12 +107,13 @@ where
     }
 
     fn encode_and_write_metadata(&mut self, modules: &[Module]) -> Result<()> {
-        if !self.write_metadata {
+        if !self.options.write_metadata {
+            tracing::info!("Package metadata writing disabled");
             return Ok(());
         }
+        tracing::info!("Writing package metadata to disc");
         for module in modules {
             let name = format!("{}.gleam_module", &module.name.replace('/', "@"));
-            tracing::info!(name = %name, "Writing module metadata");
             let path = self.options.out_path.join(name);
             ModuleEncoder::new(&module.ast.type_info).write(self.io.writer(&path)?)?;
         }
@@ -122,12 +121,12 @@ where
     }
 
     pub fn read_source_files(&mut self) -> Result<()> {
-        let span = tracing::info_span!("load", package = self.options.name.as_str());
+        let span = tracing::info_span!("load", package = %self.options.name.as_str());
         let _enter = span.enter();
         tracing::info!("Reading source files");
 
         // Src
-        for path in self.io.gleam_files(&self.options.src_path) {
+        for path in self.io.gleam_source_files(&self.options.src_path) {
             let name = module_name(&self.options.src_path, &path);
             let code = self.io.read(&path)?;
             self.sources.push(Source {
@@ -140,7 +139,7 @@ where
 
         // Test
         if let Some(test_path) = &self.options.test_path {
-            for path in self.io.gleam_files(test_path) {
+            for path in self.io.gleam_source_files(test_path) {
                 let name = module_name(test_path, &path);
                 let code = self.io.read(&path)?;
                 self.sources.push(Source {
@@ -163,7 +162,7 @@ where
 
     /// Set whether to write metadata files
     pub fn write_metadata(mut self, write_metadata: bool) -> Self {
-        self.write_metadata = write_metadata;
+        self.options.write_metadata = write_metadata;
         self
     }
 }
@@ -194,11 +193,12 @@ fn type_check(
             path,
             origin,
             package,
+            extra,
         } = parsed_modules
             .remove(&name)
             .expect("Getting parsed module for name");
 
-        tracing::trace!(module = ?name, "Type checking");
+        tracing::debug!(module = ?name, "Type checking");
         let mut type_warnings = Vec::new();
         let ast = type_::infer_module(
             target,
@@ -229,6 +229,7 @@ fn type_check(
         // used for code generation
         modules.push(Module {
             origin,
+            extra,
             name,
             code,
             ast,
@@ -269,7 +270,7 @@ fn parse_sources(
         origin,
     } in sources
     {
-        let (mut ast, _) = crate::parse::parse_module(&code).map_err(|error| Error::Parse {
+        let (mut ast, extra) = crate::parse::parse_module(&code).map_err(|error| Error::Parse {
             path: path.clone(),
             src: code.clone(),
             error,
@@ -281,6 +282,7 @@ fn parse_sources(
         let module = Parsed {
             package: package_name.to_string(),
             origin,
+            extra,
             path,
             name,
             code,
@@ -342,4 +344,5 @@ struct Parsed {
     origin: Origin,
     package: String,
     ast: UntypedModule,
+    extra: ModuleExtra,
 }

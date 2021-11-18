@@ -2,7 +2,7 @@
 name = "gleam-core"
 version = "0.18.0-dev"
 authors = ["Louis Pilfold <louis@lpil.uk>"]
-edition = "2018"
+edition = "2021"
 license-file = "LICENCE"
 
 [dependencies]
@@ -10,7 +10,7 @@ license-file = "LICENCE"
 im = "15.0.0"
 # Error message and warning formatting
 codespan-reporting = "0.11"
-termcolor = "1.1.2" 
+termcolor = "1.1.2"
 # Logging
 tracing = "0.1.22"
 # Extra iter methods
@@ -57,6 +57,8 @@ futures = "0.3.17"
 tar = "0.4.30"
 # gzip compression
 flate2 = "1.0.19"
+# Helper for wrapping text onto lines based upon width
+textwrap = { version = "0.14", features = ["terminal_size"] }
 
 [build-dependencies]
 # Data (de)serialisation

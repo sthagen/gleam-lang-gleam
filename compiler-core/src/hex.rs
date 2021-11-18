@@ -1,11 +1,12 @@
 use debug_ignore::DebugIgnore;
 use flate2::read::GzDecoder;
 use futures::future;
-use hexpm::version::{Manifest, ManifestPackage, Version};
-use std::path::PathBuf;
+use hexpm::version::{PackageVersions, Version};
+use std::{collections::HashMap, path::Path};
 use tar::Archive;
 
 use crate::{
+    build::Mode,
     config::PackageConfig,
     io::{FileSystemIO, HttpClient, TarUnpacker},
     paths, Error, Result,
@@ -24,19 +25,116 @@ J1i2xWFndWa6nfFnRxZmCStCOZWYYPlaxr+FZceFbpMwzTNs4g3d4tLNUcbKAIH4
 
 pub fn resolve_versions(
     package_fetcher: Box<dyn hexpm::version::PackageFetcher>,
+    mode: Mode,
     config: &PackageConfig,
-) -> Result<Manifest> {
-    let specified_dependencies = config
-        .dependencies
-        .iter()
-        .map(|(a, b)| (a.clone(), b.clone()));
+    locked: &HashMap<String, Version>,
+) -> Result<PackageVersions> {
+    let specified_dependencies = config.dependencies_for(mode)?.into_iter();
     hexpm::version::resolve_versions(
         package_fetcher,
         config.name.clone(),
-        config.version.clone(),
         specified_dependencies,
+        locked,
     )
     .map_err(Error::dependency_resolution_failed)
+}
+
+fn key_name(hostname: &str) -> String {
+    format!("gleam-{}", hostname)
+}
+
+pub async fn publish_package<Http: HttpClient>(
+    release_tarball: Vec<u8>,
+    api_key: &str,
+    config: &hexpm::Config,
+    http: &Http,
+) -> Result<()> {
+    tracing::info!("Creating API key with Hex");
+    let request = hexpm::publish_package_request(release_tarball, api_key, config);
+    let response = http.send(request).await?;
+    hexpm::publish_package_response(response).map_err(Error::hex)
+}
+
+#[derive(Debug, strum::EnumString, strum::EnumVariantNames, Clone, Copy, PartialEq)]
+#[strum(serialize_all = "lowercase")]
+pub enum RetirementReason {
+    Other,
+    Invalid,
+    Security,
+    Deprecated,
+    Renamed,
+}
+
+impl RetirementReason {
+    pub fn to_library_enum(&self) -> hexpm::RetirementReason {
+        match self {
+            RetirementReason::Other => hexpm::RetirementReason::Other,
+            RetirementReason::Invalid => hexpm::RetirementReason::Invalid,
+            RetirementReason::Security => hexpm::RetirementReason::Security,
+            RetirementReason::Deprecated => hexpm::RetirementReason::Deprecated,
+            RetirementReason::Renamed => hexpm::RetirementReason::Renamed,
+        }
+    }
+}
+
+pub async fn retire_release<Http: HttpClient>(
+    package: &str,
+    version: &str,
+    reason: RetirementReason,
+    message: Option<&str>,
+    api_key: &str,
+    config: &hexpm::Config,
+    http: &Http,
+) -> Result<()> {
+    tracing::info!(package=%package, version=%version, "retiring_hex_release");
+    let request = hexpm::retire_release_request(
+        package,
+        version,
+        reason.to_library_enum(),
+        message,
+        api_key,
+        config,
+    );
+    let response = http.send(request).await?;
+    hexpm::retire_release_response(response).map_err(Error::hex)
+}
+
+pub async fn unretire_release<Http: HttpClient>(
+    package: &str,
+    version: &str,
+    api_key: &str,
+    config: &hexpm::Config,
+    http: &Http,
+) -> Result<()> {
+    tracing::info!(package=%package, version=%version, "retiring_hex_release");
+    let request = hexpm::unretire_release_request(package, version, api_key, config);
+    let response = http.send(request).await?;
+    hexpm::unretire_release_response(response).map_err(Error::hex)
+}
+
+pub async fn create_api_key<Http: HttpClient>(
+    hostname: &str,
+    username: &str,
+    password: &str,
+    config: &hexpm::Config,
+    http: &Http,
+) -> Result<String> {
+    tracing::info!("Creating API key with Hex");
+    let request = hexpm::create_api_key_request(username, password, &key_name(hostname), config);
+    let response = http.send(request).await?;
+    hexpm::create_api_key_response(response).map_err(Error::hex)
+}
+
+pub async fn remove_api_key<Http: HttpClient>(
+    hostname: &str,
+    config: &hexpm::Config,
+    auth_key: &str,
+    http: &Http,
+) -> Result<()> {
+    tracing::info!("Deleting API key from Hex");
+    let request = hexpm::remove_api_key_request(&key_name(hostname), auth_key, config);
+    let response = http.send(request).await?;
+    hexpm::remove_api_key_response(response).map_err(Error::hex)
 }
 
 #[derive(Debug)]
@@ -123,23 +221,27 @@ impl Downloader {
         Ok(true)
     }
 
-    pub async fn ensure_package_in_target(&self, name: String, version: Version) -> Result<bool> {
+    pub async fn ensure_package_in_build_directory(
+        &self,
+        name: String,
+        version: Version,
+    ) -> Result<bool> {
         let _ = self.ensure_package_downloaded(&name, &version).await?;
         self.extract_package_from_cache(&name, &version)
     }
 
     // It would be really nice if this was async but the library is sync
     pub fn extract_package_from_cache(&self, name: &str, version: &Version) -> Result<bool> {
-        let contents_path = PathBuf::from("contents.tar.gz");
+        let contents_path = Path::new("contents.tar.gz");
         let destination = paths::build_deps_package(name);
 
         // If the directory already exists then there's nothing for us to do
         if self.fs.is_directory(&destination) {
-            tracing::info!(package = name, "package already in target");
+            tracing::info!(package = name, "Package already in build directory");
             return Ok(false);
         }
 
-        tracing::info!(package = name, "writing package to target");
+        tracing::info!(package = name, "Writing package to target");
         let tarball = paths::package_cache_tarball(name, &version.to_string());
         let reader = self.fs.reader(&tarball)?;
         let mut archive = Archive::new(reader);
@@ -172,30 +274,40 @@ impl Downloader {
         })
     }
 
-    pub async fn download_manifest_packages(
+    pub async fn download_hex_packages(
         &self,
-        manifest: &Manifest,
+        versions: &[(String, Version)],
         project_name: &str,
-    ) -> Result<usize> {
-        let futures = manifest
-            .packages
+    ) -> Result<()> {
+        let futures = versions
             .iter()
-            .flat_map(|package| match package {
-                ManifestPackage::Hex { name, .. } if name == project_name => None,
-                ManifestPackage::Hex { name, version } => Some((name.to_string(), version.clone())),
-            })
-            .map(|(name, version)| self.ensure_package_in_target(name, version));
+            .filter(|(name, _)| project_name != name)
+            .map(|(name, version)| {
+                self.ensure_package_in_build_directory(name.clone(), version.clone())
+            });
 
         // Run the futures to download the packages concurrently
         let results = future::join_all(futures).await;
 
         // Count the number of packages downloaded while checking for errors
-        let mut count = 0;
         for result in results {
-            if result? {
-                count += 1;
-            }
+            let _ = result?;
         }
-        Ok(count)
+        Ok(())
     }
+}
+
+pub async fn publish_documentation<Http: HttpClient>(
+    name: &str,
+    version: &Version,
+    archive: Vec<u8>,
+    api_key: &str,
+    config: &hexpm::Config,
+    http: &Http,
+) -> Result<()> {
+    tracing::info!("publishing_documentation");
+    let request = hexpm::publish_docs_request(name, &version.to_string(), archive, api_key, config)
+        .map_err(Error::hex)?;
+    let response = http.send(request).await?;
+    hexpm::publish_docs_response(response).map_err(Error::hex)
 }

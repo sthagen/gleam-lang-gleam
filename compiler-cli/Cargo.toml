@@ -2,7 +2,7 @@
 name = "gleam"
 version = "0.18.0-dev"
 authors = ["Louis Pilfold <louis@lpil.uk>"]
-edition = "2018"
+edition = "2021"
 license-file = "LICENCE"
 
 [dependencies]
@@ -60,6 +60,12 @@ http = "0.2.5"
 futures = "0.3.17"
 # Little helper to omit fields that cannot be debug printed
 debug-ignore = "1.0.1"
+# Checksums
+sha2 = "0.9"
+# Getting hostname
+hostname = "0.3"
+# base encoding
+base16 = "0.2"
 
 [dev-dependencies]
 # Test assertion errors with diffs

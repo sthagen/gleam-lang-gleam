@@ -1,27 +1,59 @@
+use crate::{Error, Result};
 use hexpm::version::Version;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::build::Mode;
+
 pub fn default_version() -> Version {
     Version::parse("0.1.0").expect("default version")
 }
+
+pub type Dependencies = HashMap<String, hexpm::version::Range>;
 
 #[derive(Deserialize, Debug, PartialEq)]
 pub struct PackageConfig {
     pub name: String,
     #[serde(default = "default_version")]
     pub version: Version,
+    #[serde(default, alias = "licenses")]
+    pub licences: Vec<String>,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub docs: Docs,
     #[serde(default)]
-    pub dependencies: HashMap<String, hexpm::version::Range>,
-    #[serde(default)]
-    pub otp_start_module: Option<String>,
+    pub dependencies: Dependencies,
+    #[serde(default, rename = "dev-dependencies")]
+    pub dev_dependencies: Dependencies,
     #[serde(default)]
     pub repository: Repository,
+    #[serde(default)]
+    pub links: Vec<Link>,
+    #[serde(default)]
+    pub erlang: ErlangConfig,
+}
+
+impl PackageConfig {
+    pub fn dependencies_for(&self, mode: Mode) -> Result<Dependencies> {
+        match mode {
+            Mode::Dev => self.all_dependencies(),
+            Mode::Prod => Ok(self.dependencies.clone()),
+        }
+    }
+
+    pub fn all_dependencies(&self) -> Result<Dependencies> {
+        let mut deps =
+            HashMap::with_capacity(self.dependencies.len() + self.dev_dependencies.len());
+        for (name, requirement) in self.dependencies.iter().chain(&self.dev_dependencies) {
+            let already_inserted = deps.insert(name.clone(), requirement.clone()).is_some();
+            if already_inserted {
+                return Err(Error::DuplicateDependency(name.clone()));
+            }
+        }
+        Ok(deps)
+    }
 }
 
 impl Default for PackageConfig {
@@ -32,10 +64,19 @@ impl Default for PackageConfig {
             description: Default::default(),
             docs: Default::default(),
             dependencies: Default::default(),
-            otp_start_module: Default::default(),
+            erlang: Default::default(),
             repository: Default::default(),
+            dev_dependencies: Default::default(),
+            licences: Default::default(),
+            links: Default::default(),
         }
     }
+}
+
+#[derive(Deserialize, Debug, PartialEq, Default)]
+pub struct ErlangConfig {
+    #[serde(default, rename = "otp-application-start-module")]
+    pub otp_start_module: Option<String>,
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -76,8 +117,6 @@ impl Default for Repository {
 pub struct Docs {
     #[serde(default)]
     pub pages: Vec<DocsPage>,
-    #[serde(default)]
-    pub links: Vec<DocsLink>,
 }
 
 #[derive(Deserialize, Debug, PartialEq, Clone)]
@@ -88,7 +127,7 @@ pub struct DocsPage {
 }
 
 #[derive(Deserialize, Debug, PartialEq, Clone)]
-pub struct DocsLink {
+pub struct Link {
     pub title: String,
     pub href: String,
 }

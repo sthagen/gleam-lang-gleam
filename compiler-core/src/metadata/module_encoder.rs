@@ -28,6 +28,9 @@ impl<'a> ModuleEncoder<'a> {
     }
 
     pub fn write(mut self, mut writer: impl Writer) -> crate::Result<()> {
+        let span = tracing::info_span!("metadata");
+        let _enter = span.enter();
+
         let mut message = capnp::message::Builder::new_default();
 
         let mut module = message.init_root::<module::Builder<'_>>();

@@ -7,7 +7,7 @@ use std::process::Command;
 
 pub fn command() -> Result<(), Error> {
     // Build project
-    let _ = super::new_build_main()?;
+    let _ = crate::build::main()?;
 
     // Don't exit on ctrl+c as it is used by child erlang shell
     ctrlc::set_handler(move || {}).expect("Error setting Ctrl-C handler");
@@ -27,7 +27,7 @@ pub fn command() -> Result<(), Error> {
     crate::cli::print_running("Erlang shell");
 
     // Run the shell
-    tracing::trace!("Running OS process {:?}", command);
+    tracing::info!("Running OS process {:?}", command);
     let _ = command.status().map_err(|e| Error::ShellCommand {
         command: "erl".to_string(),
         err: Some(e.kind()),

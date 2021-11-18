@@ -50,6 +50,7 @@
 #[macro_use]
 extern crate pretty_assertions;
 
+mod build;
 mod cli;
 mod compile_package;
 mod config;
@@ -57,26 +58,34 @@ mod dependencies;
 mod docs;
 mod format;
 mod fs;
+mod hex;
 mod http;
 mod new;
 mod panic;
 mod project;
+mod publish;
 mod run;
 mod shell;
 
+use config::root_config;
 pub use gleam_core::{
     error::{Error, Result},
     warning::Warning,
 };
 
 use gleam_core::{
-    build::{package_compiler, Package, ProjectCompiler, Target},
-    config::PackageConfig,
-    paths,
+    build::{package_compiler, Target},
+    diagnostic::{self, Severity},
+    error::wrap,
+    hex::RetirementReason,
     project::Analysed,
 };
+use hex::ApiKeyCommand as _;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 use structopt::{clap::AppSettings, StructOpt};
 use strum::VariantNames;
 
@@ -92,11 +101,17 @@ enum Command {
         warnings_as_errors: bool,
     },
 
+    /// Publish the project to the Hex package manager
+    Publish,
+
     /// Render HTML documentation
     Docs(Docs),
 
     /// Work with dependency packages
     Deps(Dependencies),
+
+    /// Work with the Hex package manager
+    Hex(Hex),
 
     /// Create a new project
     New(NewOptions),
@@ -120,14 +135,20 @@ enum Command {
     Shell,
 
     /// Run the project
-    Run,
+    #[structopt(settings = &[AppSettings::TrailingVarArg])]
+    Run { arguments: Vec<String> },
 
     /// Run the project tests
-    Test,
+    #[structopt(settings = &[AppSettings::TrailingVarArg])]
+    Test { arguments: Vec<String> },
 
     /// Compile a single Gleam package
     #[structopt(setting = AppSettings::Hidden)]
     CompilePackage(CompilePackage),
+
+    /// Read and print gleam.toml for debugging
+    #[structopt(setting = AppSettings::Hidden)]
+    PrintConfig,
 }
 
 #[derive(StructOpt, Debug, Clone)]
@@ -189,6 +210,7 @@ impl CompilePackage {
             src_path: self.src_directory,
             test_path: self.test_directory,
             out_path: self.output_directory,
+            write_metadata: true,
         }
     }
 }
@@ -200,32 +222,30 @@ enum Dependencies {
 }
 
 #[derive(StructOpt, Debug)]
+enum Hex {
+    /// Retire a release from Hex
+    Retire {
+        package: String,
+
+        version: String,
+
+        #[structopt(possible_values = &RetirementReason::VARIANTS)]
+        reason: RetirementReason,
+
+        message: Option<String>,
+    },
+
+    /// Un-retire a release from Hex
+    Unretire { package: String, version: String },
+}
+
+#[derive(StructOpt, Debug)]
 enum Docs {
     /// Render HTML docs locally
-    Build {
-        /// Location of the project root
-        #[structopt(default_value = ".")]
-        project_root: String,
-
-        /// The directory to write the docs to
-        #[structopt(long)]
-        to: Option<String>,
-
-        /// The version to publish
-        #[structopt(long)]
-        version: String,
-    },
+    Build,
 
     /// Publish HTML docs to HexDocs
-    Publish {
-        /// Location of the project root
-        #[structopt(default_value = ".")]
-        project_root: String,
-
-        /// The version to publish
-        #[structopt(long)]
-        version: String,
-    },
+    Publish,
 
     /// Remove HTML docs from HexDocs
     Remove {
@@ -242,20 +262,14 @@ enum Docs {
 fn main() {
     initialise_logger();
     panic::add_handler();
+    let stderr = cli::stderr_buffer_writer();
 
     let result = match Command::from_args() {
-        Command::Build { warnings_as_errors } => command_build(warnings_as_errors),
+        Command::Build { warnings_as_errors } => command_build(&stderr, warnings_as_errors),
 
-        Command::Docs(Docs::Build {
-            project_root,
-            version,
-            to,
-        }) => docs::build(project_root, version, to),
+        Command::Docs(Docs::Build) => docs::build(),
 
-        Command::Docs(Docs::Publish {
-            project_root,
-            version,
-        }) => docs::publish(project_root, version),
+        Command::Docs(Docs::Publish) => docs::PublishCommand::publish(),
 
         Command::Docs(Docs::Remove { package, version }) => docs::remove(package, version),
 
@@ -265,17 +279,32 @@ fn main() {
             check,
         } => format::run(stdin, check, files),
 
-        Command::Deps(Dependencies::Download) => dependencies::download(),
+        Command::Deps(Dependencies::Download) => dependencies::download().map(|_| ()),
 
         Command::New(options) => new::create(options, VERSION),
 
         Command::Shell => shell::command(),
 
-        Command::Run => run::command(run::Which::Src),
+        Command::Run { arguments } => run::command(&arguments, run::Which::Src),
 
-        Command::Test => run::command(run::Which::Test),
+        Command::Test { arguments } => run::command(&arguments, run::Which::Test),
 
         Command::CompilePackage(opts) => compile_package::command(opts),
+
+        Command::Publish => publish::command(),
+
+        Command::PrintConfig => print_config(),
+
+        Command::Hex(Hex::Retire {
+            package,
+            version,
+            reason,
+            message,
+        }) => hex::RetireCommand::new(package, version, reason, message).run(),
+
+        Command::Hex(Hex::Unretire { package, version }) => {
+            hex::UnretireCommand::new(package, version).run()
+        }
     };
 
     match result {
@@ -284,24 +313,43 @@ fn main() {
         }
         Err(error) => {
             tracing::error!(error = ?error, "Failed");
-            let buffer_writer = cli::stderr_buffer_writer();
-            let mut buffer = buffer_writer.buffer();
+            let mut buffer = stderr.buffer();
             error.pretty(&mut buffer);
-            buffer_writer
-                .print(&buffer)
-                .expect("Final result error writing");
+            stderr.print(&buffer).expect("Final result error writing");
             std::process::exit(1);
         }
     }
 }
 
-fn command_build(warnings_as_errors: bool) -> Result<(), Error> {
-    let root = PathBuf::from(&PathBuf::from("./"));
+const REBAR_DEPRECATION_NOTICE: &str = "The built-in rebar3 support is deprecated and will \
+be removed in a future version of Gleam.
+
+Please switch to the new Gleam build tool or update your project to use the new `gleam \
+compile-package` API with your existing build tool.
+
+";
+
+fn command_build(stderr: &termcolor::BufferWriter, warnings_as_errors: bool) -> Result<(), Error> {
+    let mut buffer = stderr.buffer();
+    let root = Path::new("./");
 
     // Use new build tool if not in a rebar or mix project
     if !root.join("rebar.config").exists() && !root.join("mix.exs").exists() {
-        return new_build_main().map(|_| ());
+        return build::main().map(|_| ());
     }
+
+    diagnostic::write_title(
+        &mut buffer,
+        "Deprecated rebar3 build command",
+        Severity::Warning,
+    );
+    buffer
+        .write_all(wrap(REBAR_DEPRECATION_NOTICE).as_bytes())
+        .expect("rebar deprecation message");
+    buffer.flush().expect("flush");
+    stderr
+        .print(&buffer)
+        .expect("command_build_rebar_deprecated_write");
 
     // Read and type check project
     let (_config, analysed) = project::read_and_analyse(&root)?;
@@ -330,45 +378,18 @@ fn command_build(warnings_as_errors: bool) -> Result<(), Error> {
     Ok(())
 }
 
+fn print_config() -> Result<()> {
+    let config = root_config()?;
+    println!("{:#?}", config);
+    Ok(())
+}
+
 fn initialise_logger() {
     tracing_subscriber::fmt()
         .with_env_filter(&std::env::var("GLEAM_LOG").unwrap_or_else(|_| "off".to_string()))
         .with_target(false)
         .without_time()
         .init();
-}
-
-pub fn new_build_main() -> Result<HashMap<String, Package>, Error> {
-    let root_config = crate::config::root_config()?;
-    let telemetry = Box::new(cli::Reporter::new());
-    let io = fs::FileSystemAccessor::new();
-
-    tracing::info!("Copying root package to _build");
-    copy_root_package_to_build(&root_config)?;
-
-    tracing::info!("Reading package configs from .build");
-    let configs = config::package_configs(&root_config.name)?;
-
-    tracing::info!("Compiling packages");
-    let packages = ProjectCompiler::new(root_config, configs, telemetry, io).compile()?;
-
-    Ok(packages)
-}
-
-fn copy_root_package_to_build(root_config: &PackageConfig) -> Result<(), Error> {
-    let target = paths::build_deps_package(&root_config.name);
-    let path = PathBuf::from("./");
-
-    // Reset _build dir
-    crate::fs::delete_dir(&target)?;
-    crate::fs::mkdir(&target)?;
-
-    // Copy source files across
-    crate::fs::copy(path.join("gleam.toml"), target.join("gleam.toml"))?;
-    crate::fs::copy_dir(path.join("src"), &target)?;
-    crate::fs::copy_dir(path.join("test"), &target)?;
-
-    Ok(())
 }
 
 fn print_warnings(analysed: &[Analysed]) -> usize {
