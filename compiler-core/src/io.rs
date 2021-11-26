@@ -9,6 +9,7 @@ use std::{
     fs::ReadDir,
     io,
     path::{Path, PathBuf},
+    process::ExitStatus,
 };
 use tar::{Archive, Entry};
 
@@ -66,13 +67,26 @@ pub trait FileSystemReader {
 
 pub trait FileSystemIO: FileSystemWriter + FileSystemReader {}
 
+/// A trait used to run other programs.
+pub trait CommandExecutor {
+    fn exec(
+        &self,
+        program: &str,
+        args: &[String],
+        env: &[(&str, String)],
+        cwd: Option<&Path>,
+    ) -> Result<ExitStatus, Error>;
+}
+
 /// A trait used to write files.
 /// Typically we use an implementation that writes to the file system,
 /// but in tests and in other places other implementations may be used.
 pub trait FileSystemWriter {
+    fn mkdir(&self, path: &Path) -> Result<(), Error>;
     fn writer(&self, path: &Path) -> Result<WrappedWriter, Error>;
     fn delete(&self, path: &Path) -> Result<(), Error>;
     fn copy(&self, from: &Path, to: &Path) -> Result<(), Error>;
+    fn copy_dir(&self, from: &Path, to: &Path) -> Result<(), Error>;
 }
 
 #[derive(Debug)]
@@ -201,6 +215,14 @@ pub mod test {
 
         fn copy(&self, _from: &Path, _to: &Path) -> Result<(), Error> {
             panic!("FilesChannel does not support copy")
+        }
+
+        fn mkdir(&self, _path: &Path) -> Result<(), Error> {
+            panic!("FilesChannel does not support mkdir")
+        }
+
+        fn copy_dir(&self, _from: &Path, _to: &Path) -> Result<(), Error> {
+            panic!("FilesChannel does not support copy_dir")
         }
     }
 

@@ -1,7 +1,9 @@
 // use flate2::{write::GzEncoder, Compression};
 use gleam_core::{
     error::{Error, FileIoAction, FileKind},
-    io::{FileSystemIO, FileSystemWriter, OutputFile, WrappedReader, WrappedWriter},
+    io::{
+        CommandExecutor, FileSystemIO, FileSystemWriter, OutputFile, WrappedReader, WrappedWriter,
+    },
     Result,
 };
 use ignore::DirEntry;
@@ -16,9 +18,9 @@ use std::{
 
 /// A `FileWriter` implementation that writes to the file system.
 #[derive(Debug, Clone, Copy)]
-pub struct FileSystemAccessor;
+pub struct ProjectIO;
 
-impl FileSystemAccessor {
+impl ProjectIO {
     pub fn new() -> Self {
         Self
     }
@@ -28,7 +30,7 @@ impl FileSystemAccessor {
     }
 }
 
-impl gleam_core::io::FileSystemReader for FileSystemAccessor {
+impl gleam_core::io::FileSystemReader for ProjectIO {
     fn gleam_source_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
         Box::new({
             let dir = dir.to_path_buf();
@@ -76,21 +78,50 @@ impl gleam_core::io::FileSystemReader for FileSystemAccessor {
     }
 }
 
-impl FileSystemWriter for FileSystemAccessor {
+impl FileSystemWriter for ProjectIO {
     fn writer(&self, path: &Path) -> Result<WrappedWriter, Error> {
         writer(path)
     }
 
     fn delete(&self, path: &Path) -> Result<()> {
-        delete_dir(path) // I presume this works on files too. Let's find out.
+        delete_dir(path)
     }
 
     fn copy(&self, from: &Path, to: &Path) -> Result<()> {
         copy(from, to)
     }
+
+    fn copy_dir(&self, from: &Path, to: &Path) -> Result<()> {
+        copy_dir(from, to)
+    }
+
+    fn mkdir(&self, path: &Path) -> Result<(), Error> {
+        mkdir(path)
+    }
 }
 
-impl FileSystemIO for FileSystemAccessor {}
+impl CommandExecutor for ProjectIO {
+    fn exec(
+        &self,
+        program: &str,
+        args: &[String],
+        env: &[(&str, String)],
+        cwd: Option<&Path>,
+    ) -> Result<std::process::ExitStatus, Error> {
+        tracing::debug!(program=program, args=?args.join(" "), env=?env, cwd=?cwd, "command_exec");
+        std::process::Command::new(program)
+            .args(args)
+            .envs(env.iter().map(|(a, b)| (a, b)))
+            .current_dir(cwd.unwrap_or_else(|| Path::new("./")))
+            .status()
+            .map_err(|e| Error::ShellCommand {
+                command: program.to_ascii_uppercase(),
+                err: Some(e.kind()),
+            })
+    }
+}
+
+impl FileSystemIO for ProjectIO {}
 
 pub fn delete_dir(dir: &Path) -> Result<(), Error> {
     tracing::debug!(path=?dir, "deleting_directory");
@@ -314,7 +345,7 @@ pub fn create_tar_archive(outputs: Vec<OutputFile>) -> Result<Vec<u8>, Error> {
 }
 
 pub fn mkdir(path: impl AsRef<Path> + Debug) -> Result<(), Error> {
-    tracing::debug!(path=?path,"creating_directory");
+    tracing::debug!(path=?path, "creating_directory");
 
     std::fs::create_dir_all(&path).map_err(|err| Error::FileIo {
         kind: FileKind::Directory,
@@ -394,16 +425,16 @@ pub fn copy(path: impl AsRef<Path> + Debug, to: impl AsRef<Path> + Debug) -> Res
         .map(|_| ())
 }
 
-// pub fn copy_dir(path: impl AsRef<Path> + Debug, to: impl AsRef<Path> + Debug) -> Result<(), Error> {
-//     tracing::debug!(from=?path, to=?to, "copying_directory");
+pub fn copy_dir(path: impl AsRef<Path> + Debug, to: impl AsRef<Path> + Debug) -> Result<(), Error> {
+    tracing::debug!(from=?path, to=?to, "copying_directory");
 
-//     // TODO: include the destination in the error message
-//     fs_extra::dir::copy(&path, &to, &fs_extra::dir::CopyOptions::new())
-//         .map_err(|err| Error::FileIo {
-//             action: FileIoAction::Copy,
-//             kind: FileKind::Directory,
-//             path: PathBuf::from(path.as_ref()),
-//             err: Some(err.to_string()),
-//         })
-//         .map(|_| ())
-// }
+    // TODO: include the destination in the error message
+    fs_extra::dir::copy(&path, &to, &fs_extra::dir::CopyOptions::new())
+        .map_err(|err| Error::FileIo {
+            action: FileIoAction::Copy,
+            kind: FileKind::Directory,
+            path: PathBuf::from(path.as_ref()),
+            err: Some(err.to_string()),
+        })
+        .map(|_| ())
+}

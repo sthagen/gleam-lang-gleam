@@ -8,18 +8,16 @@ use gleam_core::{
 use crate::{cli, fs};
 
 pub fn main() -> Result<Package> {
-    let manifest = crate::dependencies::download()?;
+    let manifest = crate::dependencies::download(None)?;
 
     let root_config = crate::config::root_config()?;
     let telemetry = Box::new(cli::Reporter::new());
-    let io = fs::FileSystemAccessor::new();
+    let io = fs::ProjectIO::new();
     let start = Instant::now();
 
-    tracing::info!("Reading package configs from build");
-    let configs = crate::config::package_configs(&root_config.name, &manifest)?;
-
     tracing::info!("Compiling packages");
-    let compiled = ProjectCompiler::new(root_config, configs, telemetry, io).compile()?;
+    let compiled =
+        ProjectCompiler::new(root_config, &manifest.packages, telemetry, io).compile()?;
 
     cli::print_compiled(start.elapsed());
     Ok(compiled)

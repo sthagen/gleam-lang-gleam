@@ -4,35 +4,48 @@ use std::{
 };
 
 use flate2::read::GzDecoder;
+use futures::future;
 use gleam_core::{
     build::Mode,
     config::PackageConfig,
     error::{FileIoAction, FileKind},
     hex::{self, HEXPM_PUBLIC_KEY},
     io::{HttpClient as _, TarUnpacker, Utf8Writer, WrappedReader},
-    paths, Error, Result,
+    paths,
+    project::{Base16Checksum, Manifest, ManifestPackage, ManifestPackageSource},
+    Error, Result,
 };
-use hexpm::version::{Range, Version};
+use hexpm::version::Version;
 use itertools::Itertools;
 
 use crate::{
     cli,
-    fs::{self, FileSystemAccessor},
+    fs::{self, ProjectIO},
     http::HttpClient,
 };
 
-pub fn download() -> Result<Manifest> {
-    let span = tracing::info_span!("dependencies");
+pub fn download(new_package: Option<(&str, bool)>) -> Result<Manifest> {
+    let span = tracing::info_span!("download_deps");
     let _enter = span.enter();
     let mode = Mode::Dev;
 
     let http = HttpClient::boxed();
-    let fs = FileSystemAccessor::boxed();
+    let fs = ProjectIO::boxed();
     let downloader = hex::Downloader::new(fs, http, Untar::boxed());
 
     // Read the project config
-    let config = crate::config::root_config()?;
+    let mut config = crate::config::root_config()?;
     let project_name = config.name.clone();
+
+    // Insert the new package to add, if it exists
+    if let Some((package, dev)) = new_package {
+        let version = hexpm::version::Range::new(">= 0.0.0".into());
+        let _ = if dev {
+            config.dev_dependencies.insert(package.to_string(), version)
+        } else {
+            config.dependencies.insert(package.to_string(), version)
+        };
+    }
 
     // Start event loop so we can run async functions to call the Hex API
     let runtime = tokio::runtime::Runtime::new().expect("Unable to start Tokio async runtime");
@@ -55,7 +68,7 @@ pub fn download() -> Result<Manifest> {
     // Record new state of the packages directory
     if manifest_updated {
         tracing::info!("writing_manifest_toml");
-        manifest.write_to_disc()?;
+        write_manifest_to_disc(&manifest)?;
     }
     LocalPackages::from_manifest(&manifest).write_to_disc()?;
 
@@ -68,14 +81,22 @@ async fn download_missing_packages(
     local: &LocalPackages,
     project_name: String,
 ) -> Result<(), Error> {
-    let missing = local.missing_local_packages(manifest, &project_name);
-    if !missing.is_empty() {
+    let mut count = 0;
+    let mut missing = local
+        .missing_local_packages(manifest, &project_name)
+        .into_iter()
+        .map(|package| {
+            count += 1;
+            package
+        })
+        .peekable();
+    if missing.peek().is_some() {
         let start = Instant::now();
         cli::print_downloading("packages");
         downloader
-            .download_hex_packages(&missing, &project_name)
+            .download_hex_packages(missing, &project_name)
             .await?;
-        cli::print_packages_downloaded(start, missing.len());
+        cli::print_packages_downloaded(start, count);
     }
     Ok(())
 }
@@ -91,159 +112,25 @@ fn remove_extra_packages(local: &LocalPackages, manifest: &Manifest) -> Result<(
     Ok(())
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Manifest {
-    #[serde(serialize_with = "ordered_map")]
-    pub requirements: HashMap<String, Range>,
-    #[serde(serialize_with = "sorted_vec")]
-    pub packages: Vec<ManifestPackage>,
+fn read_manifest_from_disc() -> Result<Manifest> {
+    tracing::info!("Reading manifest.toml");
+    let manifest_path = paths::manifest();
+    let toml = crate::fs::read(&manifest_path)?;
+    let manifest = toml::from_str(&toml).map_err(|e| Error::FileIo {
+        action: FileIoAction::Parse,
+        kind: FileKind::File,
+        path: manifest_path.clone(),
+        err: Some(e.to_string()),
+    })?;
+    Ok(manifest)
 }
 
-impl Manifest {
-    pub fn read_from_disc() -> Result<Self> {
-        tracing::info!("Reading manifest.toml");
-        let manifest_path = paths::manifest();
-        let toml = crate::fs::read(&manifest_path)?;
-        let manifest = toml::from_str(&toml).map_err(|e| Error::FileIo {
-            action: FileIoAction::Parse,
-            kind: FileKind::File,
-            path: manifest_path.clone(),
-            err: Some(e.to_string()),
-        })?;
-        Ok(manifest)
-    }
-
-    pub fn write_to_disc(&self) -> Result<()> {
-        let path = paths::manifest();
-        let mut file = fs::writer(&path)?;
-        let result = self.write_to(&mut file);
-        file.wrap_result(result)?;
-        Ok(())
-    }
-
-    // Rather than using the toml library to do serialization we implement it
-    // manually so that we can control the formatting.
-    // We want to keep entries on a single line each so that they are more
-    // resistant to merge conflicts and are easier to fix when it does happen.
-    pub fn write_to<W: std::fmt::Write>(&self, mut buffer: W) -> std::fmt::Result {
-        let Self {
-            requirements,
-            packages,
-        } = self;
-        write!(
-            buffer,
-            "# This file was generated by Gleam
-# You typically do not need to edit this file
-
-",
-        )?;
-
-        // Packages
-        writeln!(buffer, "packages = [")?;
-        for ManifestPackage { name, version } in
-            packages.iter().sorted_by(|a, b| a.name.cmp(&b.name))
-        {
-            writeln!(
-                buffer,
-                "  {{ name = \"{name}\", version = \"{version}\" }},",
-                name = name,
-                version = version
-            )?;
-        }
-        write!(buffer, "]\n\n")?;
-
-        // Requirements
-        writeln!(buffer, "[requirements]")?;
-        for (name, range) in requirements.iter().sorted_by(|a, b| a.0.cmp(b.0)) {
-            writeln!(buffer, "{} = \"{}\"", name, range)?;
-        }
-
-        Ok(())
-    }
-}
-
-#[test]
-fn manifest_toml_format() {
-    let mut buffer = String::new();
-    Manifest {
-        requirements: [
-            ("zzz".to_string(), Range::new("> 0.0.0".to_string())),
-            ("aaa".to_string(), Range::new("> 0.0.0".to_string())),
-            (
-                "gleam_stdlib".to_string(),
-                Range::new("~> 0.17".to_string()),
-            ),
-            ("gleeunit".to_string(), Range::new("~> 0.1".to_string())),
-        ]
-        .into(),
-        packages: vec![
-            ManifestPackage {
-                name: "gleam_stdlib".to_string(),
-                version: Version::new(0, 17, 1),
-            },
-            ManifestPackage {
-                name: "aaa".to_string(),
-                version: Version::new(0, 4, 0),
-            },
-            ManifestPackage {
-                name: "zzz".to_string(),
-                version: Version::new(0, 4, 0),
-            },
-            ManifestPackage {
-                name: "gleeunit".to_string(),
-                version: Version::new(0, 4, 0),
-            },
-        ],
-    }
-    .write_to(&mut buffer)
-    .unwrap();
-    assert_eq!(
-        buffer,
-        r#"# This file was generated by Gleam
-# You typically do not need to edit this file
-
-packages = [
-  { name = "aaa", version = "0.4.0" },
-  { name = "gleam_stdlib", version = "0.17.1" },
-  { name = "gleeunit", version = "0.4.0" },
-  { name = "zzz", version = "0.4.0" },
-]
-
-[requirements]
-aaa = "> 0.0.0"
-gleam_stdlib = "~> 0.17"
-gleeunit = "~> 0.1"
-zzz = "> 0.0.0"
-"#
-    );
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-pub struct ManifestPackage {
-    pub name: String,
-    pub version: Version,
-}
-
-fn ordered_map<S, K, V>(value: &HashMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-    K: serde::Serialize + Ord,
-    V: serde::Serialize,
-{
-    use serde::Serialize;
-    let ordered: std::collections::BTreeMap<_, _> = value.iter().collect();
-    ordered.serialize(serializer)
-}
-
-fn sorted_vec<S, T>(value: &[T], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-    T: serde::Serialize + Ord,
-{
-    use serde::Serialize;
-    let mut value: Vec<&T> = value.iter().collect();
-    value.sort();
-    value.serialize(serializer)
+fn write_manifest_to_disc(manifest: &Manifest) -> Result<()> {
+    let path = paths::manifest();
+    let mut file = fs::writer(&path)?;
+    let result = manifest.write_to(&mut file);
+    file.wrap_result(result)?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -265,16 +152,15 @@ impl LocalPackages {
             .collect()
     }
 
-    pub fn missing_local_packages(
+    pub fn missing_local_packages<'a>(
         &self,
-        manifest: &Manifest,
+        manifest: &'a Manifest,
         root: &str,
-    ) -> Vec<(String, Version)> {
+    ) -> Vec<&'a ManifestPackage> {
         manifest
             .packages
             .iter()
             .filter(|p| p.name != root && self.packages.get(&p.name) != Some(&p.version))
-            .map(|p| (p.name.clone(), p.version.clone()))
             .collect()
     }
 
@@ -305,7 +191,7 @@ impl LocalPackages {
             packages: manifest
                 .packages
                 .iter()
-                .map(|p| (p.name.clone(), p.version.clone()))
+                .map(|p| (p.name.to_string(), p.version.clone()))
                 .collect(),
         }
     }
@@ -313,6 +199,41 @@ impl LocalPackages {
 
 #[test]
 fn missing_local_packages() {
+    let manifest = Manifest {
+        requirements: HashMap::new(),
+        packages: vec![
+            ManifestPackage {
+                name: "root".to_string(),
+                version: Version::parse("1.0.0").unwrap(),
+                build_tools: ["gleam".into()].into(),
+                otp_app: None,
+                requirements: vec![],
+                source: ManifestPackageSource::Hex {
+                    outer_checksum: Base16Checksum(vec![1, 2, 3, 4]),
+                },
+            },
+            ManifestPackage {
+                name: "local1".to_string(),
+                version: Version::parse("1.0.0").unwrap(),
+                build_tools: ["gleam".into()].into(),
+                otp_app: None,
+                requirements: vec![],
+                source: ManifestPackageSource::Hex {
+                    outer_checksum: Base16Checksum(vec![1, 2, 3, 4, 5]),
+                },
+            },
+            ManifestPackage {
+                name: "local2".to_string(),
+                version: Version::parse("3.0.0").unwrap(),
+                build_tools: ["gleam".into()].into(),
+                otp_app: None,
+                requirements: vec![],
+                source: ManifestPackageSource::Hex {
+                    outer_checksum: Base16Checksum(vec![1, 2, 3, 4, 5]),
+                },
+            },
+        ],
+    };
     let mut extra = LocalPackages {
         packages: [
             ("local2".to_string(), Version::parse("2.0.0").unwrap()),
@@ -320,32 +241,31 @@ fn missing_local_packages() {
         ]
         .into(),
     }
-    .missing_local_packages(
-        &Manifest {
-            requirements: HashMap::new(),
-            packages: vec![
-                ManifestPackage {
-                    name: "root".to_string(),
-                    version: Version::parse("1.0.0").unwrap(),
-                },
-                ManifestPackage {
-                    name: "local1".to_string(),
-                    version: Version::parse("1.0.0").unwrap(),
-                },
-                ManifestPackage {
-                    name: "local2".to_string(),
-                    version: Version::parse("3.0.0").unwrap(),
-                },
-            ],
-        },
-        "root",
-    );
+    .missing_local_packages(&manifest, "root");
     extra.sort();
     assert_eq!(
         extra,
         [
-            ("local1".to_string(), Version::new(1, 0, 0)),
-            ("local2".to_string(), Version::new(3, 0, 0)),
+            &ManifestPackage {
+                name: "local1".to_string(),
+                version: Version::parse("1.0.0").unwrap(),
+                build_tools: ["gleam".into()].into(),
+                otp_app: None,
+                requirements: vec![],
+                source: ManifestPackageSource::Hex {
+                    outer_checksum: Base16Checksum(vec![1, 2, 3, 4, 5]),
+                },
+            },
+            &ManifestPackage {
+                name: "local2".to_string(),
+                version: Version::parse("3.0.0").unwrap(),
+                build_tools: ["gleam".into()].into(),
+                otp_app: None,
+                requirements: vec![],
+                source: ManifestPackageSource::Hex {
+                    outer_checksum: Base16Checksum(vec![1, 2, 3, 4, 5]),
+                },
+            },
         ]
     )
 }
@@ -366,10 +286,22 @@ fn extra_local_packages() {
             ManifestPackage {
                 name: "local1".to_string(),
                 version: Version::parse("1.0.0").unwrap(),
+                build_tools: ["gleam".into()].into(),
+                otp_app: None,
+                requirements: vec![],
+                source: ManifestPackageSource::Hex {
+                    outer_checksum: Base16Checksum(vec![1, 2, 3, 4, 5]),
+                },
             },
             ManifestPackage {
                 name: "local2".to_string(),
                 version: Version::parse("3.0.0").unwrap(),
+                build_tools: ["gleam".into()].into(),
+                otp_app: None,
+                requirements: vec![],
+                source: ManifestPackageSource::Hex {
+                    outer_checksum: Base16Checksum(vec![4, 5]),
+                },
             },
         ],
     });
@@ -395,7 +327,7 @@ fn get_manifest(
         return Ok((true, manifest));
     }
 
-    let manifest = Manifest::read_from_disc()?;
+    let manifest = read_manifest_from_disc()?;
 
     // If the config has unchanged since the manifest was written then it is up
     // to date so we can return it unmodified.
@@ -419,16 +351,38 @@ fn resolve_versions(
     let locked = locked
         .iter()
         // TODO: remove clones. Will require library modification.
-        .map(|p| (p.name.clone(), p.version.clone()))
+        .map(|p| (p.name.to_string(), p.version.clone()))
         .collect();
-    let resolved = hex::resolve_versions(PackageFetcher::boxed(runtime), mode, config, &locked)?;
-    let packages = resolved
-        .into_iter()
-        .map(|(name, version)| ManifestPackage { name, version })
-        .collect();
+    let resolved = hex::resolve_versions(
+        PackageFetcher::boxed(runtime.clone()),
+        mode,
+        config,
+        &locked,
+    )?;
+    let packages = runtime.block_on(future::try_join_all(
+        resolved
+            .into_iter()
+            .map(|(name, version)| lookup_package(name, version)),
+    ))?;
     let manifest = Manifest {
         packages,
         requirements: config.all_dependencies()?,
+    };
+    Ok(manifest)
+}
+
+async fn lookup_package(name: String, version: Version) -> Result<ManifestPackage> {
+    let config = hexpm::Config::new();
+    let release = hex::get_package_release(&name, &version, &config, &HttpClient::new()).await?;
+    let manifest = ManifestPackage {
+        name,
+        version,
+        otp_app: Some(release.meta.app),
+        build_tools: release.meta.build_tools,
+        requirements: release.requirements.keys().cloned().collect_vec(),
+        source: ManifestPackageSource::Hex {
+            outer_checksum: Base16Checksum(release.outer_checksum),
+        },
     };
     Ok(manifest)
 }

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::build::{Mode, Target};
 
@@ -72,6 +72,22 @@ pub fn default_gleam_cache() -> PathBuf {
 
 pub fn build_packages(mode: Mode, target: Target) -> PathBuf {
     build().join(mode.to_string()).join(target.to_string())
+}
+
+pub fn build_packages_ebins_glob(mode: Mode, target: Target) -> PathBuf {
+    build_packages_erl_libs_glob(mode, target).join("ebin")
+}
+
+pub fn build_packages_erl_libs_glob(mode: Mode, target: Target) -> PathBuf {
+    build_package(mode, target, "*")
+}
+
+pub fn unnest(within: &Path) -> PathBuf {
+    let mut path = PathBuf::new();
+    for _ in within {
+        path = path.join("..")
+    }
+    path
 }
 
 pub fn build_docs(package: &str) -> PathBuf {

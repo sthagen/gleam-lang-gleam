@@ -50,6 +50,7 @@
 #[macro_use]
 extern crate pretty_assertions;
 
+mod add;
 mod build;
 mod cli;
 mod compile_package;
@@ -149,6 +150,15 @@ enum Command {
     /// Read and print gleam.toml for debugging
     #[structopt(setting = AppSettings::Hidden)]
     PrintConfig,
+
+    /// Add a new project dependency
+    Add {
+        package: String,
+
+        /// Add the package as a dev-only dependency
+        #[structopt(long)]
+        dev: bool,
+    },
 }
 
 #[derive(StructOpt, Debug, Clone)]
@@ -279,7 +289,7 @@ fn main() {
             check,
         } => format::run(stdin, check, files),
 
-        Command::Deps(Dependencies::Download) => dependencies::download().map(|_| ()),
+        Command::Deps(Dependencies::Download) => dependencies::download(None).map(|_| ()),
 
         Command::New(options) => new::create(options, VERSION),
 
@@ -305,6 +315,8 @@ fn main() {
         Command::Hex(Hex::Unretire { package, version }) => {
             hex::UnretireCommand::new(package, version).run()
         }
+
+        Command::Add { package, dev } => add::command(package, dev),
     };
 
     match result {
