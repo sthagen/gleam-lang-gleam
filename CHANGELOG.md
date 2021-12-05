@@ -1,6 +1,19 @@
 # Changelog
 
-## v0.18.0-rc1 - 2021-11-26
+## v0.18.0-rc3 - 2021-12-05
+
+- URL format in gleam.toml is now validated.
+- The `gleam deps list` command has been added.
+- Fixed a bug where changing requirements in `gleam.toml` would not cause deps
+  to be re-resolved.
+- Fixed a bug where locked deps would cause incompatible package requirements to
+  be discarded.
+- Development dependencies are now included in the applications listed in the
+  generated OTP `.app` file.
+- `gleam.toml` now includes an `erlang.extra_applications` key to specify extra
+  OTP applications that need to be started.
+
+## v0.18.0-rc2 - 2021-11-26
 
 - Fixed a bug where OTP .app files would be generated with invalid syntax.
 - Removed extra whitespace from newly generated projects.

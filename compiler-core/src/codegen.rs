@@ -92,9 +92,9 @@ impl<'a> ErlangApp<'a> {
 
         let start_module = config
             .erlang
-            .otp_start_module
+            .application_start_module
             .as_ref()
-            .map(|module| tuple("mod", &format!("'{}'", module)))
+            .map(|module| tuple("mod", &format!("'{}'", module.replace("/", "@"))))
             .unwrap_or_default();
 
         let modules = modules
@@ -103,9 +103,13 @@ impl<'a> ErlangApp<'a> {
             .sorted()
             .join(",\n               ");
 
+        // TODO: When precompiling for production (i.e. as a precompiled hex
+        // package) we will need to exclude the dev deps.
         let applications = config
             .dependencies
             .keys()
+            .chain(config.dev_dependencies.keys())
+            .chain(config.erlang.extra_applications.iter())
             .sorted()
             .join(",\n                    ");
 

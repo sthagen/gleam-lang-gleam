@@ -266,12 +266,14 @@ pub enum InvalidProjectNameReason {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum StandardIoAction {
     Read,
+    Write,
 }
 
 impl StandardIoAction {
     fn text(&self) -> &'static str {
         match self {
             StandardIoAction::Read => "read from",
+            StandardIoAction::Write => "write to",
         }
     }
 }
@@ -1906,7 +1908,7 @@ Fix the warnings and try again!",
                         ),
                 };
                 write_project(buf, diagnostic);
-                writeln!(buf, "\n{}", error).unwrap();
+                writeln!(buf, "\n{}", wrap(&error.to_string())).unwrap();
             }
 
             Error::DuplicateDependency(name) => {

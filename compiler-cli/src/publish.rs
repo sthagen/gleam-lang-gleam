@@ -137,7 +137,7 @@ fn metadata_config(config: &PackageConfig, files: &[PathBuf]) -> String {
         links: config
             .links
             .iter()
-            .map(|l| (l.title.as_str(), l.href.as_str()))
+            .map(|l| (l.title.as_str(), &l.href))
             .collect(),
         requirements: config
             .dependencies
@@ -226,7 +226,7 @@ pub struct ReleaseMetadata<'a> {
     description: &'a str,
     files: &'a [PathBuf],
     licenses: &'a [String],
-    links: Vec<(&'a str, &'a str)>, // TODO: use http::Uri type to ensure correct format
+    links: Vec<(&'a str, &'a http::Uri)>,
     requirements: Vec<ReleaseRequirement<'a>>,
     build_tools: Vec<&'a str>,
     // What should this be? I can't find it in the API anywhere.
@@ -235,7 +235,7 @@ pub struct ReleaseMetadata<'a> {
 
 impl<'a> ReleaseMetadata<'a> {
     pub fn as_erlang(&self) -> String {
-        fn link(link: &(&str, &str)) -> String {
+        fn link(link: &(&str, &http::Uri)) -> String {
             format!(
                 "\n  {{<<\"{name}\">>, <<\"{url}\">>}}",
                 name = link.0,
@@ -303,6 +303,8 @@ impl<'a> ReleaseRequirement<'a> {
 fn release_metadata_as_erlang() {
     let licences = vec!["MIT".to_string(), "MPL-2.0".to_string()];
     let version = "1.2.3".try_into().unwrap();
+    let homepage = "https://gleam.run".parse().unwrap();
+    let github = "https://github.com/lpil/myapp".parse().unwrap();
     let req1 = Range::new("~> 1.2.3 or >= 5.0.0".to_string());
     let req2 = Range::new("~> 1.2".to_string());
     let meta = ReleaseMetadata {
@@ -315,10 +317,7 @@ fn release_metadata_as_erlang() {
             PathBuf::from("src/whatever.gleam"),
         ],
         licenses: &licences,
-        links: vec![
-            ("homepage", "https://gleam.run"),
-            ("github", "https://github.com/lpil/myapp"),
-        ],
+        links: vec![("homepage", &homepage), ("github", &github)],
         requirements: vec![
             ReleaseRequirement {
                 name: "wibble",
@@ -340,7 +339,7 @@ fn release_metadata_as_erlang() {
 {<<"licenses">>, [<<"MIT">>, <<"MPL-2.0">>]}.
 {<<"build_tools">>, [<<"gleam">>, <<"rebar3">>]}.
 {<<"links">>, [
-  {<<"homepage">>, <<"https://gleam.run">>},
+  {<<"homepage">>, <<"https://gleam.run/">>},
   {<<"github">>, <<"https://github.com/lpil/myapp">>}
 ]}.
 {<<"requirements">>, [

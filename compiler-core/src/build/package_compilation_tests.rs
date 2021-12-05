@@ -1813,7 +1813,7 @@ fn config_compilation_test() {
             version: Version::parse("1.0.0").unwrap(),
             name: "the_package".to_string(),
             repository: Repository::None,
-            docs: Default::default(),
+            documentation: Default::default(),
             licences: Default::default(),
             erlang: Default::default(),
             links: vec![],
@@ -1823,13 +1823,13 @@ fn config_compilation_test() {
     assert_config_compile!(
         {
             let mut config = make_config();
-            config.erlang.otp_start_module = Some("mymod".to_string());
+            config.erlang.application_start_module = Some("myapp/mymod".to_string());
             config
         },
         vec![],
         vec![OutputFile {
             text: r#"{application, the_package, [
-    {mod, 'mymod'},
+    {mod, 'myapp@mymod'},
     {vsn, "1.0.0"},
     {applications, []},
     {description, ""},
@@ -1920,6 +1920,69 @@ fn config_compilation_test() {
                     gleam_stdlib,
                     midas,
                     simple_json]},
+    {description, ""},
+    {modules, []},
+    {registered, []}
+]}.
+"#
+            .to_string(),
+            path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
+        }]
+    );
+
+    // Dev deps applications are listed
+    let mut config = make_config();
+    config.dependencies = [("gleam_stdlib", "1.0.0"), ("gleam_otp", "1.0.0")]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), Range::new(b.to_string())))
+        .collect();
+    config.dev_dependencies = [("midas", "1.0.0"), ("simple_json", "1.0.0")]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), Range::new(b.to_string())))
+        .collect();
+    assert_config_compile!(
+        config,
+        vec![],
+        vec![OutputFile {
+            text: r#"{application, the_package, [
+    {vsn, "1.0.0"},
+    {applications, [gleam_otp,
+                    gleam_stdlib,
+                    midas,
+                    simple_json]},
+    {description, ""},
+    {modules, []},
+    {registered, []}
+]}.
+"#
+            .to_string(),
+            path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
+        }]
+    );
+
+    // Extra applications are included
+    let mut config = make_config();
+    config.dependencies = [("gleam_stdlib", "1.0.0"), ("gleam_otp", "1.0.0")]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), Range::new(b.to_string())))
+        .collect();
+    config.dev_dependencies = [("midas", "1.0.0"), ("simple_json", "1.0.0")]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), Range::new(b.to_string())))
+        .collect();
+    config.erlang.extra_applications = vec!["inets".into(), "ssl".into()];
+    assert_config_compile!(
+        config,
+        vec![],
+        vec![OutputFile {
+            text: r#"{application, the_package, [
+    {vsn, "1.0.0"},
+    {applications, [gleam_otp,
+                    gleam_stdlib,
+                    inets,
+                    midas,
+                    simple_json,
+                    ssl]},
     {description, ""},
     {modules, []},
     {registered, []}
