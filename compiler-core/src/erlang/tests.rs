@@ -3134,3 +3134,74 @@ x(Y) ->
 "#
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/1379
+#[test]
+fn pipe_in_spread() {
+    assert_erl!(
+        "pub type X {
+  X(a: Int, b: Int)
+}
+
+fn id(x) {
+  x
+}
+        
+pub fn main(x) {
+  X(..x, a: 1 |> id)
+}",
+        r#"-module(the_app).
+-compile(no_auto_import).
+
+-export([main/1]).
+-export_type([x/0]).
+
+-type x() :: {x, integer(), integer()}.
+
+-spec id(A) -> A.
+id(X) ->
+    X.
+
+-spec main(x()) -> x().
+main(X) ->
+    erlang:setelement(
+        2,
+        X,
+        begin
+            _pipe = 1,
+            id(_pipe)
+        end
+    ).
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/1385
+#[test]
+fn pipe_in_eq() {
+    assert_erl!(
+        "fn id(x) {
+  x
+}
+        
+pub fn main() {
+    1 == 1 |> id
+}",
+        r#"-module(the_app).
+-compile(no_auto_import).
+
+-export([main/0]).
+
+-spec id(A) -> A.
+id(X) ->
+    X.
+
+-spec main() -> boolean().
+main() ->
+    1 =:= begin
+        _pipe = 1,
+        id(_pipe)
+    end.
+"#
+    );
+}
