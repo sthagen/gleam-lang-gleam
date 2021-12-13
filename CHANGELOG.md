@@ -1,8 +1,8 @@
 # Changelog
 
-## v0.18.2 - Unreleased
+## v0.18.2 - 2021-12-12
 
-- Erlang applications are not automatically started when the VM is started by
+- Erlang applications are now automatically started when the VM is started by
   `gleam run` and `gleam test`.
 
 ## v0.18.1 - 2021-12-12
