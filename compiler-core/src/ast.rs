@@ -518,7 +518,7 @@ pub struct CallArg<A> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct RecordUpdateSpread {
-    pub name: String,
+    pub base: Box<UntypedExpr>,
     pub location: SrcSpan,
 }
 
@@ -805,6 +805,13 @@ impl<A, B> Pattern<A, B> {
             | Pattern::Constructor { location, .. }
             | Pattern::BitString { location, .. } => *location,
         }
+    }
+
+    /// Returns `true` if the pattern is [`Discard`].
+    ///
+    /// [`Discard`]: Pattern::Discard
+    pub fn is_discard(&self) -> bool {
+        matches!(self, Self::Discard { .. })
     }
 }
 impl<A, B> HasLocation for Pattern<A, B> {

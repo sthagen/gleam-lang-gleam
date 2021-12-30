@@ -144,6 +144,22 @@ jobs:
           sed -i 's/cargo run --/gleam/' */rebar.config */Makefile
         working-directory: ./test
 
+      - name: test/project_erlang
+        run: |
+          gleam run
+          gleam test
+          gleam docs build
+        working-directory: ./test/project_erlang
+
+      # TODO: This will not work until we release a version of the build tool
+      # that outputs mjs modules and then we update the stdlib imports to match.
+      # - name: test/project_javascript
+      #   run: |
+      #     gleam run
+      #     gleam test
+      #     gleam docs build
+      #   working-directory: ./test/project_javascript
+
       - name: test/language Erlang
         run: make clean erlang
         working-directory: ./test/language
@@ -177,7 +193,7 @@ jobs:
           gleam docs build
 
           # Assert that module metadata has been written
-          ls build/dev/erlang/lib_project/lib_project.gleam_module
+          ls build/dev/erlang/lib_project/build/lib_project.gleam_module
 
           # Assert that HTML docs have been written
           ls build/dev/docs/lib_project/index.html

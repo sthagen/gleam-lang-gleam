@@ -9,7 +9,6 @@ use std::{
     fs::ReadDir,
     io,
     path::{Path, PathBuf},
-    process::ExitStatus,
 };
 use tar::{Archive, Entry};
 
@@ -80,7 +79,7 @@ pub trait CommandExecutor {
         args: &[String],
         env: &[(&str, String)],
         cwd: Option<&Path>,
-    ) -> Result<ExitStatus, Error>;
+    ) -> Result<i32, Error>;
 }
 
 /// A trait used to write files.
@@ -220,6 +219,18 @@ pub mod test {
         }
     }
 
+    impl CommandExecutor for FilesChannel {
+        fn exec(
+            &self,
+            _program: &str,
+            _args: &[String],
+            _env: &[(&str, String)],
+            _cwd: Option<&Path>,
+        ) -> Result<i32, Error> {
+            Ok(0)
+        }
+    }
+
     impl FileSystemWriter for FilesChannel {
         fn writer<'a>(&self, path: &'a Path) -> Result<WrappedWriter, Error> {
             let file = InMemoryFile::new();
@@ -236,7 +247,7 @@ pub mod test {
         }
 
         fn mkdir(&self, _path: &Path) -> Result<(), Error> {
-            panic!("FilesChannel does not support mkdir")
+            Ok(())
         }
 
         fn copy_dir(&self, _from: &Path, _to: &Path) -> Result<(), Error> {

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- The `gleam check` command has been introduced for rapidly verifying the types
+  of Gleam code without performing codegen.
+- `true` and `false` can no longer be used as pattern matching variables, to
+  avoid accidental uses of incorrect syntax that is popular in other languages.
+  An error will hint about using Gleam's `True` and `False` values instead.
+- You can now remove build artifacts using the new `gleam clean` command.
+- The `compile-package` can now generate `package.app` files and compile source
+  modules to `.beam` bytecode files.
+- The flags that `compile-package` accepts have changed.
+- Published Hex packages now include precompiled Erlang files.
+- Erlang record headers are now written to the `include` directory within the
+  package build directory.
+- The format used by the formatter has been improved.
+- Fixed a bug where tail recursion could sometimes generated incorrect
+  JavaScript code.
+- Performance of code generators has been slightly improved.
+- Allow the record in a record expansion to be an expression that returns a
+  record.
+
 ## v0.18.2 - 2021-12-12
 
 - Erlang applications are now automatically started when the VM is started by

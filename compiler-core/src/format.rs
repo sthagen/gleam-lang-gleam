@@ -819,7 +819,7 @@ impl<'comments> Formatter<'comments> {
     ) -> Document<'a> {
         use std::iter::once;
         let constructor_doc = self.expr(constructor);
-        let spread_doc = "..".to_doc().append(spread.name.to_doc());
+        let spread_doc = "..".to_doc().append(self.expr(&spread.base));
         let arg_docs = args.iter().map(|a| self.record_update_arg(a));
         let all_arg_docs = once(spread_doc).chain(arg_docs);
         constructor_doc.append(wrap_args(all_arg_docs)).group()
@@ -1223,7 +1223,13 @@ impl<'comments> Formatter<'comments> {
                     elements.iter().map(|e| self.pattern(e)),
                     break_(",", ", "),
                 ));
-                let tail = tail.as_ref().map(|e| self.pattern(e));
+                let tail = tail.as_ref().map(|e| {
+                    if e.is_discard() {
+                        nil()
+                    } else {
+                        self.pattern(e)
+                    }
+                });
                 list(elements, tail)
             }
 

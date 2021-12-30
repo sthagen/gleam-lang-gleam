@@ -11,15 +11,19 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use crate::project::ManifestPackage;
 
-use crate::build::Mode;
+use crate::build::{Mode, Target};
 
-pub fn default_version() -> Version {
+fn default_version() -> Version {
     Version::parse("0.1.0").expect("default version")
+}
+
+fn erlang_target() -> Target {
+    Target::Erlang
 }
 
 pub type Dependencies = HashMap<String, Range>;
 
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Deserialize, Debug, PartialEq, Clone)]
 pub struct PackageConfig {
     pub name: String,
     #[serde(default = "default_version")]
@@ -40,6 +44,8 @@ pub struct PackageConfig {
     pub links: Vec<Link>,
     #[serde(default)]
     pub erlang: ErlangConfig,
+    #[serde(default = "erlang_target")]
+    pub target: Target,
 }
 
 impl PackageConfig {
@@ -371,11 +377,12 @@ impl Default for PackageConfig {
             dev_dependencies: Default::default(),
             licences: Default::default(),
             links: Default::default(),
+            target: Target::Erlang,
         }
     }
 }
 
-#[derive(Deserialize, Debug, PartialEq, Default)]
+#[derive(Deserialize, Debug, PartialEq, Default, Clone)]
 pub struct ErlangConfig {
     #[serde(default)]
     pub application_start_module: Option<String>,
@@ -383,7 +390,7 @@ pub struct ErlangConfig {
     pub extra_applications: Vec<String>,
 }
 
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Deserialize, Debug, PartialEq, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Repository {
     GitHub { user: String, repo: String },
@@ -417,7 +424,7 @@ impl Default for Repository {
     }
 }
 
-#[derive(Deserialize, Default, Debug, PartialEq)]
+#[derive(Deserialize, Default, Debug, PartialEq, Clone)]
 pub struct Docs {
     #[serde(default)]
     pub pages: Vec<DocsPage>,
