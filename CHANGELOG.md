@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## v0.19.0-rc1 - 2022-01-03
 
+- The build tool now supports the JavaScript target. The target can be specified
+  in either `gleam.toml` or using the `--target` flag.
 - The `gleam check` command has been introduced for rapidly verifying the types
   of Gleam code without performing codegen.
 - `true` and `false` can no longer be used as pattern matching variables, to
@@ -20,6 +22,10 @@
 - Performance of code generators has been slightly improved.
 - Allow the record in a record expansion to be an expression that returns a
   record.
+- Fixed a bug where external function module names would not be escaped
+  correctly if they contained special characters and were assigned to a
+  variable.
+- A helpful error message is shown if Erlang is not installed.
 
 ## v0.18.2 - 2021-12-12
 

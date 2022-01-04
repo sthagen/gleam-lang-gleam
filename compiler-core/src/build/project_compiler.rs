@@ -179,7 +179,7 @@ where
             Ok(())
         } else {
             Err(Error::ShellCommand {
-                command: "rebar3".to_string(),
+                program: "rebar3".to_string(),
                 err: None,
             })
         }
@@ -233,7 +233,7 @@ where
         );
         compiler.write_metadata = true;
         compiler.write_entrypoint = is_root;
-        compiler.compile_erlang = !is_root || self.options.perform_codegen;
+        compiler.compile_beam_bytecode = !is_root || self.options.perform_codegen;
         compiler.read_source_files(self.mode())?;
 
         // Compile project to Erlang source code

@@ -51,29 +51,43 @@ jobs:
             ARCHIVE="gleam-$VERSION-${{ matrix.build }}.zip"
             cp "target/${{ matrix.target }}/release/gleam.exe" "gleam.exe"
             7z a "$ARCHIVE" "gleam.exe"
+            rm gleam.exe
           else
             ARCHIVE="gleam-$VERSION-${{ matrix.build }}.tar.gz"
             cp "target/${{ matrix.target }}/release/gleam" "gleam"
             tar -czvf "$ARCHIVE" "gleam"
+            rm gleam
           fi
 
           openssl dgst -r -sha256 -out "$ARCHIVE".sha256 "$ARCHIVE"
           openssl dgst -r -sha512 -out "$ARCHIVE".sha512 "$ARCHIVE"
           echo "ASSET=$ARCHIVE" >> $GITHUB_ENV
 
+      - name: Ensure binary successfully boots
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z x "$ASSET"
+            # TODO: This currently fails due token: `gleam.exe: command not found`
+            # Debug the issue and enable it again.
+            # ./gleam.exe --version
+          elif [ "${{ matrix.build }}" = "macos-arm64" ]; then
+            echo We cannot test an ARM binary on a AMD64 runner
+          else
+            tar -xvzf "$ASSET"
+            ./gleam --version
+          fi
+
       - name: Upload release archive
         uses: softprops/action-gh-release@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ github.ref }}
-          name: ${{ github.ref }}
           draft: true
-          prelease: false
+          prerelease: false
           fail_on_unmatched_files: true
           files: |
-            "$ASSET"
-            "$ASSET".sha256
-            "$ASSET".sha512
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+            ${{ env.ASSET }}.sha512
 
   build-release-musl:
     runs-on: ubuntu-latest
@@ -102,16 +116,20 @@ jobs:
           openssl dgst -r -sha512 -out "$ARCHIVE".sha512 "$ARCHIVE"
           echo "ASSET=$ARCHIVE" >> $GITHUB_ENV
 
+      - name: Ensure binary successfully boots
+        shell: bash
+        run: |
+          tar -xvzf "$ASSET"
+          ./gleam --version
+
       - name: Upload release archive
         uses: softprops/action-gh-release@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ github.ref }}
-          name: ${{ github.ref }}
           draft: true
-          prelease: false
+          prerelease: false
           fail_on_unmatched_files: true
           files: |
-            "$ASSET"
-            "$ASSET".sha256
-            "$ASSET".sha512
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+            ${{ env.ASSET }}.sha512
