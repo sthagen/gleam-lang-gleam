@@ -35,31 +35,18 @@ jobs:
           target: ${{ matrix.target }}
           profile: minimal
           override: true
+          default: true
 
-      - name: Build binary
-        uses: actions-rs/cargo@v1
+      - name: Handle Rust dependencies caching
+        uses: Swatinem/rust-cache@v1
         with:
-          command: build
-          args: --release --target ${{ matrix.target }}
-
-      - name: Run linter
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --workspace --target ${{ matrix.target }} -- -D warnings
+          key: ${{ matrix.target }}
 
       - name: Run tests
         uses: actions-rs/cargo@v1
         with:
           command: test
           args: --workspace --target ${{ matrix.target }}
-
-      - name: Upload artifact (Ubuntu)
-        if: matrix.build == 'linux-amd64'
-        uses: actions/upload-artifact@v2
-        with:
-          name: gleam
-          path: target/${{ matrix.target }}/release/gleam
 
   test-musl:
     runs-on: ubuntu-latest
@@ -73,13 +60,17 @@ jobs:
           ln -s /root/.cargo $HOME/.cargo
           ln -s /root/.rustup $HOME/.rustup
 
-      - name: Build binary
-        run: cargo build --release
+      - name: Handle Rust dependencies caching
+        uses: Swatinem/rust-cache@v1
+        with:
+          key: linux-musl
       
       - name: Run tests
         run: cargo test --workspace
 
   rustfmt:
+    env:
+      RUSTFLAGS: "-D warnings"
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
@@ -93,9 +84,13 @@ jobs:
           override: true
           profile: minimal
           components: rustfmt
+          default: true
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
 
   validate-deps:
     name: validate-deps
@@ -117,16 +112,57 @@ jobs:
           echo `pwd` >> $GITHUB_PATH
       - run: cargo deny check
 
+  lint-build:
+    env:
+      RUSTFLAGS: "-D warnings"
+    name: lint-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          profile: minimal
+          components: clippy
+          default: true
+
+      - name: Handle Rust dependencies caching
+        uses: Swatinem/rust-cache@v1
+        with:
+          key: linux-gnu
+
+      - name: Run linter
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --target x86_64-unknown-linux-gnu --workspace -- -D warnings
+
+      - name: Build binary
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --target x86_64-unknown-linux-gnu
+
+      - name: Upload artifact (Ubuntu)
+        uses: actions/upload-artifact@v2
+        with:
+          name: gleam
+          path: target/x86_64-unknown-linux-gnu/debug/gleam
+
   test-projects:
     name: test-projects
-    needs: test
+    needs: lint-build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2.0.0
 
       - name: Install Erlang
-        uses: gleam-lang/setup-erlang@v1.1.2
+        uses: erlef/setup-beam@v1.9.0
         with:
           otp-version: 23.2
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- New projects are created with `erlef/setup-beam` v1.9.0 instead of
+  `gleam-lang/setup-erlang` and `gleam-lang/setup-gleam`.
+- Fixed a bug where tail call optimisation could generate incorrect code when
+  the function has argument names that are JavaScript keywords.
+- Fixed a bug where the build would continue when dependency packages failed to
+  compile.
+
 ## v0.19.0-rc1 - 2022-01-03
 
 - The build tool now supports the JavaScript target. The target can be specified
