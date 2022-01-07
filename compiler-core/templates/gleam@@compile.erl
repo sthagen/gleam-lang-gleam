@@ -1,11 +1,13 @@
 #!/usr/bin/env escript
 
 % TODO: Don't concurrently print warnings and errors
+% TODO: Some tests
 
 -record(arguments, {lib = "./", out = "./", modules = []}).
 
 main(Args) ->
     #arguments{out = Out, lib = Lib, modules = Modules} = parse(Args),
+    ok = configure_logging(),
     ok = add_lib_to_erlang_path(Lib),
     ok = filelib:ensure_dir([Out, $/]),
     Workers = start_compiler_workers(Out),
@@ -42,9 +44,13 @@ worker_loop(Parent, Out) ->
     erlang:send(Parent, {work_please, self()}),
     receive
         {module, Module} -> 
+            log({compiling, Module}),
             case compile:file(Module, Options) of
-                {ok, _} -> ok;
-                error -> erlang:send(Parent, failed)
+                {ok, _} -> 
+                    log({compiled, Module});
+                error -> 
+                    log({failed, Module}),
+                    erlang:send(Parent, failed)
             end,
             worker_loop(Parent, Out)
     end.
@@ -63,3 +69,13 @@ parse(["--out", Out | Rest], Arguments) ->
     parse(Rest, Arguments#arguments{out = Out});
 parse([Module | Rest], Arguments = #arguments{modules = Modules}) ->
     parse(Rest, Arguments#arguments{modules = [Module | Modules]}).
+
+configure_logging() ->
+    Enabled = os:getenv("GLEAM_LOG") /= false,
+    persistent_term:put(gleam_logging_enabled, Enabled).
+
+log(Term) ->
+    case persistent_term:get(gleam_logging_enabled) of
+        true -> erlang:display(Term), ok;
+        false -> ok
+    end.
