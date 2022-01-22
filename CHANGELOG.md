@@ -1,6 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- A WebAssembly version of the compile is now available for use in JavaScript
+  and other WebAssembly environments.
+- New projects include Hex badges and a link to Hexdocs.
+- Enhance type mismatch errors in the presence of try.
+- Enhance type mismatch error for an inconsistent try.
+- Fixed a bug where sometimes type variable could be reused result in incorrect
+  non-deterministic type errors.
+
 ## v0.19.0 - 2022-01-12
+
+Dedicated to the memory of Muhammad Shaheer, a good and caring man.
+
+[Release Blog Post](https://gleam.run/news/gleam-v0.19-released/)
 
 ## v0.19.0-rc4 - 2022-01-10
 
@@ -70,6 +84,8 @@
 
 ## v0.18.0 - 2021-12-06
 
+[Release Blog Post](https://gleam.run/news/gleam-v0.18-released/)
+
 - New projects now include `gleeunit`.
 
 ## v0.18.0-rc3 - 2021-12-05
@@ -108,6 +124,9 @@
 - New projects use v0.18 of the stdlib.
 
 ## v0.17.0 - 2021-09-20
+
+
+[Release Blog Post](https://gleam.run/news/gleam-v0.17-released/)
 
 - Functions now get special handling when being printed from JavaScript.
 
@@ -202,6 +221,8 @@
   JavaScript.
 
 ## v0.16.0 - 2021-06-17
+
+[Release Blog Post](https://gleam.run/news/gleam-v0.16-released/)
 
 ## v0.16.0-rc4 - 2021-06-17
 

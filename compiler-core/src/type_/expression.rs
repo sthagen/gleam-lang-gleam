@@ -13,8 +13,8 @@ use crate::ast::{
 use im::hashmap;
 
 #[derive(Debug)]
-pub(crate) struct ExprTyper<'a, 'b, 'c> {
-    pub(crate) environment: &'a mut Environment<'b, 'c>,
+pub(crate) struct ExprTyper<'a, 'b> {
+    pub(crate) environment: &'a mut Environment<'b>,
 
     // Type hydrator for creating types from annotations
     pub(crate) hydrator: Hydrator,
@@ -25,8 +25,8 @@ pub(crate) struct ExprTyper<'a, 'b, 'c> {
     pub(crate) ungeneralised_function_used: bool,
 }
 
-impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
-    pub fn new(environment: &'a mut Environment<'b, 'c>) -> Self {
+impl<'a, 'b> ExprTyper<'a, 'b> {
+    pub fn new(environment: &'a mut Environment<'b>) -> Self {
         let mut hydrator = Hydrator::new();
         hydrator.permit_holes(true);
         Self {
@@ -54,7 +54,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         self.hydrator.type_from_ast(ast, self.environment)
     }
 
-    fn instantiate(&mut self, t: Arc<Type>, ids: &mut im::HashMap<usize, Arc<Type>>) -> Arc<Type> {
+    fn instantiate(&mut self, t: Arc<Type>, ids: &mut im::HashMap<u64, Arc<Type>>) -> Arc<Type> {
         self.environment.instantiate(t, ids, &self.hydrator)
     }
 
@@ -608,7 +608,7 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
                 .type_from_ast(ann)
                 .map(|t| self.instantiate(t, &mut hashmap![]))?;
             self.unify(ann_typ, value_typ)
-                .map_err(|e| convert_unify_error(e, value.location()))?;
+                .map_err(|e| convert_unify_error(e, value.type_defining_location()))?;
         }
 
         Ok(TypedExpr::Assignment {
@@ -653,7 +653,10 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
         {
             let t = self.new_unbound_var();
             self.unify(result(t, try_error_type), typ.clone())
-                .map_err(|e| convert_unify_error(e, then.location()))?;
+                .map_err(|e| {
+                    e.inconsistent_try(typ.is_result())
+                        .into_error(then.type_defining_location())
+                })?;
         }
 
         // Check that any type annotation is accurate.
@@ -1760,10 +1763,12 @@ impl<'a, 'b, 'c> ExprTyper<'a, 'b, 'c> {
             body_typer.infer(body)
         })?;
 
-        // Check that any return type type is accurate.
+        // Check that any return type is accurate.
         if let Some(return_type) = return_type {
-            self.unify(return_type, body.type_())
-                .map_err(|e| e.return_annotation_mismatch().into_error(body.location()))?;
+            self.unify(return_type, body.type_()).map_err(|e| {
+                e.return_annotation_mismatch()
+                    .into_error(body.type_defining_location())
+            })?;
         }
 
         Ok((args, body))

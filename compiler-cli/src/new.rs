@@ -105,6 +105,9 @@ erl_crash.dump
             &format!(
                 r#"# {name}
 
+[![Package Version](https://img.shields.io/hexpm/v/{name})](https://hex.pm/packages/{name})
+[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/{name}/)
+
 {description}
 
 ## Quick start
@@ -117,11 +120,13 @@ gleam shell # Run an Erlang shell
 
 ## Installation
 
-If available on Hex this package can be added to your Gleam project.
+If available on Hex this package can be added to your Gleam project:
 
 ```sh
 gleam add {name}
 ```
+
+and its documentation can be found at <https://hexdocs.pm/{name}>.
 "#,
                 name = self.project_name,
                 description = self.options.description,
