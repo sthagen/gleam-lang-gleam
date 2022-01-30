@@ -431,6 +431,21 @@ fn function_return_annotation_mismatch_with_try_nested() {
     );
 }
 
+// https://github.com/gleam-lang/gleam/issues/1378
+#[test]
+fn function_return_annotation_mismatch_with_pipe() {
+    assert_module_error!(
+        "pub fn main() -> String {
+            1
+            |> add_two
+         }
+          
+         fn add_two(i: Int) -> Int {
+            i + 2
+         }"
+    );
+}
+
 #[test]
 fn variable_annotation_with_try() {
     assert_error!(
@@ -1355,5 +1370,158 @@ pub fn parse(input: BitString) -> String {
       |> change
   }
 }"#
+    );
+}
+
+#[test]
+fn let_exhaustiveness1() {
+    assert_module_error!(
+        r#"
+pub fn main(b) {
+    let True = b
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn let_exhaustiveness2() {
+    assert_module_error!(
+        r#"
+pub fn main(r) {
+    let Error(_) = r
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn let_exhaustiveness3() {
+    assert_module_error!(
+        r#"
+pub type Media {
+    Audio(BitString)
+    Video(BitString)
+    Text(String)
+}
+pub fn main(m) {
+    let Video(_) = m
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn let_exhaustiveness4() {
+    assert_module_error!(
+        r#"
+pub type Media {
+    Audio(BitString)
+    Video(BitString)
+    Text(String)
+}
+pub fn main(m) {
+    let Video(_) as v = m
+    v
+}
+"#
+    );
+}
+
+#[test]
+fn case_exhaustiveness1() {
+    assert_module_error!(
+        r#"
+pub fn main(b) {
+    case b {
+        True -> Nil
+    }
+}
+"#
+    );
+}
+
+#[test]
+fn case_exhaustiveness2() {
+    assert_module_error!(
+        r#"
+pub fn main(r) {
+    case r {
+        Error(_) -> Nil
+    }
+}
+"#
+    );
+}
+
+#[test]
+fn case_exhaustiveness3() {
+    assert_module_error!(
+        r#"
+pub type Media {
+    Audio(BitString)
+    Video(BitString)
+    Text(String)
+}
+pub fn main(m) {
+    case m {
+        Audio(_) as a -> a
+        Video(_) -> m
+    }
+}
+"#
+    );
+}
+
+#[test]
+fn case_exhaustiveness4() {
+    assert_module_error!(
+        r#"
+pub type Media {
+    Audio(BitString)
+    Video(BitString)
+    Text(String)
+}
+pub fn main(m) {
+    case m {
+        Video(_) -> m
+    }
+}
+"#
+    );
+}
+
+#[test]
+fn case_exhaustiveness5() {
+    assert_module_error!(
+        r#"
+pub type Media {
+    Audio(BitString)
+    Video(BitString)
+    Text(String)
+}
+pub fn main(m) {
+    case m {
+        Audio(_) | Text(_) -> m
+    }
+}
+"#
+    );
+}
+
+#[test]
+fn case_exhaustiveness6() {
+    assert_module_error!(
+        r#"
+pub fn main(b) {
+    case b {
+        b if b == True -> Nil
+        b if b != True -> Nil
+    }
+}
+"#
     );
 }

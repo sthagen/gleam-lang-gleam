@@ -211,6 +211,11 @@ pub enum Error {
         name: String,
         keyword: String,
     },
+
+    NotExhaustivePatternMatch {
+        location: SrcSpan,
+        unmatched: Vec<String>,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]

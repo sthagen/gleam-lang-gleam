@@ -18,7 +18,10 @@ pub struct Environment<'a> {
     /// Types defined in the current module (or the prelude)
     pub module_types: HashMap<String, TypeConstructor>,
 
-    /// Values defined in the current module
+    /// Mapping from types to constructor names in the current module (or the prelude)
+    pub module_types_constructors: HashMap<String, Vec<String>>,
+
+    /// Values defined in the current module (or the prelude)
     pub module_values: HashMap<String, ValueConstructor>,
 
     /// Accessors defined in the current module
@@ -68,6 +71,7 @@ impl<'a> Environment<'a> {
             ids,
             ungeneralised_functions: HashSet::new(),
             module_types: prelude.types.clone(),
+            module_types_constructors: prelude.types_constructors.clone(),
             module_values: HashMap::new(),
             imported_modules: HashMap::new(),
             accessors: prelude.accessors.clone(),
@@ -204,6 +208,14 @@ impl<'a> Environment<'a> {
         }
     }
 
+    /// Map a type to constructors in the current scope.
+    ///
+    pub fn insert_type_to_constructors(&mut self, type_name: String, constructors: Vec<String>) {
+        let _ = self
+            .module_types_constructors
+            .insert(type_name, constructors);
+    }
+
     /// Lookup a type in the current scope.
     ///
     pub fn get_type_constructor(
@@ -239,6 +251,43 @@ impl<'a> Environment<'a> {
                         module_name: module.name.clone(),
                         type_constructors: module.types.keys().map(|t| t.to_string()).collect(),
                     })
+            }
+        }
+    }
+
+    /// Lookup constructors for type in the current scope.
+    ///
+    pub fn get_constructors_for_type(
+        &self,
+        full_module_name: &Option<String>,
+        name: &str,
+    ) -> Result<&Vec<String>, UnknownTypeConstructorError> {
+        match full_module_name {
+            None => self.module_types_constructors.get(name).ok_or_else(|| {
+                UnknownTypeConstructorError::Type {
+                    name: name.to_string(),
+                    type_constructors: self.module_types.keys().map(|t| t.to_string()).collect(),
+                }
+            }),
+
+            Some(m) => {
+                let module = self.importable_modules.get(m).ok_or_else(|| {
+                    UnknownTypeConstructorError::Module {
+                        name: name.to_string(),
+                        imported_modules: self
+                            .importable_modules
+                            .keys()
+                            .map(|t| t.to_string())
+                            .collect(),
+                    }
+                })?;
+                module.types_constructors.get(name).ok_or_else(|| {
+                    UnknownTypeConstructorError::ModuleType {
+                        name: name.to_string(),
+                        module_name: module.name.clone(),
+                        type_constructors: module.types.keys().map(|t| t.to_string()).collect(),
+                    }
+                })
             }
         }
     }
@@ -586,5 +635,65 @@ impl<'a> Environment<'a> {
             .filter(|&t| PIPE_VARIABLE != t)
             .map(|t| t.to_string())
             .collect()
+    }
+
+    /// Checks that the given patterns are exhaustive for given type.
+    /// Currently only performs exhaustiveness checking for custom types,
+    /// only at the top level (without recursing into constructor arguments).
+    pub fn check_exhaustiveness(
+        &mut self,
+        patterns: Vec<Pattern<PatternConstructor, Arc<Type>>>,
+        value_typ: Arc<Type>,
+    ) -> Result<(), Vec<String>> {
+        match &*value_typ {
+            Type::App {
+                name: type_name,
+                module: module_vec,
+                ..
+            } => {
+                let m = if module_vec.is_empty() || module_vec == self.current_module {
+                    None
+                } else {
+                    Some(module_vec.join("/"))
+                };
+
+                if let Ok(constructors) = self.get_constructors_for_type(&m, type_name) {
+                    let mut unmatched_constructors: HashSet<String> =
+                        constructors.iter().cloned().collect();
+
+                    for p in &patterns {
+                        // ignore Assign patterns
+                        let mut pattern = p;
+                        while let Pattern::Assign {
+                            pattern: assign_pattern,
+                            ..
+                        } = pattern
+                        {
+                            pattern = assign_pattern;
+                        }
+
+                        match pattern {
+                            // If the pattern is a Discard or Var, all constructors are covered by it
+                            Pattern::Discard { .. } => return Ok(()),
+                            Pattern::Var { .. } => return Ok(()),
+                            // If the pattern is a constructor, remove it from unmatched patterns
+                            Pattern::Constructor {
+                                constructor: PatternConstructor::Record { name, .. },
+                                ..
+                            } => {
+                                let _ = unmatched_constructors.remove(name);
+                            }
+                            _ => return Ok(()),
+                        }
+                    }
+
+                    if !unmatched_constructors.is_empty() {
+                        return Err(unmatched_constructors.into_iter().sorted().collect());
+                    }
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 }

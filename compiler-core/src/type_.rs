@@ -322,6 +322,7 @@ pub struct Module {
     pub origin: Origin,
     pub package: String,
     pub types: HashMap<String, TypeConstructor>,
+    pub types_constructors: HashMap<String, Vec<String>>,
     pub values: HashMap<String, ValueConstructor>,
     pub accessors: HashMap<String, AccessorsMap>,
 }
@@ -517,6 +518,7 @@ pub fn infer_module(
 
     let Environment {
         module_types: types,
+        module_types_constructors: types_constructors,
         module_values: values,
         accessors,
         ..
@@ -529,6 +531,7 @@ pub fn infer_module(
         type_info: Module {
             name,
             types,
+            types_constructors,
             values,
             accessors,
             origin,
@@ -1560,6 +1563,7 @@ pub fn register_types<'a>(
             public,
             parameters,
             location,
+            constructors,
             ..
         } => {
             assert_unique_type_name(names, name, location)?;
@@ -1585,6 +1589,10 @@ pub fn register_types<'a>(
                     typ,
                 },
             )?;
+
+            let constructor_names = constructors.iter().map(|c| c.name.clone()).collect();
+            environment.insert_type_to_constructors(name.clone(), constructor_names);
+
             // Keep track of private types so we can tell if they are later unused
             if !public {
                 let _ = environment.init_usage(name.clone(), EntityKind::PrivateType, *location);

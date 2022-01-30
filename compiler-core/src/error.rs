@@ -1604,6 +1604,31 @@ Try a different name for this module.",
                     };
                     write_project(buf, diagnostic);
                 }
+
+                TypeError::NotExhaustivePatternMatch {
+                    location,
+                    unmatched,
+                } => {
+                    let diagnostic = Diagnostic {
+                        title: "Not exhaustive pattern match".to_string(),
+                        label: "".to_string(),
+                        file: path.to_str().unwrap().to_string(),
+                        src: src.to_string(),
+                        location: *location,
+                    };
+                    write(buf, diagnostic, Severity::Error);
+                    wrap_writeln!(
+                        buf,
+                        "This case expression does not match all possibilities. \
+Each constructor must have a pattern that matches it or else it could crash.
+
+These values are not matched:
+
+  - {}",
+                        unmatched.join("\n  - "),
+                    )
+                    .unwrap();
+                }
             },
 
             Error::Parse { path, src, error } => {
