@@ -161,17 +161,27 @@ where
 
     fn copy_project_native_files(
         &mut self,
-        out: &Path,
+        build_dir: &Path,
         modules: &mut HashSet<PathBuf>,
     ) -> Result<(), Error> {
         tracing::info!("copying_native_source_files");
+
+        // TODO: unit test
+        let priv_source = self.root.join("priv");
+        let priv_build = self.out.join("priv");
+        if self.io.is_directory(&priv_source) && !self.io.is_directory(&priv_build) {
+            tracing::debug!("linking_priv_to_build");
+            self.io.symlink_dir(&priv_source, &priv_build)?;
+        }
+
         let src = self.root.join("src");
         let test = self.root.join("test");
         let mut copied = HashSet::new();
-        self.copy_native_files(&src, out, &mut copied, modules)?;
+        self.copy_native_files(&src, build_dir, &mut copied, modules)?;
         if self.io.is_directory(&test) {
-            self.copy_native_files(&test, out, &mut copied, modules)?;
+            self.copy_native_files(&test, build_dir, &mut copied, modules)?;
         }
+
         Ok(())
     }
 

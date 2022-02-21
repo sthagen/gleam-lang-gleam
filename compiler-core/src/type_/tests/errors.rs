@@ -1179,6 +1179,40 @@ fn x() {
 }
 
 #[test]
+fn wrong_type_var() {
+    // A unification error should show the type var as named by user
+    // See https://github.com/gleam-lang/gleam/issues/1256
+    assert_module_error!(
+        r#"fn foo(x: String) { x }
+fn multi_result(x: some_name) {
+  foo(x)
+}"#
+    );
+}
+
+#[test]
+fn wrong_type_arg() {
+    assert_module_error!(
+        r#"
+fn foo(x: List(Int)) { x }
+fn main(y: List(something)) {
+  foo(y)
+}"#
+    );
+}
+
+#[test]
+fn wrong_type_ret() {
+    // See https://github.com/gleam-lang/gleam/pull/1407#issuecomment-1001162876
+    assert_module_error!(
+        r#"pub fn main(x: something) -> Int {
+  let y = x
+  y
+}"#
+    );
+}
+
+#[test]
 fn wrong_type_update() {
     // A variable of the wrong type given to a record update
     assert_module_error!(
@@ -1521,6 +1555,22 @@ pub fn main(b) {
         b if b == True -> Nil
         b if b != True -> Nil
     }
+}
+"#
+    );
+}
+
+#[test]
+fn pipe_arity_error() {
+    assert_module_error!(
+        r#"
+fn go(x, y) {
+  x + y
+}
+
+fn main(x) {
+  1
+  |> go
 }
 "#
     );

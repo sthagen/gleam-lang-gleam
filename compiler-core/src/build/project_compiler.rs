@@ -158,11 +158,19 @@ where
         }
 
         // TODO: unit test
-        let src_priv = project_dir.join("priv");
-        if self.io.is_directory(&src_priv) {
+        let priv_dir = project_dir.join("priv");
+        if self.io.is_directory(&priv_dir) {
             tracing::debug!("copying_priv_to_build");
             // TODO: This could be a symlink
-            self.io.copy_dir(&src_priv, &dest)?;
+            self.io.copy_dir(&priv_dir, &dest)?;
+        }
+
+        // TODO: unit test
+        let ebin_dir = project_dir.join("ebin");
+        if self.io.is_directory(&ebin_dir) {
+            tracing::debug!("copying_ebin_to_build");
+            // TODO: This could be a symlink
+            self.io.copy_dir(&ebin_dir, &dest)?;
         }
 
         // TODO: test

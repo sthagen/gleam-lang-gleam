@@ -283,6 +283,7 @@ impl StandardIoAction {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum FileIoAction {
+    Link,
     Open,
     Copy,
     Read,
@@ -290,12 +291,14 @@ pub enum FileIoAction {
     Delete,
     Create,
     WriteTo,
+    Canonicalise,
     FindParent,
 }
 
 impl FileIoAction {
     fn text(&self) -> &'static str {
         match self {
+            FileIoAction::Link => "link",
             FileIoAction::Open => "open",
             FileIoAction::Copy => "copy",
             FileIoAction::Read => "read",
@@ -304,6 +307,7 @@ impl FileIoAction {
             FileIoAction::Create => "create",
             FileIoAction::WriteTo => "write to",
             FileIoAction::FindParent => "find the parent of",
+            FileIoAction::Canonicalise => "Canonicalise",
         }
     }
 }
@@ -913,7 +917,7 @@ Once a labelled argument has been supplied all following arguments must also be 
 
                     writeln!(
                         buf,
-                        "The record being updated has this type:
+                        "The value being accessed has this type:
 
 {}
 ",
@@ -936,6 +940,7 @@ Once a labelled argument has been supplied all following arguments must also be 
                     expected,
                     given,
                     situation: Some(UnifyErrorSituation::Operator(op)),
+                    rigid_type_names: annotated_names,
                 } => {
                     let diagnostic = Diagnostic {
                         title: "Type mismatch".to_string(),
@@ -946,6 +951,7 @@ Once a labelled argument has been supplied all following arguments must also be 
                     };
                     write(buf, diagnostic, Severity::Error);
                     let mut printer = Printer::new();
+                    printer.with_names(annotated_names.clone());
                     writeln!(
                         buf,
                         "The {op} operator expects arguments of this type:
@@ -970,12 +976,11 @@ But this argument has this type:
                     expected,
                     given,
                     situation: Some(UnifyErrorSituation::PipeTypeMismatch),
+                    rigid_type_names: annotated_names,
                 } => {
                     let diagnostic = Diagnostic {
-                        title:
-                            "This function cannot handle the argument sent through the (|>) pipe:"
-                                .to_string(),
-                        label: "".to_string(),
+                        title: "Type mismatch".to_string(),
+                        label: "This function does not accept the piped type".to_string(),
                         file: path.to_str().unwrap().to_string(),
                         src: src.to_string(),
                         location: *location,
@@ -994,17 +999,18 @@ But this argument has this type:
 
                     write(buf, diagnostic, Severity::Error);
                     let mut printer = Printer::new();
+                    printer.with_names(annotated_names.clone());
                     writeln!(
                         buf,
                         "The argument is:
 
 {given}
 
-But (|>) is piping it to a function that expects:
+But function expects:
 
 {expected}
 
-\n",
+",
                         expected = expected
                             .map(|v| printer.pretty_print(&v, 4))
                             .unwrap_or_else(|| "    No arguments".to_string()),
@@ -1018,6 +1024,7 @@ But (|>) is piping it to a function that expects:
                     expected,
                     given,
                     situation,
+                    rigid_type_names: annotated_names,
                 } => {
                     let diagnostic = Diagnostic {
                         title: "Type mismatch".to_string(),
@@ -1031,6 +1038,7 @@ But (|>) is piping it to a function that expects:
                         writeln!(buf, "{}\n", description).unwrap();
                     }
                     let mut printer = Printer::new();
+                    printer.with_names(annotated_names.clone());
                     writeln!(
                         buf,
                         "Expected type:

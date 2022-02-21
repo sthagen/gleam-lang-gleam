@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.20.0-rc1 - 2022-02-20
 
+- Type unification errors involving user annotated types now refer to the names
+  specified by the user instead of internal rigid-type ids.
+- The build tool now validates that listed licenses are valid SPDX expressions.
 - A WebAssembly version of the compile is now available for use in JavaScript
   and other WebAssembly environments.
 - New projects include Hex badges and a link to Hexdocs.
@@ -16,6 +19,15 @@
 - Introduce a limited form of exhaustiveness checking for pattern matching
   of custom types, which only checks that all constructor tags are covered
   at the top level of patterns.
+- The `ebin` directory is now copied to the build directory for rebar3 managed
+  dependencies if present before compilation.
+- The format used by the formatter has been improved.
+- Package names in `gleam.toml` are validated when the config is read.
+- The `priv` directory is linked into the build directory for Gleam projects
+  managed by the build tool.
+- Fixed a bug where type errors from pipes could show incorrect information.
+- Fixed a bug where types could not be imported if they had the same name as a
+  value in the prelude.
 
 ## v0.19.0 - 2022-01-12
 
