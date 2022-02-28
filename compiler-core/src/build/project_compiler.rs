@@ -33,14 +33,14 @@ pub struct Options {
 }
 
 #[derive(Debug)]
-pub struct ProjectCompiler<'a, IO> {
+pub struct ProjectCompiler<IO> {
     config: PackageConfig,
-    packages: HashMap<String, &'a ManifestPackage>,
-    importable_modules: HashMap<String, type_::Module>,
-    defined_modules: HashMap<String, PathBuf>,
+    packages: HashMap<String, ManifestPackage>,
+    importable_modules: im::HashMap<String, type_::Module>,
+    defined_modules: im::HashMap<String, PathBuf>,
     warnings: Vec<Warning>,
     telemetry: Box<dyn Telemetry>,
-    options: &'a Options,
+    options: Options,
     ids: UniqueIdGenerator,
     io: IO,
 }
@@ -48,22 +48,24 @@ pub struct ProjectCompiler<'a, IO> {
 // TODO: test that tests cannot be imported into src
 // TODO: test that dep cycles are not allowed between packages
 
-impl<'a, IO> ProjectCompiler<'a, IO>
+impl<IO> ProjectCompiler<IO>
 where
     IO: CommandExecutor + FileSystemIO + Clone,
 {
     pub fn new(
         config: PackageConfig,
-        options: &'a Options,
-        packages: &'a [ManifestPackage],
+        options: Options,
+        packages: Vec<ManifestPackage>,
         telemetry: Box<dyn Telemetry>,
         io: IO,
     ) -> Self {
-        let estimated_modules = packages.len() * 5;
-        let packages = packages.iter().map(|p| (p.name.to_string(), p)).collect();
+        let packages = packages
+            .into_iter()
+            .map(|p| (p.name.to_string(), p))
+            .collect();
         Self {
-            importable_modules: HashMap::with_capacity(estimated_modules),
-            defined_modules: HashMap::with_capacity(estimated_modules),
+            importable_modules: im::HashMap::new(),
+            defined_modules: im::HashMap::new(),
             ids: UniqueIdGenerator::new(),
             warnings: Vec::new(),
             telemetry,
@@ -72,6 +74,22 @@ where
             config,
             io,
         }
+    }
+
+    // TODO: test
+    pub fn checkpoint(&self) -> CheckpointState {
+        CheckpointState {
+            importable_modules: self.importable_modules.clone(),
+            defined_modules: self.defined_modules.clone(),
+            ids: self.ids.fork(),
+        }
+    }
+
+    // TODO: test
+    pub fn restore(&mut self, checkpoint: CheckpointState) {
+        self.importable_modules = checkpoint.importable_modules;
+        self.defined_modules = checkpoint.defined_modules;
+        self.ids = checkpoint.ids;
     }
 
     pub fn mode(&self) -> Mode {
@@ -83,31 +101,38 @@ where
     }
 
     /// Returns the compiled information from the root package
-    pub fn compile(mut self) -> Result<Package> {
-        // Determine package processing order
-        let sequence = order_packages(&self.packages)?;
+    pub fn compile(&mut self) -> Result<Package> {
+        self.compile_dependencies()?;
 
-        // Read and type check deps packages
-        for name in sequence {
-            let package = self.packages.remove(&name).expect("Missing package config");
-            self.load_cache_or_compile_package(package)?;
-        }
-
-        // Read and type check top level package
         if self.options.perform_codegen {
             self.telemetry.compiling_package(&self.config.name);
         } else {
             self.telemetry.checking_package(&self.config.name);
         }
+        self.compile_root_package()
+    }
+
+    pub fn compile_root_package(&mut self) -> Result<Package, Error> {
         let config = self.config.clone();
         let modules = self.compile_gleam_package(&config, true, paths::root())?;
 
         // Print warnings
-        for warning in self.warnings {
-            self.telemetry.warning(&warning);
+        for warning in &self.warnings {
+            self.telemetry.warning(warning);
         }
 
         Ok(Package { config, modules })
+    }
+
+    pub fn compile_dependencies(&mut self) -> Result<(), Error> {
+        let sequence = order_packages(&self.packages)?;
+
+        for name in sequence {
+            let package = self.packages.remove(&name).expect("Missing package config");
+            self.load_cache_or_compile_package(&package)?;
+        }
+
+        Ok(())
     }
 
     fn load_cache_or_compile_package(&mut self, package: &ManifestPackage) -> Result<(), Error> {
@@ -264,7 +289,7 @@ where
     }
 }
 
-fn order_packages(packages: &HashMap<String, &ManifestPackage>) -> Result<Vec<String>, Error> {
+fn order_packages(packages: &HashMap<String, ManifestPackage>) -> Result<Vec<String>, Error> {
     dep_tree::toposort_deps(
         packages
             .values()
@@ -300,4 +325,10 @@ fn usable_build_tool(package: &ManifestPackage) -> Result<BuildTool, Error> {
         package: package.name.to_string(),
         build_tools: package.build_tools.clone(),
     })
+}
+
+pub struct CheckpointState {
+    importable_modules: im::HashMap<String, type_::Module>,
+    defined_modules: im::HashMap<String, PathBuf>,
+    ids: UniqueIdGenerator,
 }

@@ -61,6 +61,7 @@ mod format;
 mod fs;
 mod hex;
 mod http;
+mod lsp;
 mod new;
 mod panic;
 mod project;
@@ -174,17 +175,23 @@ enum Command {
     #[clap(setting = AppSettings::Hidden)]
     PrintConfig,
 
-    /// Add a new project dependency
+    /// Add new project dependencies
     Add {
-        package: String,
+        /// The names of Hex packages to add
+        #[clap(required = true)]
+        packages: Vec<String>,
 
-        /// Add the package as a dev-only dependency
+        /// Add the packages as dev-only dependencies
         #[clap(long)]
         dev: bool,
     },
 
     /// Clean build artifacts
     Clean,
+
+    /// Run the language server, to be used by editors
+    #[clap(name = "lsp", setting = AppSettings::Hidden)]
+    LanguageServer,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -333,9 +340,11 @@ fn main() {
             hex::UnretireCommand::new(package, version).run()
         }
 
-        Command::Add { package, dev } => add::command(package, dev),
+        Command::Add { packages, dev } => add::command(packages, dev),
 
         Command::Clean => clean(),
+
+        Command::LanguageServer => lsp::main(),
     };
 
     match result {
@@ -361,7 +370,7 @@ compile-package` API with your existing build tool.
 ";
 
 fn command_check() -> Result<(), Error> {
-    let _ = build::main(&Options {
+    let _ = build::main(Options {
         perform_codegen: false,
         mode: Mode::Dev,
         target: None,
@@ -379,7 +388,7 @@ fn command_build(
 
     // Use new build tool if not in a rebar project
     if !root.join("rebar.config").exists() {
-        return build::main(&Options {
+        return build::main(Options {
             perform_codegen: true,
             mode: Mode::Dev,
             target,
@@ -438,9 +447,12 @@ fn clean() -> Result<()> {
 }
 
 fn initialise_logger() {
+    let enable_colours = std::env::var("GLEAM_LOG_NOCOLOUR").is_err();
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(&std::env::var("GLEAM_LOG").unwrap_or_else(|_| "off".to_string()))
         .with_target(false)
+        .with_ansi(enable_colours)
         .without_time()
         .init();
 }

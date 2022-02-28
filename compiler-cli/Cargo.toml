@@ -1,6 +1,6 @@
 [package]
 name = "gleam"
-version = "0.21.1"
+version = "0.20.2"
 authors = ["Louis Pilfold <louis@lpil.uk>"]
 edition = "2021"
 license-file = "LICENCE"
@@ -8,12 +8,12 @@ license-file = "LICENCE"
 [dependencies]
 # The pure compiler
 gleam-core = { path = "../compiler-core" }
+# Immutable data structures
+im = "15.0.0"
 # OS SIGINT and SIGTERM signal handling
 ctrlc = { version = "3.2.1", features = ["termination"] }
 # Command line interface
 clap = { version = "3.0", features = ["derive"] }
-# # Immutable data structures
-# im = "15.0.0"
 # Extra iter methods
 itertools = "0.10.1"
 # Parsing
@@ -24,6 +24,7 @@ termcolor = "1.1.2"
 lazy_static = "1.4.0"
 # Data (de)serialisation
 serde = { version = "1.0.130", features = ["derive"] }
+serde_json = "*"
 # toml config file parsing
 toml = "0.5.8"
 # Recursively traversing directories
@@ -70,6 +71,9 @@ base16 = "0.2.1"
 toml_edit = "0.9"
 # Cross platform symlink creation helper
 symlink = "0.1"
+# Language server protocol server plumbing
+lsp-server = "0.5"
+lsp-types = "0.92"
 
 [dev-dependencies]
 # Test assertion errors with diffs
