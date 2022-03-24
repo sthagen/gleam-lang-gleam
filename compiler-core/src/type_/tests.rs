@@ -3,6 +3,7 @@ use crate::ast::UntypedExpr;
 
 mod errors;
 mod statement_if;
+use std::path::PathBuf;
 
 #[macro_export]
 macro_rules! assert_infer {
@@ -70,6 +71,39 @@ macro_rules! assert_module_infer {
 }
 
 macro_rules! assert_warning {
+    ($src:expr) => {
+        let (mut ast, _) = crate::parse::parse_module($src).expect("syntax error");
+        ast.name = vec!["my_module".to_string()];
+        let mut warnings: Vec<Warning> = vec![];
+        let ids = UniqueIdGenerator::new();
+        let mut modules = im::HashMap::new();
+        // DUPE: preludeinsertion
+        // TODO: Currently we do this here and also in the tests. It would be better
+        // to have one place where we create all this required state for use in each
+        // place.
+        let _ = modules.insert("gleam".to_string(), build_prelude(&ids));
+        let _ = infer_module(
+            Target::Erlang,
+            &ids,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut warnings,
+        )
+        .expect("should successfully infer");
+
+        let mut nocolor = termcolor::Buffer::no_color();
+        for w in warnings {
+            let warning = w.into_warning(PathBuf::from("/src/warning/wrn.gleam"), $src.to_string());
+            warning.pretty(&mut nocolor)
+        }
+
+        let output = String::from_utf8(nocolor.into_inner())
+            .expect("Error printing produced invalid utf8");
+
+        insta::assert_snapshot!(insta::internals::AutoName, output, $src);
+    };
     ($src:expr, $warning:expr $(,)?) => {
         let (mut ast, _) = crate::parse::parse_module($src).expect("syntax error");
         ast.name = vec!["my_module".to_string()];
@@ -81,6 +115,48 @@ macro_rules! assert_warning {
         // to have one place where we create all this required state for use in each
         // place.
         let _ = modules.insert("gleam".to_string(), build_prelude(&ids));
+        let _ = infer_module(
+            Target::Erlang,
+            &ids,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut warnings,
+        )
+        .expect("should successfully infer");
+
+        assert!(!warnings.is_empty());
+        assert_eq!($warning, warnings[0]);
+    };
+    ($(($name:expr, $module_src:literal)),+, $src:expr, $warning:expr $(,)?) => {
+        let mut warnings = vec![];
+        let ids = UniqueIdGenerator::new();
+        let mut modules = im::HashMap::new();
+        // DUPE: preludeinsertion
+        // TODO: Currently we do this here and also in the tests. It would be better
+        // to have one place where we create all this required state for use in each
+        // place.
+        let _ = modules.insert("gleam".to_string(), build_prelude(&ids));
+        // Repeatedly create importable modules for each one given
+        $(
+        let (mut ast, _) = crate::parse::parse_module($module_src).expect("syntax error");
+        ast.name = $name;
+        let module = infer_module(
+            Target::Erlang,
+            &ids,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut warnings,
+        )
+        .expect("should successfully infer");
+        let _ = modules.insert($name.join("/"), module.type_info);
+        )*
+
+        let (mut ast, _) = crate::parse::parse_module($src).expect("syntax error");
+        ast.name = vec!["my_module".to_string()];
         let _ = infer_module(
             Target::Erlang,
             &ids,
@@ -110,6 +186,48 @@ macro_rules! assert_no_warnings {
         // to have one place where we create all this required state for use in each
         // place.
         let _ = modules.insert("gleam".to_string(), build_prelude(&ids));
+        let _ = infer_module(
+            Target::Erlang,
+            &ids,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut warnings,
+        )
+        .expect("should successfully infer");
+
+        assert_eq!(expected, warnings);
+    };
+    ($(($name:expr, $module_src:literal)),+, $src:expr $(,)?) => {
+        let expected: Vec<Warning> = vec![];
+        let mut warnings = vec![];
+        let ids = UniqueIdGenerator::new();
+        let mut modules = im::HashMap::new();
+        // DUPE: preludeinsertion
+        // TODO: Currently we do this here and also in the tests. It would be better
+        // to have one place where we create all this required state for use in each
+        // place.
+        let _ = modules.insert("gleam".to_string(), build_prelude(&ids));
+        // Repeatedly create importable modules for each one given
+        $(
+        let (mut ast, _) = crate::parse::parse_module($module_src).expect("syntax error");
+        ast.name = $name;
+        let module = infer_module(
+            Target::Erlang,
+            &ids,
+            ast,
+            Origin::Src,
+            "thepackage",
+            &modules,
+            &mut warnings,
+        )
+        .expect("should successfully infer");
+        let _ = modules.insert($name.join("/"), module.type_info);
+        )*
+
+        let (mut ast, _) = crate::parse::parse_module($src).expect("syntax error");
+        ast.name = vec!["my_module".to_string()];
         let _ = infer_module(
             Target::Erlang,
             &ids,
@@ -1167,6 +1285,28 @@ fn todo_warning_test() {
 }
 
 #[test]
+fn warning_variable_never_used_test() {
+    assert_warning!(
+        "
+pub fn foo() { Ok(5) }
+pub fn main() { let five = foo() }"
+    );
+}
+
+#[test]
+fn warning_private_function_never_used() {
+    assert_warning!("fn main() { 5 }");
+}
+
+#[test]
+fn warning_many_at_same_time() {
+    assert_warning!(
+        "
+fn main() { let five = 5 }"
+    );
+}
+
+#[test]
 fn result_discard_warning_test() {
     // Implicitly discarded Results emit warnings
     assert_warning!(
@@ -1427,6 +1567,91 @@ fn unused_variable_warnings_test() {
 }
 
 #[test]
+fn unused_imported_module_warnings_test() {
+    assert_warning!(
+        (
+            vec!["gleam".to_string(), "foo".to_string()],
+            "pub fn bar() { 1 }"
+        ),
+        "import gleam/foo",
+        Warning::UnusedImportedModule {
+            name: "foo".to_string(),
+            location: SrcSpan { start: 7, end: 16 },
+        }
+    );
+}
+
+#[test]
+fn unused_imported_module_with_alias_warnings_test() {
+    assert_warning!(
+        (
+            vec!["gleam".to_string(), "foo".to_string()],
+            "pub fn bar() { 1 }"
+        ),
+        "import gleam/foo as bar",
+        Warning::UnusedImportedModule {
+            name: "bar".to_string(),
+            location: SrcSpan { start: 7, end: 16 },
+        }
+    );
+}
+
+#[test]
+fn unused_imported_module_no_warning_on_used_function_test() {
+    assert_no_warnings!(
+        (
+            vec!["gleam".to_string(), "foo".to_string()],
+            "pub fn bar() { 1 }"
+        ),
+        "import gleam/foo; pub fn baz() { foo.bar() }",
+    );
+}
+
+#[test]
+fn unused_imported_module_no_warning_on_used_type_test() {
+    assert_no_warnings!(
+        (
+            vec!["gleam".to_string(), "foo".to_string()],
+            "pub type Foo = Int"
+        ),
+        "import gleam/foo; pub fn baz(a: foo.Foo) { a }",
+    );
+}
+
+#[test]
+fn unused_imported_module_no_warning_on_used_unqualified_function_test() {
+    assert_no_warnings!(
+        (
+            vec!["gleam".to_string(), "foo".to_string()],
+            "pub fn bar() { 1 }"
+        ),
+        "import gleam/foo.{bar}; pub fn baz() { bar() }",
+    );
+}
+
+#[test]
+fn unused_imported_module_no_warning_on_used_unqualified_type_test() {
+    assert_no_warnings!(
+        (
+            vec!["gleam".to_string(), "foo".to_string()],
+            "pub type Foo = Int"
+        ),
+        "import gleam/foo.{Foo}; pub fn baz(a: Foo) { a }",
+    );
+}
+
+#[test]
+fn module_access_registers_import_usage() {
+    assert_no_warnings!(
+        (
+            vec!["gleam".to_string(), "bibble".to_string()],
+            "pub const bobble = 1"
+        ),
+        "import gleam/bibble pub fn main() { bibble.bobble }",
+    );
+}
+
+#[test]
 fn functions_used_before_definition() {
     assert_module_infer!(
         "pub fn a() { b() }
@@ -1684,6 +1909,17 @@ pub fn main() {
 }
 ",
         vec![("main", "fn() -> Int")],
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/1519
+#[test]
+fn permit_holes_in_fn_args_and_returns() {
+    assert_module_infer!(
+        "pub fn run(args: List(_)) -> List(_) {
+  todo
+}",
+        vec![("run", "fn(List(a)) -> List(b)")],
     );
 }
 

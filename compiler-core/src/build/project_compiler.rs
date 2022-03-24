@@ -5,11 +5,13 @@ use crate::{
     },
     codegen::{self, ErlangApp},
     config::PackageConfig,
+    error::{FileIoAction, FileKind},
     io::{CommandExecutor, FileSystemIO, FileSystemWriter},
     metadata, paths,
     project::ManifestPackage,
     type_,
     uid::UniqueIdGenerator,
+    version::COMPILER_VERSION,
     warning, Error, Result, Warning,
 };
 use std::{
@@ -96,12 +98,17 @@ where
         self.options.mode
     }
 
+    pub fn take_warnings(&mut self) -> Vec<Warning> {
+        std::mem::take(&mut self.warnings)
+    }
+
     pub fn target(&self) -> Target {
         self.options.target.unwrap_or(self.config.target)
     }
 
     /// Returns the compiled information from the root package
     pub fn compile(&mut self) -> Result<Package> {
+        self.check_gleam_version()?;
         self.compile_dependencies()?;
 
         if self.options.perform_codegen {
@@ -109,19 +116,52 @@ where
         } else {
             self.telemetry.checking_package(&self.config.name);
         }
-        self.compile_root_package()
-    }
-
-    pub fn compile_root_package(&mut self) -> Result<Package, Error> {
-        let config = self.config.clone();
-        let modules = self.compile_gleam_package(&config, true, paths::root())?;
+        let result = self.compile_root_package();
 
         // Print warnings
         for warning in &self.warnings {
             self.telemetry.warning(warning);
         }
 
+        result
+    }
+
+    pub fn compile_root_package(&mut self) -> Result<Package, Error> {
+        let config = self.config.clone();
+        let modules = self.compile_gleam_package(&config, true, paths::root())?;
+
         Ok(Package { config, modules })
+    }
+
+    /// Checks that version file found in the build directory matches the
+    /// current version of gleam. If not, we will clear the build directory
+    /// before continuing. This will ensure that upgrading gleam will not leave
+    /// one with confusing or hard to debug states.
+    pub fn check_gleam_version(&self) -> Result<(), Error> {
+        let build_path = paths::build_packages(self.mode(), self.target());
+        let version_path = paths::build_gleam_version(self.mode(), self.target());
+        if self.io.is_file(&version_path) {
+            let version = self.io.read(&version_path)?;
+            if version == COMPILER_VERSION {
+                return Ok(());
+            }
+        }
+
+        // Either file is missing our the versions do not match. Time to rebuild
+        tracing::info!("removing_build_state_from_different_gleam_version");
+        self.io.delete(&build_path)?;
+
+        // Recreate build directory with new updated version file
+        self.io.mkdir(&build_path)?;
+        let mut writer = self.io.writer(&version_path)?;
+        writer
+            .write_str(COMPILER_VERSION)
+            .map_err(|e| Error::FileIo {
+                action: FileIoAction::WriteTo,
+                kind: FileKind::File,
+                path: version_path,
+                err: Some(e.to_string()),
+            })
     }
 
     pub fn compile_dependencies(&mut self) -> Result<(), Error> {

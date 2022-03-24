@@ -12,6 +12,7 @@ pub use self::package_compiler::PackageCompiler;
 pub use self::project_compiler::{Options, ProjectCompiler};
 pub use self::telemetry::Telemetry;
 
+use crate::ast::{TypedExpr, TypedStatement};
 use crate::{
     ast::{SrcSpan, Statement, TypedModule},
     config::{self, PackageConfig},
@@ -75,6 +76,13 @@ impl Package {
             module.attach_doc_and_module_comments();
         }
     }
+
+    pub fn into_modules_hashmap(self) -> HashMap<String, Module> {
+        self.modules
+            .into_iter()
+            .map(|m| (m.name.to_string(), m))
+            .collect()
+    }
 }
 
 #[derive(Debug)]
@@ -96,6 +104,10 @@ impl Module {
 
     pub fn is_test(&self) -> bool {
         self.origin == Origin::Test
+    }
+
+    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+        self.ast.find_node(byte_index)
     }
 
     pub fn attach_doc_and_module_comments(&mut self) {

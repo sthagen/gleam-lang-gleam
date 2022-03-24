@@ -12,6 +12,7 @@ mod tests;
 
 pub use environment::*;
 pub use error::{Error, UnifyErrorSituation, Warning};
+pub(crate) use expression::ExprTyper;
 pub use fields::FieldMap;
 pub use prelude::*;
 
@@ -27,7 +28,6 @@ use crate::{
     build::{Origin, Target},
     uid::UniqueIdGenerator,
 };
-use expression::*;
 
 use std::{
     cell::RefCell,
@@ -46,6 +46,14 @@ pub trait HasType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    /// A nominal (named) type such as `Int`, `Float`, or a programmer defined
+    /// custom type such as `Person`. The type can take other types as
+    /// arguments (aka "generics" or "parametric polymorphism").
+    ///
+    /// If the type is defined in the Gleam prelude the `module` field will be
+    /// empty, otherwise it will contain the name of the module that
+    /// defines the type.
+    ///
     App {
         public: bool,
         module: Vec<String>,
@@ -53,18 +61,22 @@ pub enum Type {
         args: Vec<Arc<Type>>,
     },
 
+    /// The type of a function. It takes arguments and returns a value.
+    ///
     Fn {
         args: Vec<Arc<Type>>,
         retrn: Arc<Type>,
     },
 
-    Var {
-        type_: Arc<RefCell<TypeVar>>,
-    },
+    /// A type variable. See the contained `TypeVar` enum for more information.
+    ///
+    Var { type_: Arc<RefCell<TypeVar>> },
 
-    Tuple {
-        elems: Vec<Arc<Type>>,
-    },
+    /// A tuple is an ordered collection of 0 or more values, each of which
+    /// can have a different type, so the `tuple` type is the sum of all the
+    /// contained types.
+    ///
+    Tuple { elems: Vec<Arc<Type>> },
 }
 
 impl Type {
@@ -337,8 +349,29 @@ pub enum PatternConstructor {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeVar {
+    /// Unbound is an unbound variable. It is one specific type but we don't
+    /// know what yet in the inference process. It has a unique id which can be used to
+    /// identify if two unbound variable Rust values are the same Gleam type variable
+    /// instance or not.
+    ///
+    ///
     Unbound { id: u64 },
+    /// Link is type variable where it was an unbound variable but we worked out
+    /// that it is some other type and now we point to that one.
+    ///
     Link { type_: Arc<Type> },
+    /// A Generic variable stands in for any possible type and cannot be
+    /// specialised to any one type
+    ///
+    /// # Example
+    ///
+    /// ```gleam
+    /// type Cat(a) {
+    ///   Cat(name: a)
+    /// }
+    /// // a is TypeVar::Generic
+    /// ```
+    ///
     Generic { id: u64 },
 }
 
@@ -639,6 +672,7 @@ fn register_values<'a>(
 
             // Construct type from annotations
             let mut hydrator = Hydrator::new();
+            hydrator.permit_holes(true);
             let arg_types = args
                 .iter()
                 .map(|arg| hydrator.type_from_option_ast(&arg.annotation, environment))
@@ -860,7 +894,7 @@ fn generalise_statement(
             arguments: args,
             body,
             return_annotation,
-            end_location,
+            end_position: end_location,
             return_type,
         } => {
             // Lookup the inferred function information
@@ -899,7 +933,7 @@ fn generalise_statement(
                 name,
                 public,
                 arguments: args,
-                end_location,
+                end_position: end_location,
                 return_annotation,
                 return_type,
                 body,
@@ -930,7 +964,7 @@ fn infer_statement(
             arguments: args,
             body,
             return_annotation,
-            end_location,
+            end_position: end_location,
             ..
         } => {
             let preregistered_fn = environment
@@ -993,7 +1027,7 @@ fn infer_statement(
                 name,
                 public,
                 arguments: args,
-                end_location,
+                end_position: end_location,
                 return_annotation,
                 return_type: typ
                     .return_type()
@@ -1774,6 +1808,14 @@ pub fn register_import(
                             .collect(),
                     });
                 }
+            }
+
+            if unqualified.is_empty() {
+                // When the module has no unqualified imports, we track its usage
+                // so we can warn if not used by the end of the type checking
+                let _ = environment
+                    .unused_modules
+                    .insert(module_name.clone(), *location);
             }
 
             // Insert imported module into scope

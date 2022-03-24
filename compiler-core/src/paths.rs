@@ -105,6 +105,13 @@ pub fn build_package(mode: Mode, target: Target, package: &str) -> PathBuf {
     build_packages(mode, target).join(package)
 }
 
+/// A path to a special file that contains the version of gleam that last built
+/// the artifacts. If this file does not match the current version of gleam we
+/// will rebuild from scratch
+pub fn build_gleam_version(mode: Mode, target: Target) -> PathBuf {
+    build_packages(mode, target).join("gleam_version")
+}
+
 #[test]
 fn paths() {
     assert!(default_gleam_cache().ends_with("gleam"));

@@ -2,11 +2,19 @@
 
 ## Unreleased
 
+- Fixed a bug where functions named `then` would cause errors on dynamic import.
 - Initialize `git` repo when creating a new project.
 - Log messages controlled with `GLEAM_LOG` now print to standard error.
 - Log message colours can be disabled by setting the `GLEAM_LOG_NOCOLOUR`
   environment variable.
 - You can now specify multiple packages when using `gleam add`
+- If the compiler version changes we now rebuild the project from scratch on
+  next build command (#1547)
+- Updated the "Unknown label" error message to match other error messages
+  (#1548)
+- Permit type holes in function arguments and return annotations (#1519)
+- Report unused module imports (#1553)
+- Add parse error hint for multi line clauses without curly braces (#1555)
 
 ## v0.20.1 - 2022-02-24
 

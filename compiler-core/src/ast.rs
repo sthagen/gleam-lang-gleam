@@ -2,6 +2,9 @@ mod constant;
 mod typed;
 mod untyped;
 
+#[cfg(test)]
+mod tests;
+
 pub use self::typed::TypedExpr;
 pub use self::untyped::UntypedExpr;
 
@@ -33,6 +36,12 @@ pub struct Module<Info, Statements> {
     pub documentation: Vec<String>,
     pub type_info: Info,
     pub statements: Vec<Statements>,
+}
+
+impl TypedModule {
+    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+        self.statements.iter().find_map(|s| s.find_node(byte_index))
+    }
 }
 
 /// An if is a grouping of statements that will only be compiled if
@@ -280,9 +289,19 @@ pub type UntypedStatement = Statement<(), UntypedExpr, (), ()>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
+    /// A function definition
+    ///
+    /// # Example(s)
+    ///
+    /// ```gleam
+    /// // Public function
+    /// pub fn bar() -> String { ... }
+    /// // Private function
+    /// fn foo(x: Int) -> Int { ... }
+    /// ```
     Fn {
-        end_location: usize,
         location: SrcSpan,
+        end_position: usize,
         name: String,
         arguments: Vec<Arg<T>>,
         body: Expr,
@@ -292,6 +311,14 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
         doc: Option<String>,
     },
 
+    /// A new name for an existing type
+    ///
+    /// # Example(s)
+    ///
+    /// ```gleam
+    /// pub type Headers =
+    ///   List(#(String, String))
+    /// ```
     TypeAlias {
         location: SrcSpan,
         alias: String,
@@ -302,6 +329,21 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
         doc: Option<String>,
     },
 
+    /// A newly defined type with one or more constructors.
+    /// Each variant of the custom type can contain different types, so the type is
+    /// the product of the types contained by each variant.
+    ///
+    /// This might be called an algebraic data type (ADT) or tagged union in other
+    /// languages and type systems.
+    ///
+    ///
+    /// # Example(s)
+    ///
+    /// ```gleam
+    /// pub type Cat {
+    ///   Cat(name: String, cuteness: Int)
+    /// }
+    /// ```
     CustomType {
         location: SrcSpan,
         name: String,
@@ -313,6 +355,16 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
         typed_parameters: Vec<T>,
     },
 
+    /// Import a function defined outside of Gleam code.
+    /// When compiling to Erlang the function could be implemented in Erlang
+    /// or Elixir, when compiling to JavaScript it might be implemented in
+    /// JavaScript or TypeScript.
+    ///
+    /// # Example(s)
+    ///
+    /// ```gleam
+    /// pub external fn random_float() -> Float = "rand" "uniform"
+    /// ```
     ExternalFn {
         location: SrcSpan,
         public: bool,
@@ -325,6 +377,15 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
         doc: Option<String>,
     },
 
+    /// Import a type defined in another language.
+    /// Nothing is known about the runtime characteristics of the type, we only
+    /// know that it exists and that we have given it this name.
+    ///
+    /// # Example(s)
+    ///
+    /// ```gleam
+    /// pub external type Queue(a)
+    /// ```
     ExternalType {
         location: SrcSpan,
         public: bool,
@@ -333,6 +394,16 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
         doc: Option<String>,
     },
 
+    /// Import another Gleam module so the current module can use the types and
+    /// values it defines.
+    ///
+    /// # Example(s)
+    ///
+    /// ```gleam
+    /// import unix/cat
+    /// // Import with alias
+    /// import animal/cat as kitty
+    /// ```
     Import {
         location: SrcSpan,
         module: Vec<String>,
@@ -341,6 +412,14 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
         package: PackageName,
     },
 
+    /// A certain fixed value that can be used in multiple places
+    ///
+    /// # Example(s)
+    ///
+    /// ```gleam
+    /// pub const start_year = 2101
+    /// pub const end_year = 2111
+    /// ```
     ModuleConstant {
         doc: Option<String>,
         location: SrcSpan,
@@ -350,6 +429,21 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
         value: Box<Constant<T, ConstantRecordTag>>,
         type_: T,
     },
+}
+
+impl TypedStatement {
+    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+        match self {
+            Statement::Fn { body, .. } => body.find_node(byte_index),
+
+            Statement::TypeAlias { .. }
+            | Statement::CustomType { .. }
+            | Statement::ExternalFn { .. }
+            | Statement::ExternalType { .. }
+            | Statement::Import { .. }
+            | Statement::ModuleConstant { .. } => None,
+        }
+    }
 }
 
 impl<A, B, C, E> Statement<A, B, C, E> {
@@ -516,6 +610,12 @@ pub struct CallArg<A> {
     pub value: A,
 }
 
+impl CallArg<TypedExpr> {
+    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+        self.value.find_node(byte_index)
+    }
+}
+
 impl CallArg<UntypedExpr> {
     pub fn is_capture_hole(&self) -> bool {
         match &self.value {
@@ -546,6 +646,12 @@ pub struct TypedRecordUpdateArg {
     pub index: usize,
 }
 
+impl TypedRecordUpdateArg {
+    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+        self.value.find_node(byte_index)
+    }
+}
+
 pub type MultiPattern<PatternConstructor, Type> = Vec<Pattern<PatternConstructor, Type>>;
 
 pub type UntypedMultiPattern = MultiPattern<(), ()>;
@@ -574,6 +680,10 @@ impl TypedClause {
                 .unwrap_or_default(),
             end: self.then.location().end,
         }
+    }
+
+    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+        self.then.find_node(byte_index)
     }
 }
 
@@ -721,6 +831,12 @@ pub struct SrcSpan {
     pub end: usize,
 }
 
+impl SrcSpan {
+    pub fn contains(&self, byte_index: usize) -> bool {
+        byte_index >= self.start && byte_index < self.end
+    }
+}
+
 pub type UntypedPattern = Pattern<(), ()>;
 pub type TypedPattern = Pattern<PatternConstructor, Arc<Type>>;
 
@@ -852,6 +968,12 @@ pub struct BitStringSegment<Value, Type> {
     pub value: Box<Value>,
     pub options: Vec<BitStringSegmentOption<Value>>,
     pub type_: Type,
+}
+
+impl TypedExprBitStringSegment {
+    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+        self.value.find_node(byte_index)
+    }
 }
 
 pub type TypedConstantBitStringSegmentOption = BitStringSegmentOption<TypedConstant>;

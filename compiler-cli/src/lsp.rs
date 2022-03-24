@@ -1,26 +1,31 @@
 // TODO: remove this
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::unimplemented)]
+#![allow(clippy::todo)]
 #![allow(dead_code)]
 
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use gleam_core::{
-    build::{self, Package, ProjectCompiler},
+    ast::SrcSpan,
+    build::{self, Module, Package, ProjectCompiler},
+    diagnostic::{self, Level},
     io::{CommandExecutor, FileSystemIO},
     line_numbers::LineNumbers,
+    type_::{pretty::Printer, HasType},
     Error, Result,
 };
+use itertools::Itertools;
 use lsp_types::{
     notification::{DidChangeTextDocument, DidCloseTextDocument, DidSaveTextDocument},
-    request::Formatting,
+    request::{Formatting, HoverRequest},
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidSaveTextDocumentParams, InitializeParams, OneOf, Position, PublishDiagnosticsParams, Range,
-    SaveOptions, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
+    DidSaveTextDocumentParams, Hover, HoverContents, HoverProviderCapability, InitializeParams,
+    MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, SaveOptions,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TextEdit, Url,
 };
 
 use crate::{cli, fs::ProjectIO};
@@ -45,7 +50,7 @@ pub fn main() -> Result<()> {
             },
         )),
         selection_range_provider: None,
-        hover_provider: None,
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: None,
         signature_help_provider: None,
         definition_provider: None,
@@ -90,69 +95,143 @@ pub fn main() -> Result<()> {
 }
 
 pub struct LanguageServer {
-    _params: InitializeParams,
+    _initialise_params: InitializeParams,
+
+    /// A cached copy of the absolute path of the project root
+    project_root: PathBuf,
 
     /// Files that have been edited in memory
     edited: HashMap<String, String>,
 
+    /// Diagnostics that hae been emitted by the compiler but not yet published
+    /// to the client
+    stored_diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
+
     /// Files for which there are active diagnostics
-    active_diagnostics: HashSet<Url>,
+    published_diagnostics: HashSet<Url>,
 
     /// A compiler for the project that supports repeat compilation of the root
     /// package.
     /// In the event the the project config changes this will need to be
     /// discarded and reloaded to handle any changes to dependencies.
     compiler: LspProjectCompiler<ProjectIO>,
+
+    /// The result of the previous succesful compilation
+    modules: HashMap<String, Module>,
 }
 
 impl LanguageServer {
-    pub fn new(params: InitializeParams) -> Result<Self> {
+    pub fn new(initialise_params: InitializeParams) -> Result<Self> {
         let io = ProjectIO::new();
-        let compiler = LspProjectCompiler::load_and_compile_dependencies(io)?;
+        let compiler = LspProjectCompiler::new(io)?;
+        let project_root = PathBuf::from("./").canonicalize().expect("Absolute root");
         Ok(Self {
-            _params: params,
+            _initialise_params: initialise_params,
             edited: HashMap::new(),
-            active_diagnostics: HashSet::new(),
+            modules: HashMap::new(),
+            stored_diagnostics: HashMap::new(),
+            published_diagnostics: HashSet::new(),
+            project_root,
             compiler,
         })
     }
 
-    fn clear_diagnostics(&mut self, connection: &lsp_server::Connection) -> Result<(), Error> {
-        for file in self.active_diagnostics.drain() {
+    /// Publish all stored diagnostics to the client.
+    /// Any previously publish diagnostics are cleared before the new set are
+    /// published to the client.
+    fn publish_stored_diagnostics(&mut self, connection: &lsp_server::Connection) {
+        self.clear_all_diagnostics(connection).unwrap();
+
+        for (path, diagnostics) in self.stored_diagnostics.drain() {
+            let uri = path_to_uri(path);
+
+            // Record that we have published diagnostics to this file so we can
+            // clear it later when they are outdated.
+            let _ = self.published_diagnostics.insert(uri.clone());
+
+            // Publish the diagnostics
+            let diagnostic_params = PublishDiagnosticsParams {
+                uri,
+                diagnostics,
+                version: None,
+            };
+            let notification = lsp_server::Notification {
+                method: "textDocument/publishDiagnostics".into(),
+                params: serde_json::to_value(diagnostic_params).unwrap(),
+            };
             connection
                 .sender
-                .send(lsp_server::Message::Notification(
-                    lsp_server::Notification {
-                        method: "textDocument/publishDiagnostics".into(),
-                        params: serde_json::to_value(PublishDiagnosticsParams {
-                            uri: file,
-                            diagnostics: vec![],
-                            version: None,
-                        })
-                        .unwrap(),
-                    },
-                ))
+                .send(lsp_server::Message::Notification(notification))
+                .unwrap();
+        }
+    }
+
+    fn push_diagnostic(&mut self, path: PathBuf, diagnostic: Diagnostic) {
+        self.stored_diagnostics
+            .entry(path)
+            .or_default()
+            .push(diagnostic);
+    }
+
+    /// Store a diagnostic locally so that it can later be published to the
+    /// client with `publish_stored_diagnostics`
+    fn store_diagnostic(&mut self, mut diagnostic: diagnostic::Diagnostic) {
+        let hint = diagnostic.hint.take();
+        match to_lsp_diagnostic(diagnostic) {
+            Some((path, lsp_diagnostic)) => {
+                self.push_diagnostic(path.clone(), lsp_diagnostic.clone());
+
+                if let Some(hint) = hint {
+                    let lsp_hint = Diagnostic {
+                        severity: Some(DiagnosticSeverity::HINT),
+                        message: hint,
+                        ..lsp_diagnostic
+                    };
+                    self.push_diagnostic(path, lsp_hint);
+                }
+            }
+            None => todo!("Locationless lsp diagnostic"),
+        }
+    }
+
+    /// Clear all diagnostics that have been previously published to the client
+    fn clear_all_diagnostics(&mut self, connection: &lsp_server::Connection) -> Result<(), Error> {
+        for file in self.published_diagnostics.drain() {
+            let notification = lsp_server::Notification {
+                method: "textDocument/publishDiagnostics".into(),
+                params: serde_json::to_value(PublishDiagnosticsParams {
+                    uri: file,
+                    diagnostics: vec![],
+                    version: None,
+                })
+                .unwrap(),
+            };
+            connection
+                .sender
+                .send(lsp_server::Message::Notification(notification))
                 .unwrap();
         }
         Ok(())
     }
 
     pub fn run(&mut self, connection: lsp_server::Connection) -> Result<()> {
-        for msg in &connection.receiver {
-            tracing::debug!("{:?}", msg);
-            match msg {
+        // Compile the project once so we have all the state and any initial errors
+        self.compile()?;
+        self.publish_stored_diagnostics(&connection);
+
+        // Enter the message loop, handling each message that comes in from the client
+        for message in &connection.receiver {
+            match message {
                 lsp_server::Message::Request(request) => {
-                    if connection.handle_shutdown(&request).unwrap() {
+                    if connection.handle_shutdown(&request).expect("LSP error") {
                         return Ok(());
                     }
                     let id = request.id.clone();
                     let result = self.handle_request(request);
-                    if result.is_ok() {
-                        self.clear_diagnostics(&connection)?;
-                    }
-                    let (response, diagnostics) = result_to_response(result, id);
-                    if let Some(diagnostics) = diagnostics {
-                        self.publish_diagnostics(diagnostics, &connection);
+                    let (response, diagnostic) = result_to_response(result, id);
+                    if let Some(diagnostic) = diagnostic {
+                        self.store_diagnostic(diagnostic);
+                        self.publish_stored_diagnostics(&connection);
                     }
                     connection
                         .sender
@@ -161,40 +240,57 @@ impl LanguageServer {
                 }
 
                 lsp_server::Message::Response(_) => {
-                    // Nothing to do here...
+                    todo!("Unexpected response message")
                 }
 
                 lsp_server::Message::Notification(notification) => {
-                    if let Err(error) = self.handle_notification(&connection, notification) {
-                        match error_to_diagnostic(&error) {
-                            Some(diagnostic) => {
-                                self.publish_diagnostics(diagnostic, &connection);
-                            }
-
-                            None => return Err(error),
-                        }
-                    }
+                    self.handle_notification(&connection, notification).unwrap();
                 }
             }
         }
         Ok(())
     }
 
-    fn publish_diagnostics(
+    fn compile(&mut self) -> Result<(), Error> {
+        let result = self.compiler.compile().map(|compiled| {
+            self.modules = compiled.into_modules_hashmap();
+        });
+
+        self.store_result_diagnostics(result)?;
+        Ok(())
+    }
+
+    fn take_and_store_warning_diagnostics(&mut self) {
+        let warnings = self.compiler.project_compiler.take_warnings();
+        for warn in warnings {
+            let diagnostic = warn.to_diagnostic();
+            self.store_diagnostic(diagnostic);
+        }
+    }
+
+    fn publish_result_diagnostics<T>(
         &mut self,
-        diagnostics: PublishDiagnosticsParams,
+        result: Result<T>,
         connection: &lsp_server::Connection,
-    ) {
-        let _ = self.active_diagnostics.insert(diagnostics.uri.clone());
-        connection
-            .sender
-            .send(lsp_server::Message::Notification(
-                lsp_server::Notification {
-                    method: "textDocument/publishDiagnostics".into(),
-                    params: serde_json::to_value(diagnostics).unwrap(),
-                },
-            ))
-            .unwrap();
+    ) -> Result<()> {
+        self.store_result_diagnostics(result)?;
+        self.publish_stored_diagnostics(connection);
+        Ok(())
+    }
+
+    fn store_result_diagnostics<T>(&mut self, result: Result<T>) -> Result<()> {
+        // Store warning diagnostics
+        self.take_and_store_warning_diagnostics();
+
+        // Store error diagnostics, if there are any
+        if let Err(error) = result {
+            match error_to_diagnostic(&error) {
+                Some(diagnostic) => self.store_diagnostic(diagnostic),
+                None => return Err(error),
+            }
+        }
+
+        Ok(())
     }
 
     fn handle_notification(
@@ -203,35 +299,31 @@ impl LanguageServer {
         request: lsp_server::Notification,
     ) -> Result<()> {
         match request.method.as_str() {
-            "textDocument/didSave" => self.did_save(
-                connection,
-                cast_notification::<DidSaveTextDocument>(request).unwrap(),
-            ),
+            "textDocument/didSave" => {
+                let params = cast_notification::<DidSaveTextDocument>(request).unwrap();
+                let result = self.did_save(params);
+                self.publish_result_diagnostics(result, connection)
+            }
 
             "textDocument/didClose" => {
-                self.did_close(cast_notification::<DidCloseTextDocument>(request).unwrap())
+                let params = cast_notification::<DidCloseTextDocument>(request).unwrap();
+                self.did_close(params)
             }
 
             "textDocument/didChange" => {
-                self.did_change(cast_notification::<DidChangeTextDocument>(request).unwrap())
+                let params = cast_notification::<DidChangeTextDocument>(request).unwrap();
+                self.did_change(params)
             }
 
             _ => Ok(()),
         }
     }
 
-    // TODO: build project
-    fn did_save(
-        &mut self,
-        connection: &lsp_server::Connection,
-        params: DidSaveTextDocumentParams,
-    ) -> Result<()> {
+    fn did_save(&mut self, params: DidSaveTextDocumentParams) -> Result<()> {
         // The file is in sync with the file system, discard our cache of the changes
         let _ = self.edited.remove(params.text_document.uri.path());
-        // Recompile the project to detect any errors
-        let _ = self.compiler.compile()?;
-        // Clear any diagnostics from the previous run
-        self.clear_diagnostics(connection)?;
+        // The files on disc have changed, so compile the project with the new changes
+        self.compile()?;
         Ok(())
     }
 
@@ -257,8 +349,56 @@ impl LanguageServer {
                 let text_edit = self.format(params)?;
                 Ok(serde_json::to_value(text_edit).unwrap())
             }
-            _ => unimplemented!("Unsupported LSP request"),
+
+            "textDocument/hover" => {
+                let params = cast_request::<HoverRequest>(request).unwrap();
+                let text_edit = self.hover(params)?;
+                Ok(serde_json::to_value(text_edit).unwrap())
+            }
+
+            _ => todo!("Unsupported LSP request"),
         }
+    }
+
+    fn hover(&self, params: lsp_types::HoverParams) -> Result<Option<Hover>> {
+        // TODO: compile the project before the hover
+
+        let params = params.text_document_position_params;
+
+        // Look up the type information for the module being hovered in
+        let module = match self.get_module_for_uri(&params.text_document.uri) {
+            Some(module) => module,
+            // If we don't have a compiled version of the module for this URI
+            // then there's nothing to show, so return None.
+            None => return Ok(None),
+        };
+
+        let line_numbers = LineNumbers::new(&module.code);
+        let byte_index = line_numbers.byte_index(params.position.line, params.position.character);
+
+        // Find the AST node at the position of the hover, if there is one
+        let expression = match module.find_node(byte_index) {
+            Some(expression) => expression,
+            None => return Ok(None),
+        };
+
+        // Show the type of the hovered node to the user
+        let type_ = Printer::new().pretty_print(expression.type_().as_ref(), 0);
+        let contents = format!(
+            "```gleam
+{}
+```",
+            type_
+        );
+        Ok(Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::String(contents)),
+            range: Some(src_span_to_lsp_range(expression.location(), line_numbers)),
+        }))
+    }
+
+    fn get_module_for_uri(&self, uri: &Url) -> Option<&Module> {
+        let module_name = uri_to_module_name(uri, &self.project_root).unwrap();
+        self.modules.get(&module_name)
     }
 
     fn format(&self, params: lsp_types::DocumentFormattingParams) -> Result<Vec<TextEdit>> {
@@ -280,6 +420,46 @@ impl LanguageServer {
 
         Ok(vec![text_edit_replace(new_text)])
     }
+}
+
+fn uri_to_module_name(uri: &Url, root: &Path) -> Option<String> {
+    let path = PathBuf::from(uri.path());
+    let components = path
+        .strip_prefix(&root)
+        .ok()?
+        .components()
+        .skip(1)
+        .map(|c| c.as_os_str().to_string_lossy());
+    let module_name = Itertools::intersperse(components, "/".into())
+        .collect::<String>()
+        .strip_suffix(".gleam")?
+        .to_string();
+    Some(module_name)
+}
+
+#[test]
+fn uri_to_module_name_test() {
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///projects/app/src/one/two/three.gleam").unwrap();
+    assert_eq!(
+        uri_to_module_name(&uri, &root),
+        Some("one/two/three".into())
+    );
+
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///projects/app/test/one/two/three.gleam").unwrap();
+    assert_eq!(
+        uri_to_module_name(&uri, &root),
+        Some("one/two/three".into())
+    );
+
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///somewhere/else/src/one/two/three.gleam").unwrap();
+    assert_eq!(uri_to_module_name(&uri, &root), None);
+
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///projects/app/src/one/two/three.rs").unwrap();
+    assert_eq!(uri_to_module_name(&uri, &root), None);
 }
 
 fn cast_request<R>(request: lsp_server::Request) -> Result<R::Params, lsp_server::Request>
@@ -321,7 +501,7 @@ fn text_edit_replace(new_text: String) -> TextEdit {
 fn result_to_response(
     result: Result<serde_json::Value>,
     id: lsp_server::RequestId,
-) -> (lsp_server::Response, Option<PublishDiagnosticsParams>) {
+) -> (lsp_server::Response, Option<diagnostic::Diagnostic>) {
     match result {
         Ok(result) => {
             let response = lsp_server::Response {
@@ -342,100 +522,24 @@ fn result_to_response(
                 (response, None)
             }
 
-            Some(diagnostic) => {
+            Some(diagnostic_information) => {
                 let response = lsp_server::Response {
                     id,
                     error: None,
                     result: Some(serde_json::json!(null)),
                 };
-                (response, Some(diagnostic))
+                (response, Some(diagnostic_information))
             }
         },
     }
 }
 
-fn error_to_diagnostic(error: &Error) -> Option<PublishDiagnosticsParams> {
-    match error {
-        Error::Parse {
-            path, error, src, ..
-        } => {
-            let location = error.location;
-            let line_numbers = LineNumbers::new(src);
-            let start = line_numbers.line_and_column_number(location.start);
-            let end = line_numbers.line_and_column_number(location.end);
-            let (detail, extra) = error.details();
-            let mut message = "Parse error: ".to_string();
-            message.push_str(detail);
-            for extra in extra {
-                message.push('\n');
-                message.push('\n');
-                message.push_str(&extra);
-            }
-            message.push('\n');
-            let diagnostic = Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: start.line as u32 - 1,
-                        character: start.column as u32 - 1,
-                    },
-                    end: Position {
-                        line: end.line as u32 - 1,
-                        character: end.column as u32 - 1,
-                    },
-                },
-                severity: Some(DiagnosticSeverity::ERROR),
-                code: None,
-                code_description: None,
-                source: None,
-                message,
-                related_information: None,
-                tags: None,
-                data: None,
-            };
-            let path = path.canonicalize().unwrap();
-            let mut file: String = "file://".into();
-            file.push_str(&path.as_os_str().to_string_lossy());
-            let uri = Url::parse(&file).unwrap();
-            let diagnostic_params = PublishDiagnosticsParams {
-                uri,
-                diagnostics: vec![diagnostic],
-                version: None,
-            };
-            Some(diagnostic_params)
-        }
+fn error_to_diagnostic(error: &Error) -> Option<diagnostic::Diagnostic> {
+    let diagnostic = error.to_diagnostic();
 
-        Error::Type { .. }
-        | Error::UnknownImport { .. }
-        | Error::DuplicateModule { .. }
-        | Error::DuplicateSourceFile { .. }
-        | Error::SrcImportingTest { .. }
-        | Error::ImportCycle { .. }
-        | Error::PackageCycle { .. }
-        | Error::FileIo { .. }
-        | Error::GitInitialization { .. }
-        | Error::StandardIo { .. }
-        | Error::Format { .. }
-        | Error::Hex(_)
-        | Error::ExpandTar { .. }
-        | Error::AddTar { .. }
-        | Error::TarFinish(_)
-        | Error::Gzip(_)
-        | Error::ShellProgramNotFound { .. }
-        | Error::ShellCommand { .. }
-        | Error::InvalidProjectName { .. }
-        | Error::InvalidVersionFormat { .. }
-        | Error::ProjectRootAlreadyExist { .. }
-        | Error::UnableToFindProjectRoot { .. }
-        | Error::VersionDoesNotMatch { .. }
-        | Error::MetadataDecodeError { .. }
-        | Error::ForbiddenWarnings { .. }
-        | Error::JavaScript { .. }
-        | Error::DownloadPackageError { .. }
-        | Error::Http(_)
-        | Error::DependencyResolutionFailed(_)
-        | Error::DuplicateDependency(_)
-        | Error::MissingHexPublishFields { .. }
-        | Error::UnsupportedBuildTool { .. } => None,
+    match diagnostic.location {
+        Some(_) => Some(diagnostic),
+        None => todo!("Locationless error for LSP"),
     }
 }
 
@@ -447,6 +551,63 @@ fn error_to_response_error(error: Error) -> lsp_server::ResponseError {
     }
 }
 
+fn to_lsp_diagnostic(
+    diagnostic: gleam_core::diagnostic::Diagnostic,
+) -> Option<(PathBuf, Diagnostic)> {
+    if let Some(location) = diagnostic.location {
+        let (prefix, severity) = match diagnostic.level {
+            Level::Error => ("Error", DiagnosticSeverity::ERROR),
+            Level::Warning => ("Warning", DiagnosticSeverity::WARNING),
+        };
+
+        let mut message = format!("{}: {}", prefix, diagnostic.title);
+
+        if let Some(label) = location.label.text {
+            message.push_str("\n\n");
+            message.push_str(&label);
+            if !label.ends_with(['.', '?']) {
+                message.push('.');
+            }
+        }
+
+        if !diagnostic.text.is_empty() {
+            message.push_str("\n\n");
+            message.push_str(&diagnostic.text);
+        }
+
+        let line_numbers = LineNumbers::new(&location.src);
+        let diagnostic = Diagnostic {
+            range: src_span_to_lsp_range(location.label.span, line_numbers),
+            severity: Some(severity),
+            code: None,
+            code_description: None,
+            source: None,
+            message,
+            related_information: None,
+            tags: None,
+            data: None,
+        };
+        let path = location.path.canonicalize().unwrap();
+
+        Some((path, diagnostic))
+    } else {
+        todo!("Locationless warning for LSP")
+    }
+}
+
+fn path_to_uri(path: PathBuf) -> Url {
+    let mut file: String = "file://".into();
+    file.push_str(&path.as_os_str().to_string_lossy());
+    Url::parse(&file).unwrap()
+}
+
+fn to_severity(level: Level) -> DiagnosticSeverity {
+    match level {
+        Level::Error => DiagnosticSeverity::ERROR,
+        Level::Warning => DiagnosticSeverity::WARNING,
+    }
+}
+
 /// A wrapper around the project compiler which makes it possible to repeatedly
 /// recompile the top level package, reusing the information about the already
 /// compiled dependency packages.
@@ -454,13 +615,16 @@ fn error_to_response_error(error: Error) -> lsp_server::ResponseError {
 #[derive(Debug)]
 pub struct LspProjectCompiler<IO> {
     project_compiler: ProjectCompiler<IO>,
+
+    /// Whether the dependencies have been compiled previously
+    dependencies_compiled: bool,
 }
 
 impl<IO> LspProjectCompiler<IO>
 where
     IO: CommandExecutor + FileSystemIO + Clone,
 {
-    pub fn load_and_compile_dependencies(io: IO) -> Result<Self> {
+    pub fn new(io: IO) -> Result<Self> {
         // TODO: different telemetry that doesn't write to stdout
         let telemetry = Box::new(cli::Reporter::new());
         let manifest = crate::dependencies::download(None)?;
@@ -471,14 +635,21 @@ where
             target: None,
             perform_codegen: false,
         };
-        let mut project_compiler =
+        let project_compiler =
             ProjectCompiler::new(config, options, manifest.packages, telemetry, io);
 
-        project_compiler.compile_dependencies()?;
-        Ok(Self { project_compiler })
+        Ok(Self {
+            project_compiler,
+            dependencies_compiled: false,
+        })
     }
 
     pub fn compile(&mut self) -> Result<Package, Error> {
+        if !self.dependencies_compiled {
+            self.project_compiler.compile_dependencies()?;
+            self.dependencies_compiled = true;
+        }
+
         // Save the state prior to compilation of the root package
         let checkpoint = self.project_compiler.checkpoint();
 
@@ -491,5 +662,20 @@ where
         self.project_compiler.restore(checkpoint);
 
         result
+    }
+}
+
+fn src_span_to_lsp_range(location: SrcSpan, line_numbers: LineNumbers) -> Range {
+    let start = line_numbers.line_and_column_number(location.start);
+    let end = line_numbers.line_and_column_number(location.end);
+    Range {
+        start: Position {
+            line: start.line as u32 - 1,
+            character: start.column as u32 - 1,
+        },
+        end: Position {
+            line: end.line as u32 - 1,
+            character: end.column as u32 - 1,
+        },
     }
 }

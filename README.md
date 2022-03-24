@@ -34,6 +34,7 @@ Thank you to our top sponsors! Gleam would not be possible without you.
 <p>
   <a href="http://www.ninefx.com"><img width=120 src="https://gleam.run/images/sponsors/nine-fx.png" alt="NineFX"></a>
   <a href="https://github.com/J3RN"><img width=120 src="https://avatars.githubusercontent.com/u/2058614?v=4" alt="Jonathan Arnett"></a>
+  <a href="https://github.com/human154"><img width=120 src="https://avatars.githubusercontent.com/u/46430360?v=4" alt="human154"></a>
   <a href="https://github.com/hypno2000"><img width=120 src="https://avatars.githubusercontent.com/u/417241?s=460&v=4" alt="Alexander Babin"></a>
   <a href="https://skunkwerks.at/"><img width=120 src="https://avatars.githubusercontent.com/u/6563319?s=200&v=4" alt="SkunkWerks GmbH"></a>
 </p>
@@ -43,7 +44,6 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [Adam Brodzinski](https://github.com/AdamBrodzinski)
  - [Adi Iyengar](https://github.com/thebugcatcher)
  - [Ali Farhadi](https://github.com/farhadi)
- - [Arto Bendiken](https://github.com/artob)
  - [Ben Marx](https://github.com/bgmarx)
  - [Ben Myles](https://github.com/benmyles)
  - [Charles Chamberlain](https://github.com/charlesetc)
@@ -64,9 +64,9 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [Florian Kraft](https://github.com/floriank)
  - [fly.io](https://github.com/superfly)
  - [Gitpod](https://github.com/gitpod-io)
- - [Gustavo Villa](https://github.com/gfvcastro)
  - [Henry Warren](https://github.com/henrysdev)
  - [Herdy Handoko](https://github.com/hhandoko)
+ - [human154](https://github.com/human154)
  - [Ian González](https://github.com/Ian-GL)
  - [Ingmar Gagen](https://github.com/igagen)
  - [Ivar Vong](https://github.com/ivarvong)
@@ -90,7 +90,6 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [NineFX](http://www.ninefx.com)
  - [Parker Selbert](https://github.com/sorentwo)
  - [Pete Jodo](https://github.com/petejodo)
- - [qingliangcn](https://github.com/qingliangcn)
  - [Raúl Chouza ](https://github.com/chouzar)
  - [Reio Piller](https://github.com/hypno2000)
  - [Sascha Wolf](https://github.com/sascha-wolf)
@@ -108,5 +107,4 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [Wilson Silva](https://github.com/wilsonsilva)
  - [Wojtek Mach](https://github.com/wojtekmach)
  - [YourMother-really](https://github.com/YourMother-really)
- - [Yt](https://github.com/happysalada)
  - [Yu Matsuzawa](https://github.com/ymtszw)
