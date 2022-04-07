@@ -844,13 +844,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
                 // We cannot support all values in guard expressions as the BEAM does not
                 match &constructor.variant {
-                    ValueConstructorVariant::LocalVariable => (),
+                    ValueConstructorVariant::LocalVariable { .. } => (),
                     ValueConstructorVariant::ModuleFn { .. }
                     | ValueConstructorVariant::Record { .. } => {
                         return Err(Error::NonLocalClauseGuardVariable { location, name })
                     }
 
-                    ValueConstructorVariant::ModuleConstant { literal } => {
+                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
                         return Ok(ClauseGuard::Constant(literal.clone()))
                     }
                 };
@@ -1177,7 +1177,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             label,
             typ: type_.clone(),
             location: select_location,
-            module_name,
+            module_name: module_name.join("/"),
             module_alias: module_alias.to_string(),
             constructor: constructor.variant.to_module_value_constructor(type_),
         })
@@ -1449,7 +1449,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let ValueConstructor {
             public,
             variant,
-            origin,
             type_: typ,
         } = constructor;
 
@@ -1458,7 +1457,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         Ok(ValueConstructor {
             public,
             variant,
-            origin,
             type_: typ,
         })
     }
@@ -1511,11 +1509,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     } => (name.clone(), field_map.clone()),
 
                     ValueConstructorVariant::ModuleFn { .. }
-                    | ValueConstructorVariant::LocalVariable => {
+                    | ValueConstructorVariant::LocalVariable { .. } => {
                         return Err(Error::NonLocalClauseGuardVariable { location, name })
                     }
 
-                    ValueConstructorVariant::ModuleConstant { literal } => {
+                    // TODO: remove this clone. Could use an rc instead
+                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
                         return Ok(literal.clone())
                     }
                 };
@@ -1547,11 +1546,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     } => (name.clone(), field_map.clone()),
 
                     ValueConstructorVariant::ModuleFn { .. }
-                    | ValueConstructorVariant::LocalVariable => {
+                    | ValueConstructorVariant::LocalVariable { .. } => {
                         return Err(Error::NonLocalClauseGuardVariable { location, name })
                     }
 
-                    ValueConstructorVariant::ModuleConstant { literal } => {
+                    // TODO: remove this clone. Could be an rc instead
+                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
                         return Ok(literal.clone())
                     }
                 };
@@ -1570,7 +1570,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             .get(module_name)
                             .expect("Failed to find previously located module import")
                             .name
-                            .clone(),
+                            .join("/"),
                         typ: constructor.type_.clone(),
                         module_alias: module_name.clone(),
                         constructor: constructor
@@ -1841,9 +1841,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     ArgNames::Named { name } | ArgNames::NamedLabelled { name, .. } => {
                         body_typer.environment.insert_variable(
                             name.to_string(),
-                            ValueConstructorVariant::LocalVariable,
+                            ValueConstructorVariant::LocalVariable {
+                                location: arg.location,
+                            },
                             t,
-                            arg.location,
                         );
                         body_typer.environment.init_usage(
                             name.to_string(),

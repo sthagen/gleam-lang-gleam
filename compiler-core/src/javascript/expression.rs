@@ -291,7 +291,7 @@ impl<'module> Generator<'module> {
             }
             ValueConstructorVariant::ModuleFn { .. }
             | ValueConstructorVariant::ModuleConstant { .. }
-            | ValueConstructorVariant::LocalVariable => self.local_var(name),
+            | ValueConstructorVariant::LocalVariable { .. } => self.local_var(name),
         }
     }
 
@@ -950,7 +950,7 @@ impl<'module> Generator<'module> {
         constructor: &'a ModuleValueConstructor,
     ) -> Document<'a> {
         match constructor {
-            ModuleValueConstructor::Fn | ModuleValueConstructor::Constant { .. } => {
+            ModuleValueConstructor::Fn { .. } | ModuleValueConstructor::Constant { .. } => {
                 docvec!["$", module, ".", maybe_escape_identifier_doc(label)]
             }
 

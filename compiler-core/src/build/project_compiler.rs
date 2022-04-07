@@ -45,6 +45,9 @@ pub struct ProjectCompiler<IO> {
     options: Options,
     ids: UniqueIdGenerator,
     io: IO,
+    /// We may want to silence subprocess stdout if we are running in LSP mode.
+    /// The language server talks over stdio so printing would break that.
+    pub silence_subprocess_stdout: bool,
 }
 
 // TODO: test that tests cannot be imported into src
@@ -70,6 +73,7 @@ where
             defined_modules: im::HashMap::new(),
             ids: UniqueIdGenerator::new(),
             warnings: Vec::new(),
+            silence_subprocess_stdout: false,
             telemetry,
             packages,
             options,
@@ -190,7 +194,7 @@ where
 
         // TODO: test. This one is not covered by the integration tests.
         if result.is_err() {
-            tracing::debug!(package=%package.name,"removing_failed_build");
+            tracing::debug!(package=%package.name, "removing_failed_build");
             let dir = paths::build_package(self.mode(), self.target(), &package.name);
             self.io.delete(&dir)?;
         }
@@ -256,7 +260,13 @@ where
             "--paths".into(),
             rebar3_path(&ebins),
         ];
-        let status = self.io.exec("rebar3", &args, &env, Some(&project_dir))?;
+        let status = self.io.exec(
+            "rebar3",
+            &args,
+            &env,
+            Some(&project_dir),
+            self.silence_subprocess_stdout,
+        )?;
 
         if status == 0 {
             Ok(())
@@ -316,6 +326,7 @@ where
         compiler.write_metadata = true;
         compiler.write_entrypoint = is_root;
         compiler.compile_beam_bytecode = !is_root || self.options.perform_codegen;
+        compiler.silence_subprocess_stdout = self.silence_subprocess_stdout;
         compiler.read_source_files(mode)?;
 
         // Compile project to Erlang or JavaScript source code

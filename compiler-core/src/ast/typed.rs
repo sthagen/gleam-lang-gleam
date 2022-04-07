@@ -110,7 +110,7 @@ pub enum TypedExpr {
         location: SrcSpan,
         typ: Arc<Type>,
         label: String,
-        module_name: Vec<String>,
+        module_name: String,
         module_alias: String,
         constructor: ModuleValueConstructor,
     },
@@ -304,15 +304,46 @@ impl TypedExpr {
     pub fn is_assignment(&self) -> bool {
         matches!(self, Self::Assignment { .. })
     }
-}
 
-impl HasLocation for TypedExpr {
-    fn location(&self) -> SrcSpan {
-        self.location()
+    pub fn definition_location(&self) -> Option<DefinitionLocation<'_>> {
+        match self {
+            TypedExpr::Fn { .. }
+            | TypedExpr::Int { .. }
+            | TypedExpr::Try { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Sequence { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::BitString { .. }
+            | TypedExpr::Assignment { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::RecordAccess { .. } => None,
+
+            // TODO: test
+            // TODO: definition
+            TypedExpr::RecordUpdate { .. } => None,
+
+            // TODO: test
+            TypedExpr::ModuleSelect {
+                module_name,
+                constructor,
+                ..
+            } => Some(DefinitionLocation {
+                module: Some(module_name.as_str()),
+                span: constructor.location(),
+            }),
+
+            // TODO: test
+            TypedExpr::Var { constructor, .. } => Some(constructor.definition_location()),
+        }
     }
-}
 
-impl TypedExpr {
     fn type_(&self) -> Arc<Type> {
         match self {
             Self::Var { constructor, .. } => constructor.type_.clone(),
@@ -350,6 +381,12 @@ impl TypedExpr {
                 | Self::String { .. }
                 | Self::BitString { .. }
         )
+    }
+}
+
+impl HasLocation for TypedExpr {
+    fn location(&self) -> SrcSpan {
+        self.location()
     }
 }
 
