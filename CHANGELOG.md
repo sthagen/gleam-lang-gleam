@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added the ability to replace a release up to one hour after it is published using `gleam publish --replace`
+
+## v0.21.0-rc1 - 2022-04-16
+
+- The Gleam language server is here! This will provide IDE like features for
+  code editors that support LSP, including but not limited to VSCode, Neovim,
+  Emacs, Eclipse, Visual Studio, and Atom. This first version includes these
+  features:
+  - Project compilation.
+  - Inline errors and warnings.
+  - Type information on hover.
+  - Go-to definition.
+  - Code formatting.
 - Fixed a bug in generated JavaScript code where functions named `then` would
   cause errors when dynamically imported.
 - Initialize `git` repo when creating a new project.
@@ -24,7 +37,10 @@
   been improved with a tip on how to install them. (#1567)
 - Corrected the hint given with certain int and float binary operator type
   errors.
-- Add support for `int` bitstring type when compiling to JavaScript.
+- Add support for `int` and `float` bitstring type when compiling to JavaScript.
+- Add support for specifying size of integers in a bitstring. Supports only exact binaries,
+  i.e. length is a multiple of 8.
+- Fixed compilation of rebar3 based dependencies on Windows.
 
 ## v0.20.1 - 2022-02-24
 

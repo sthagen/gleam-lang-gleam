@@ -187,6 +187,19 @@ impl<'module> Generator<'module> {
                 // Ints
                 [] | [Opt::Int { .. }] => Ok(value),
 
+                // Sized ints
+                [Opt::Size { value: size, .. }] => {
+                    self.tracker.sized_integer_segment_used = true;
+                    let size = self.not_in_tail_position(|gen| gen.wrap_expression(size))?;
+                    Ok(docvec!["sizedInteger(", value, ", ", size, ")"])
+                }
+
+                // Floats
+                [Opt::Float { .. }] => {
+                    self.tracker.float_bit_string_segment_used = true;
+                    Ok(docvec!["float64Bits(", value, ")"])
+                }
+
                 // UTF8 strings
                 [Opt::Utf8 { .. }] => {
                     self.tracker.string_bit_string_segment_used = true;

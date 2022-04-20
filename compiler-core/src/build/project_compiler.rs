@@ -22,6 +22,13 @@ use std::{
     time::Instant,
 };
 
+// On Windows we have to call rebar3 via a little wrapper script.
+//
+#[cfg(not(target_os = "windows"))]
+const REBAR_EXECUTABLE: &str = "rebar3";
+#[cfg(target_os = "windows")]
+const REBAR_EXECUTABLE: &str = "rebar3.cmd";
+
 #[derive(Debug)]
 pub struct Options {
     pub mode: Mode,
@@ -68,6 +75,7 @@ where
             .into_iter()
             .map(|p| (p.name.to_string(), p))
             .collect();
+
         Self {
             importable_modules: im::HashMap::new(),
             defined_modules: im::HashMap::new(),
@@ -261,7 +269,7 @@ where
             rebar3_path(&ebins),
         ];
         let status = self.io.exec(
-            "rebar3",
+            REBAR_EXECUTABLE,
             &args,
             &env,
             Some(&project_dir),
