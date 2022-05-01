@@ -239,13 +239,6 @@ impl<T: PartialEq> RecordConstructorArg<T> {
     pub fn put_doc(&mut self, new_doc: String) {
         self.doc = Some(new_doc);
     }
-
-    pub fn compare_without_location(&self, other: &RecordConstructorArg<T>) -> bool {
-        self.type_ == other.type_
-            && self.label == other.label
-            && self.doc == other.doc
-            && self.ast.compare_without_location(&other.ast)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -290,7 +283,7 @@ impl TypeAst {
         }
     }
 
-    pub fn compare_without_location(&self, other: &TypeAst) -> bool {
+    pub fn is_logically_equal(&self, other: &TypeAst) -> bool {
         match self {
             TypeAst::Constructor {
                 module,
@@ -303,7 +296,15 @@ impl TypeAst {
                     name: o_name,
                     arguments: o_arguments,
                     location: _,
-                } => module == o_module && name == o_name && arguments == o_arguments,
+                } => {
+                    module == o_module
+                        && name == o_name
+                        && arguments.len() == o_arguments.len()
+                        && arguments
+                            .iter()
+                            .zip(o_arguments)
+                            .all(|a| a.0.is_logically_equal(a.1))
+                }
                 _ => false,
             },
             TypeAst::Fn {
@@ -315,7 +316,14 @@ impl TypeAst {
                     arguments: o_arguments,
                     return_: o_return_,
                     location: _,
-                } => arguments == o_arguments && return_ == o_return_,
+                } => {
+                    arguments.len() == o_arguments.len()
+                        && arguments
+                            .iter()
+                            .zip(o_arguments)
+                            .all(|a| a.0.is_logically_equal(a.1))
+                        && return_.is_logically_equal(o_return_)
+                }
                 _ => false,
             },
             TypeAst::Var { name, location: _ } => match other {
@@ -329,7 +337,13 @@ impl TypeAst {
                 TypeAst::Tuple {
                     elems: o_elems,
                     location: _,
-                } => elems == o_elems,
+                } => {
+                    elems.len() == o_elems.len()
+                        && elems
+                            .iter()
+                            .zip(o_elems)
+                            .all(|a| a.0.is_logically_equal(a.1))
+                }
                 _ => false,
             },
             TypeAst::Hole { name, location: _ } => match other {
