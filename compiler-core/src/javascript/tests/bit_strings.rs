@@ -153,3 +153,61 @@ fn go(x) {
 "#,
     );
 }
+
+#[test]
+fn match_sized() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let <<a:16, b:8>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn discard_sized() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let <<_:16, _:8>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn match_sized_value() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let <<258:16>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn match_float() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let <<a:float, b:int>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn match_rest() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let <<_, b:binary>> = <<1,2,3>>
+}
+"#,
+    );
+}
+
+// binary rest
+// utf8 matched

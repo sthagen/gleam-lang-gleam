@@ -37,6 +37,7 @@ pub struct PackageCompiler<'a, IO> {
     pub copy_native_files: bool,
     pub compile_beam_bytecode: bool,
     pub silence_subprocess_stdout: bool,
+    pub build_journal: Option<&'a mut HashSet<PathBuf>>,
 }
 
 // TODO: ensure this is not a duplicate module
@@ -55,6 +56,7 @@ where
         target: Target,
         ids: UniqueIdGenerator,
         io: IO,
+        build_journal: Option<&'a mut HashSet<PathBuf>>,
     ) -> Self {
         Self {
             io,
@@ -71,6 +73,7 @@ where
             copy_native_files: true,
             compile_beam_bytecode: true,
             silence_subprocess_stdout: false,
+            build_journal,
         }
     }
 
@@ -118,7 +121,7 @@ where
         Ok(modules)
     }
 
-    fn compile_erlang_to_beam(&self, modules: &HashSet<PathBuf>) -> Result<(), Error> {
+    fn compile_erlang_to_beam(&mut self, modules: &HashSet<PathBuf>) -> Result<(), Error> {
         tracing::info!("compiling_erlang");
 
         let escript_path = self.out.join("build").join("gleam@@compile.erl");
@@ -140,14 +143,12 @@ where
         ];
         // Add the list of modules to compile
         for module in modules {
-            let path = self
-                .out
-                .join("build")
-                .join(module)
-                .with_extension("erl")
-                .to_string_lossy()
-                .to_string();
-            args.push(path);
+            let path = self.out.join("build").join(module).with_extension("erl");
+            args.push(path.to_string_lossy().to_string());
+            self.add_build_journal(path);
+
+            let beam_path = self.out.join("ebin").join(module).with_extension("beam");
+            self.add_build_journal(beam_path);
         }
         let status = self
             .io
@@ -190,7 +191,7 @@ where
     }
 
     fn copy_native_files(
-        &self,
+        &mut self,
         src_path: &Path,
         out: &Path,
         copied: &mut HashSet<PathBuf>,
@@ -220,6 +221,7 @@ where
             };
 
             self.io.copy(&path, &out.join(&relative_path))?;
+            self.add_build_journal(out.join(&relative_path));
 
             // TODO: test
             if !copied.insert(relative_path.clone()) {
@@ -241,6 +243,7 @@ where
             let name = format!("{}.gleam_module", &module.name.replace('/', "@"));
             let path = self.out.join("build").join(name);
             ModuleEncoder::new(&module.ast.type_info).write(self.io.writer(&path)?)?;
+            self.add_build_journal(path);
         }
         Ok(())
     }
@@ -275,6 +278,13 @@ where
             code,
             origin,
         });
+        Ok(())
+    }
+
+    fn add_build_journal(&mut self, path: PathBuf) -> Result<()> {
+        if let Some(b) = self.build_journal.as_mut() {
+            let _ = b.insert(path);
+        }
         Ok(())
     }
 
@@ -333,7 +343,7 @@ where
     }
 
     fn render_entrypoint_module(
-        &self,
+        &mut self,
         out: &Path,
         modules_to_compile: &mut HashSet<PathBuf>,
     ) -> Result<(), Error> {
@@ -345,6 +355,7 @@ where
         .expect("Erlang entrypoint rendering");
         self.io.writer(&out.join(name))?.write(module.as_bytes())?;
         let _ = modules_to_compile.insert(name.into());
+        self.add_build_journal(out.join(name));
         Ok(())
     }
 }

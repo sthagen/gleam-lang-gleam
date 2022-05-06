@@ -28,7 +28,7 @@ please consider sponsoring its development [on GitHub](https://github.com/sponso
 Thank you to our top sponsors! Gleam would not be possible without you.
 
 <p>
-  <a href="https://fly.io/"><img width=200 src="https://gleam.run/images/sponsors/flyio.png" alt="Fly.io"></a>
+  <a href="https://fly.io/"><img width=200 src="https://gleam.run/images/sponsors/fly.svg" alt="Fly.io"></a>
 </p>
 
 <p>
@@ -47,6 +47,7 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [Ali Farhadi](https://github.com/farhadi)
  - [Ben Marx](https://github.com/bgmarx)
  - [Ben Myles](https://github.com/benmyles)
+ - [Bernat Jufré Martínez](https://github.com/bjufre)
  - [Charles Chamberlain](https://github.com/charlesetc)
  - [Chew Choon Keat](https://github.com/choonkeat)
  - [Christian Meunier](https://github.com/tlvenn)
@@ -54,6 +55,7 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [Clay](https://github.com/connorlay)
  - [Cole Lawrence](https://github.com/colelawrence)
  - [Colin](https://github.com/insanitybit)
+ - [Copple](https://github.com/kiwicopple)
  - [Dan Dresselhaus](https://github.com/ddresselhaus)
  - [Dan Mueller](https://github.com/unthought)
  - [Dave Lucia](https://github.com/davydog187)
@@ -76,6 +78,7 @@ Thank you to our top sponsors! Gleam would not be possible without you.
  - [Jechol Lee](https://github.com/jechol)
  - [jiangplus](https://github.com/jiangplus)
  - [Joe Corkerton](https://github.com/joecorkerton)
+ - [John Gallagher](https://github.com/johngallagher)
  - [John Palgut](https://github.com/Jwsonic)
  - [Jonathan Arnett](https://github.com/J3RN)
  - [José Valim](https://github.com/josevalim)

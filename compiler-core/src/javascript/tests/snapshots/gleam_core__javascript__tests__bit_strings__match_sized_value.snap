@@ -1,11 +1,11 @@
 ---
 source: compiler-core/src/javascript/tests/bit_strings.rs
-expression: "\nfn go(x) {\n  let <<1, y>> = x\n}\n"
+expression: "\nfn go(x) {\n  let <<258:16>> = x\n}\n"
 ---
 import { throwError } from "../gleam.mjs";
 
 function go(x) {
-  if (x.byteAt(0) !== 1 || !(x.length == 2)) {
+  if (x.intFromSlice(0, 2) !== 258 || !(x.length == 2)) {
     throwError(
       "assignment_no_match",
       "my/mod",
@@ -15,7 +15,6 @@ function go(x) {
       { value: x }
     );
   }
-  let y = x.byteAt(1);
   return x;
 }
 

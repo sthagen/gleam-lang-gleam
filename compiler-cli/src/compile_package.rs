@@ -1,3 +1,8 @@
+use crate::{
+    config,
+    fs::{self, ProjectIO},
+    CompilePackage,
+};
 use gleam_core::{
     build::{Mode, PackageCompiler},
     metadata,
@@ -6,12 +11,6 @@ use gleam_core::{
     Result,
 };
 use std::path::Path;
-
-use crate::{
-    config,
-    fs::{self, ProjectIO},
-    CompilePackage,
-};
 
 pub fn command(options: CompilePackage) -> Result<()> {
     let ids = UniqueIdGenerator::new();
@@ -30,6 +29,7 @@ pub fn command(options: CompilePackage) -> Result<()> {
         options.target,
         ids,
         ProjectIO::new(),
+        None,
     );
     compiler.write_entrypoint = false;
     compiler.write_metadata = true;

@@ -11,7 +11,7 @@ use crate::{
     io::test::FilesChannel,
     javascript, type_,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use hexpm::version::{Range, Version};
 use pretty_assertions::assert_eq;
@@ -40,8 +40,17 @@ macro_rules! assert_erlang_compile {
         let root = PathBuf::from("some/build/path/root");
         let out = PathBuf::from("_build/default/lib/the_package");
         let lib = PathBuf::from("_build/default/lib");
-        let mut compiler =
-            PackageCompiler::new(&config, &root, &out, &lib, Target::Erlang, ids, file_writer);
+        let mut build_journal = HashSet::new();
+        let mut compiler = PackageCompiler::new(
+            &config,
+            &root,
+            &out,
+            &lib,
+            Target::Erlang,
+            ids,
+            file_writer,
+            Some(&mut build_journal),
+        );
         compiler.write_entrypoint = false;
         compiler.write_metadata = false;
         compiler.compile_beam_bytecode = false;
@@ -87,6 +96,7 @@ macro_rules! assert_javascript_compile {
         let root = PathBuf::from("some/build/path/root");
         let out = PathBuf::from("_build/default/lib/the_package");
         let lib = PathBuf::from("_build/default/lib");
+        let mut build_journal = HashSet::new();
         let mut compiler = PackageCompiler::new(
             &config,
             &root,
@@ -95,6 +105,7 @@ macro_rules! assert_javascript_compile {
             Target::JavaScript,
             ids,
             file_writer,
+            Some(&mut build_journal),
         );
         compiler.write_entrypoint = false;
         compiler.write_metadata = false;
@@ -142,8 +153,17 @@ macro_rules! assert_no_warnings {
         let root = PathBuf::from("some/build/path/root");
         let out = PathBuf::from("_build/default/lib/the_package");
         let lib = PathBuf::from("_build/default/lib");
-        let mut compiler =
-            PackageCompiler::new(&config, &root, &out, &lib, Target::Erlang, ids, file_writer);
+        let mut build_journal = HashSet::new();
+        let mut compiler = PackageCompiler::new(
+            &config,
+            &root,
+            &out,
+            &lib,
+            Target::Erlang,
+            ids,
+            file_writer,
+            Some(&mut build_journal),
+        );
         compiler.write_entrypoint = false;
         compiler.write_metadata = false;
         compiler.compile_beam_bytecode = false;
@@ -2301,8 +2321,17 @@ fn config_compilation_test() {
             let root = PathBuf::from("some/build/path/root");
             let out = PathBuf::from("_build/default/lib/the_package");
             let lib = PathBuf::from("_build/default/lib");
-            let mut compiler =
-                PackageCompiler::new(&config, &root, &out, &lib, Target::Erlang, ids, file_writer);
+            let mut build_journal = HashSet::new();
+            let mut compiler = PackageCompiler::new(
+                &config,
+                &root,
+                &out,
+                &lib,
+                Target::Erlang,
+                ids,
+                file_writer,
+                Some(&mut build_journal),
+            );
             compiler.write_entrypoint = false;
             compiler.write_metadata = false;
             compiler.compile_beam_bytecode = false;
