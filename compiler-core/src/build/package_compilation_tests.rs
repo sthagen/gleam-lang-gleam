@@ -6,7 +6,7 @@ use crate::{
         Origin, Target,
     },
     codegen,
-    config::{Docs, ErlangConfig, PackageConfig, Repository},
+    config::{Docs, ErlangConfig, JavascriptConfig, PackageConfig, Repository},
     erlang,
     io::test::FilesChannel,
     javascript, type_,
@@ -33,6 +33,9 @@ macro_rules! assert_erlang_compile {
             erlang: ErlangConfig {
                 application_start_module: None,
                 extra_applications: vec![],
+            },
+            javascript: JavascriptConfig {
+                typescript_declarations: false,
             },
             target: Target::Erlang,
         };
@@ -90,6 +93,9 @@ macro_rules! assert_javascript_compile {
                 application_start_module: None,
                 extra_applications: vec![],
             },
+            javascript: JavascriptConfig {
+                typescript_declarations: true,
+            },
             target: Target::JavaScript,
         };
         let (file_writer, file_receiver) = FilesChannel::new();
@@ -145,6 +151,9 @@ macro_rules! assert_no_warnings {
             erlang: ErlangConfig {
                 application_start_module: None,
                 extra_applications: vec![],
+            },
+            javascript: JavascriptConfig {
+                typescript_declarations: false,
             },
             target: Target::Erlang,
         };
@@ -2357,6 +2366,7 @@ fn config_compilation_test() {
             documentation: Default::default(),
             licences: Default::default(),
             erlang: Default::default(),
+            javascript: Default::default(),
             links: vec![],
             target: Target::Erlang,
         }
@@ -2626,11 +2636,25 @@ const x = two.A"#
                 text: javascript::PRELUDE.to_string(),
             },
             OutputFile {
+                path: PathBuf::from("_build/default/lib/the_package/dist/gleam.d.ts"),
+                text: javascript::PRELUDE_TS_DEF.to_string(),
+            },
+            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/dist/one/two.mjs"),
                 text: "import { CustomType } from \"../gleam.mjs\";
 
 export class A extends CustomType {}\n"
                     .to_string(),
+            },
+            OutputFile {
+                path: PathBuf::from("_build/default/lib/the_package/dist/one/two.d.ts"),
+                text: r#"import * as _ from "../gleam.d.ts";
+
+export class A extends _.CustomType {}
+
+export type A$ = A;
+"#
+                .to_string(),
             },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/dist/two.mjs"),
@@ -2639,7 +2663,11 @@ export class A extends CustomType {}\n"
 const x = new $two.A();
 "#
                 .to_string(),
-            }
+            },
+            OutputFile {
+                path: PathBuf::from("_build/default/lib/the_package/dist/two.d.ts"),
+                text: "import * as two from \"./one/two.d.ts\";\n".to_string(),
+            },
         ]),
     );
 }

@@ -3,6 +3,7 @@ mod import;
 mod pattern;
 #[cfg(test)]
 mod tests;
+mod typescript;
 
 use std::path::Path;
 
@@ -14,6 +15,7 @@ use self::import::{Imports, Member};
 const INDENT: isize = 2;
 
 pub const PRELUDE: &str = include_str!("../templates/prelude.js");
+pub const PRELUDE_TS_DEF: &str = include_str!("../templates/prelude.d.ts");
 
 pub type Output<'a> = Result<Document<'a>, Error>;
 
@@ -446,6 +448,22 @@ pub fn module(
     writer: &mut impl Utf8Writer,
 ) -> Result<(), crate::Error> {
     Generator::new(line_numbers, module)
+        .compile()
+        .map_err(|error| crate::Error::JavaScript {
+            path: path.to_path_buf(),
+            src: src.to_string(),
+            error,
+        })?
+        .pretty_print(80, writer)
+}
+
+pub fn ts_declaration(
+    module: &TypedModule,
+    path: &Path,
+    src: &str,
+    writer: &mut impl Utf8Writer,
+) -> Result<(), crate::Error> {
+    typescript::TypeScriptGenerator::new(module)
         .compile()
         .map_err(|error| crate::Error::JavaScript {
             path: path.to_path_buf(),

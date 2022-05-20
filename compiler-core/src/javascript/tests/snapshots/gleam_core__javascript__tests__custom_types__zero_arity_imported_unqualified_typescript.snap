@@ -1,0 +1,9 @@
+---
+source: compiler-core/src/javascript/tests/custom_types.rs
+assertion_line: 85
+expression: "import other.{Two}\npub fn main() {\n  Two\n}"
+---
+import * as other from "../other.d.ts";
+
+export function main(): other.One$;
+
