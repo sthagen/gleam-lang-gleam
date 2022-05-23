@@ -4,9 +4,8 @@
 
 - Added the ability to replace a release up to one hour after it is published
   using `gleam publish --replace`
-- All commands that authenticate using the `ApiKeyCommand` trait (currently
-  `gleam publish`, `gleam docs publish`, `gleam docs remove`, `gleam hex retire`,
-  and `gleam hex unretire`) and now have access to environment variables for
+- `gleam publish`, `gleam docs publish`, `gleam docs remove`, `gleam hex retire`,
+  and `gleam hex unretire` now have access to environment variables for
   username (default key `HEXPM_USER`) and password (default key `HEXPM_PASS`)
 - The `gleam publish` command gains the `-y/--yes` flag to disable the "are you
   sure" prompt
@@ -19,6 +18,9 @@
   JavaScript (#1563)
 - Fixed a bug where argument labels were allowed for anonymous functions.
 - Generated HTML docs easter egg updated.
+- `gleam export erlang-shipment` can be used to create a directory of compiled
+  Erlang bytecode that can be used as a deployment artefact to get your
+  application live.
 
 ## v0.21.0 - 2022-04-24
 
