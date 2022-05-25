@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- You are now allowed to use named accessors on types with multiple constructors if the 
+  accessor's name, position and type match (among the constructors). (#1610)
 - Added the ability to replace a release up to one hour after it is published
   using `gleam publish --replace`
 - `gleam publish`, `gleam docs publish`, `gleam docs remove`, `gleam hex retire`,
@@ -17,10 +19,17 @@
 - The compiler can now generate TypeScript declaration files when targeting
   JavaScript (#1563)
 - Fixed a bug where argument labels were allowed for anonymous functions.
+- Fixed a bug where JavaScript code could be invalid if a variable is defined
+  inside an anonymous function with a parameter with the same name as the
+  variable.
 - Generated HTML docs easter egg updated.
 - `gleam export erlang-shipment` can be used to create a directory of compiled
   Erlang bytecode that can be used as a deployment artefact to get your
   application live.
+- `gleam format` will now preserve (up to one) empty lines between consecutive
+  comments, as well as between comments and any following expression
+- Fixed a bug where `gleam format` would output an unwanted newline at the top
+  of documents that only contain simple `//` comments.
 
 ## v0.21.0 - 2022-04-24
 
