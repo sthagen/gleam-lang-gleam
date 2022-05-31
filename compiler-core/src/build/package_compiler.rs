@@ -21,13 +21,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::{ErlangAppCodegenConfiguration, TargetCodegenConfiguration};
+
 #[derive(Debug)]
 pub struct PackageCompiler<'a, IO> {
     pub io: IO,
     pub out: &'a Path,
     pub lib: &'a Path,
     pub root: &'a Path,
-    pub target: Target,
+    pub target: &'a TargetCodegenConfiguration,
     pub config: &'a PackageConfig,
     pub sources: Vec<Source>,
     pub ids: UniqueIdGenerator,
@@ -53,7 +55,7 @@ where
         root: &'a Path,
         out: &'a Path,
         lib: &'a Path,
-        target: Target,
+        target: &'a TargetCodegenConfiguration,
         ids: UniqueIdGenerator,
         io: IO,
         build_journal: Option<&'a mut HashSet<PathBuf>>,
@@ -97,7 +99,7 @@ where
         let sequence = dep_tree::toposort_deps(
             parsed_modules
                 .values()
-                .map(|m| module_deps_for_graph(self.target, m))
+                .map(|m| module_deps_for_graph(self.target.target(), m))
                 .collect(),
         )
         .map_err(convert_deps_tree_error)?;
@@ -105,7 +107,7 @@ where
         tracing::info!("Type checking modules");
         let mut modules = type_check(
             &self.config.name,
-            self.target,
+            self.target.target(),
             &self.ids,
             sequence,
             parsed_modules,
@@ -295,19 +297,31 @@ where
         }
 
         match self.target {
-            Target::JavaScript => self.perform_javascript_codegen(modules),
-            Target::Erlang => self.perform_erlang_codegen(modules),
+            TargetCodegenConfiguration::JavaScript => self.perform_javascript_codegen(modules),
+            TargetCodegenConfiguration::Erlang { app_file } => {
+                self.perform_erlang_codegen(modules, app_file.as_ref())
+            }
         }
     }
 
-    fn perform_erlang_codegen(&mut self, modules: &[Module]) -> Result<(), Error> {
+    fn perform_erlang_codegen(
+        &mut self,
+        modules: &[Module],
+        app_file: Option<&ErlangAppCodegenConfiguration>,
+    ) -> Result<(), Error> {
         let mut written = HashSet::new();
         let build_dir = self.out.join("build");
         let include_dir = self.out.join("include");
         let io = self.io.clone();
 
         Erlang::new(&build_dir, &include_dir).render(io.clone(), modules)?;
-        ErlangApp::new(&self.out.join("ebin")).render(io, &self.config, modules)?;
+        if let Some(config) = app_file {
+            ErlangApp::new(&self.out.join("ebin"), config.include_dev_deps).render(
+                io,
+                &self.config,
+                modules,
+            )?;
+        }
 
         if self.write_entrypoint {
             self.render_entrypoint_module(&build_dir, &mut written)?;

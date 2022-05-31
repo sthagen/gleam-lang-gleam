@@ -23,6 +23,8 @@ use std::{
     time::Instant,
 };
 
+use super::ErlangAppCodegenConfiguration;
+
 // On Windows we have to call rebar3 via a little wrapper script.
 //
 #[cfg(not(target_os = "windows"))]
@@ -359,12 +361,20 @@ where
         let lib_path = paths::build_packages(self.mode(), self.target());
         let artifact_path = out_path.join("build");
         let mode = self.mode();
+        let target = match self.target() {
+            Target::Erlang => super::TargetCodegenConfiguration::Erlang {
+                app_file: Some(ErlangAppCodegenConfiguration {
+                    include_dev_deps: is_root,
+                }),
+            },
+            Target::JavaScript => super::TargetCodegenConfiguration::JavaScript,
+        };
         let mut compiler = PackageCompiler::new(
             config,
             &root_path,
             &out_path,
             &lib_path,
-            self.target(),
+            &target,
             self.ids.clone(),
             self.io.clone(),
             if (is_root) {

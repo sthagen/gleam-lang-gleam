@@ -1,6 +1,6 @@
 use crate::{
     build::Module,
-    config::{JavascriptConfig, PackageConfig},
+    config::{JavaScriptConfig, PackageConfig},
     erlang,
     io::{FileSystemWriter, Utf8Writer},
     javascript,
@@ -75,11 +75,15 @@ impl<'a> Erlang<'a> {
 #[derive(Debug)]
 pub struct ErlangApp<'a> {
     output_directory: &'a Path,
+    include_dev_deps: bool,
 }
 
 impl<'a> ErlangApp<'a> {
-    pub fn new(output_directory: &'a Path) -> Self {
-        Self { output_directory }
+    pub fn new(output_directory: &'a Path, include_dev_deps: bool) -> Self {
+        Self {
+            output_directory,
+            include_dev_deps,
+        }
     }
 
     pub fn render<Writer: FileSystemWriter>(
@@ -112,7 +116,12 @@ impl<'a> ErlangApp<'a> {
         let applications = config
             .dependencies
             .keys()
-            .chain(config.dev_dependencies.keys())
+            .chain(
+                config
+                    .dev_dependencies
+                    .keys()
+                    .take_while(|_| self.include_dev_deps),
+            )
             .chain(config.erlang.extra_applications.iter())
             .sorted()
             .join(",\n                    ");
@@ -141,11 +150,11 @@ impl<'a> ErlangApp<'a> {
 #[derive(Debug)]
 pub struct JavaScript<'a> {
     output_directory: &'a Path,
-    config: &'a JavascriptConfig,
+    config: &'a JavaScriptConfig,
 }
 
 impl<'a> JavaScript<'a> {
-    pub fn new(output_directory: &'a Path, config: &'a JavascriptConfig) -> Self {
+    pub fn new(output_directory: &'a Path, config: &'a JavaScriptConfig) -> Self {
         Self {
             output_directory,
             config,
@@ -168,7 +177,7 @@ impl<'a> JavaScript<'a> {
         writer
             .writer(&self.output_directory.join("gleam.mjs"))?
             .str_write(javascript::PRELUDE)?;
-        tracing::debug!("Generated js prelude");
+        tracing::debug!("Generated JS prelude");
         if self.config.typescript_declarations {
             writer
                 .writer(&self.output_directory.join("gleam.d.ts"))?

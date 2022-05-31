@@ -6,7 +6,7 @@ use crate::{
         Origin, Target,
     },
     codegen,
-    config::{Docs, ErlangConfig, JavascriptConfig, PackageConfig, Repository},
+    config::{Docs, ErlangConfig, JavaScriptConfig, PackageConfig, Repository},
     erlang,
     io::test::FilesChannel,
     javascript, type_,
@@ -34,7 +34,7 @@ macro_rules! assert_erlang_compile {
                 application_start_module: None,
                 extra_applications: vec![],
             },
-            javascript: JavascriptConfig {
+            javascript: JavaScriptConfig {
                 typescript_declarations: false,
             },
             target: Target::Erlang,
@@ -49,7 +49,7 @@ macro_rules! assert_erlang_compile {
             &root,
             &out,
             &lib,
-            Target::Erlang,
+            &TargetCodegenConfiguration::Erlang { app_file: None },
             ids,
             file_writer,
             Some(&mut build_journal),
@@ -93,7 +93,7 @@ macro_rules! assert_javascript_compile {
                 application_start_module: None,
                 extra_applications: vec![],
             },
-            javascript: JavascriptConfig {
+            javascript: JavaScriptConfig {
                 typescript_declarations: true,
             },
             target: Target::JavaScript,
@@ -108,7 +108,7 @@ macro_rules! assert_javascript_compile {
             &root,
             &out,
             &lib,
-            Target::JavaScript,
+            &TargetCodegenConfiguration::JavaScript,
             ids,
             file_writer,
             Some(&mut build_journal),
@@ -152,7 +152,7 @@ macro_rules! assert_no_warnings {
                 application_start_module: None,
                 extra_applications: vec![],
             },
-            javascript: JavascriptConfig {
+            javascript: JavaScriptConfig {
                 typescript_declarations: false,
             },
             target: Target::Erlang,
@@ -168,7 +168,11 @@ macro_rules! assert_no_warnings {
             &root,
             &out,
             &lib,
-            Target::Erlang,
+            &TargetCodegenConfiguration::Erlang {
+                app_file: Some(ErlangAppCodegenConfiguration {
+                    include_dev_deps: true,
+                }),
+            },
             ids,
             file_writer,
             Some(&mut build_journal),
@@ -187,21 +191,7 @@ macro_rules! assert_no_warnings {
 
 #[test]
 fn package_compiler_test() {
-    assert_erlang_compile!(
-        vec![],
-        Ok(vec![OutputFile {
-            path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-            text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, []},
-    {registered, []}
-]}.
-"
-            .into(),
-        },])
-    );
+    assert_erlang_compile!(vec![], Ok(vec![]));
 
     assert_erlang_compile!(
         vec![Source {
@@ -210,24 +200,10 @@ fn package_compiler_test() {
             code: "".to_string(),
             origin: Origin::Src,
         }],
-        Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
-                text: "-module(one).\n".to_string(),
-                path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
-            },
-        ])
+        Ok(vec![OutputFile {
+            text: "-module(one).\n".to_string(),
+            path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
+        },])
     );
 
     assert_erlang_compile!(
@@ -247,19 +223,6 @@ fn package_compiler_test() {
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 text: "-module(one).\n".to_string(),
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
             },
@@ -277,24 +240,10 @@ fn package_compiler_test() {
             path: PathBuf::from("src/one.gleam"),
             code: "".to_string(),
         }],
-        Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
-                text: "-module(one).\n".to_string(),
-            },
-        ]),
+        Ok(vec![OutputFile {
+            path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
+            text: "-module(one).\n".to_string(),
+        },]),
     );
 
     // TODO: src modules cannot be allowed to import test modules
@@ -340,19 +289,6 @@ fn package_compiler_test() {
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).\n".to_string(),
             },
@@ -380,19 +316,6 @@ fn package_compiler_test() {
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).\n".to_string(),
             },
@@ -419,19 +342,6 @@ fn package_compiler_test() {
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -479,19 +389,6 @@ unbox(X) ->
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -527,22 +424,9 @@ box(X) ->
             name: "one/two".to_string(),
             code: "pub type Box { Box }".to_string(),
         }],
-        Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one@two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/build/one@two.erl"),
-                text: "-module(one@two).
+        Ok(vec![OutputFile {
+            path: PathBuf::from("_build/default/lib/the_package/build/one@two.erl"),
+            text: "-module(one@two).
 -compile(no_auto_import).
 
 -export_type([box/0]).
@@ -551,9 +435,8 @@ box(X) ->
 
 
 "
-                .to_string(),
-            }
-        ]),
+            .to_string(),
+        }]),
     );
 
     assert_erlang_compile!(
@@ -572,19 +455,6 @@ box(X) ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -630,19 +500,6 @@ box() ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -691,19 +548,6 @@ pub fn go(x) { let one.Box(y) = x y }"
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [nested@one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/nested@one.erl"),
                 text: "-module(nested@one).
 -compile(no_auto_import).
@@ -751,19 +595,6 @@ pub fn go(x) { let thingy.Box(y) = x y }"
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [nested@one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/nested@one.erl"),
                 text: "-module(nested@one).
@@ -815,19 +646,6 @@ go(X) ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [nested@one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/nested@one.erl"),
                 text: "-module(nested@one).
@@ -910,19 +728,6 @@ pub fn x(p) { let one.Point(x, _) = p x }"
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -982,19 +787,6 @@ x(P) ->
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -1047,19 +839,6 @@ pub fn make() { one.Empty }"
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -1104,19 +883,6 @@ make() ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -1167,19 +933,6 @@ make() ->
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -1228,19 +981,6 @@ make() ->
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -1285,19 +1025,6 @@ funky() ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -1344,19 +1071,6 @@ funky() ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -1407,19 +1121,6 @@ funky() ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -1477,19 +1178,6 @@ get_name(Person) ->
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -1533,19 +1221,6 @@ get_name(Person) ->
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -1586,19 +1261,6 @@ get_name(Person) ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -1649,19 +1311,6 @@ main() ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -1718,18 +1367,6 @@ make() ->
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-".into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).\n"
                 .to_string(),
@@ -1767,19 +1404,6 @@ make_list() ->
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -1926,19 +1550,6 @@ fn bug_752() {
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl",),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -1998,19 +1609,6 @@ pub fn main(power: Power) { power.to_int(power) }"
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [main,
-               power]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/main.erl",),
                 text: "-module(main).
@@ -2072,19 +1670,6 @@ pub fn x() { test }"
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
 -compile(no_auto_import).
@@ -2132,19 +1717,6 @@ pub fn x() { test }"
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -2230,19 +1802,6 @@ pub fn x() { one.A }"
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
@@ -2336,7 +1895,11 @@ fn config_compilation_test() {
                 &root,
                 &out,
                 &lib,
-                Target::Erlang,
+                &TargetCodegenConfiguration::Erlang {
+                    app_file: Some(ErlangAppCodegenConfiguration {
+                        include_dev_deps: true,
+                    }),
+                },
                 ids,
                 file_writer,
                 Some(&mut build_journal),
@@ -2578,19 +2141,6 @@ const x = two.A"#
         ],
         Ok(vec![
             OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one@two,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
-            OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one@two.erl"),
                 text: "-module(one@two).
 -compile(no_auto_import).
@@ -2691,19 +2241,6 @@ fn import_error() {
             },
         ],
         Ok(vec![
-            OutputFile {
-                path: PathBuf::from("_build/default/lib/the_package/ebin/the_package.app"),
-                text: "{application, the_package, [
-    {vsn, \"1.0.0\"},
-    {applications, []},
-    {description, \"The description\"},
-    {modules, [one,
-               two]},
-    {registered, []}
-]}.
-"
-                .into(),
-            },
             OutputFile {
                 path: PathBuf::from("_build/default/lib/the_package/build/one.erl"),
                 text: "-module(one).
