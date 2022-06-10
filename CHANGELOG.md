@@ -20,10 +20,12 @@
   but the project would run on target Erlang instead.
 - The compiler is now able to generate TypeScript declaration files on target
   JavaScript (#1563). To enable this edit `gleam.toml` like so:
+
   ```toml
   [javascript]
   typescript_declarations = true
   ```
+
 - Fixed a bug where argument labels were allowed for anonymous functions.
 - Fixed a bug where JavaScript code could be invalid if a variable is defined
   inside an anonymous function with a parameter with the same name as the
@@ -47,9 +49,12 @@
 - Fixed a bug where the formatter could render a syntax error with lists on long
   unbreakable lines.
 - Fixed a bug where JavaScript variable names could be incorrectly reused.
+- Fixed a bug where `gleam format` would remove the braces around a tuple index
+  access when accessing a field of the returned element.
 - The `gleam compile-package` command no longer generates a `.app` file. This
   should now be done by the build tool that calls this command as it is
   responsible for handling dependencies.
+- Fixed a bug where piping a list tail would create invalid Erlang code (#1656).
 
 ## v0.21.0 - 2022-04-24
 
