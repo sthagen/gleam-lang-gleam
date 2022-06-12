@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.22.0-rc1 - 2022-06-12
 
 - Fixed a bug where doc comments would dissociate from their statements when
   generating html documentation.
@@ -20,12 +20,10 @@
   but the project would run on target Erlang instead.
 - The compiler is now able to generate TypeScript declaration files on target
   JavaScript (#1563). To enable this edit `gleam.toml` like so:
-
   ```toml
   [javascript]
   typescript_declarations = true
   ```
-
 - Fixed a bug where argument labels were allowed for anonymous functions.
 - Fixed a bug where JavaScript code could be invalid if a variable is defined
   inside an anonymous function with a parameter with the same name as the
@@ -42,6 +40,7 @@
   application live.
 - `gleam format` will now preserve (up to one) empty lines between consecutive
   comments, as well as between comments and any following expression
+- The deprecated rebar3 integration has been removed.
 - Fixed a bug where `gleam format` would output an unwanted newline at the top
   of documents that only contain simple `//` comments.
 - No longer add `dev-dependencies` to generated `.app` Erlang files unless
@@ -51,6 +50,8 @@
 - Fixed a bug where JavaScript variable names could be incorrectly reused.
 - Fixed a bug where `gleam format` would remove the braces around a tuple index
   access when accessing a field of the returned element.
+- Fixed a bug case clause guards could render incorrect JavaScript if a variable
+  name was rebinded in the clause body.
 - The `gleam compile-package` command no longer generates a `.app` file. This
   should now be done by the build tool that calls this command as it is
   responsible for handling dependencies.
