@@ -1342,6 +1342,13 @@ fn todo_warning_test() {
             }),
         },
     );
+
+    // https://github.com/gleam-lang/gleam/issues/1669
+    assert_warning!(
+        "pub fn main() {
+        todo
+      }"
+    );
 }
 
 #[test]
