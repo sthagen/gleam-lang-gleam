@@ -1,5 +1,6 @@
 mod assert;
 mod bit_strings;
+mod case;
 mod guards;
 mod numbers;
 mod patterns;
@@ -14,7 +15,7 @@ mod variables;
 #[macro_export]
 macro_rules! assert_erl {
     ($src:expr $(,)?) => {{
-        use crate::{
+        use $crate::{
             build::Origin,
             erlang::module,
             line_numbers::LineNumbers,

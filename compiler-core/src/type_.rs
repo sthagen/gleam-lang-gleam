@@ -1309,19 +1309,18 @@ fn infer_statement(
         } => {
             let typed_expr = ExprTyper::new(environment).infer_const(&annotation, *value)?;
             let type_ = typed_expr.type_();
-
-            environment.insert_module_value(
-                &name,
-                ValueConstructor {
-                    public,
-                    variant: ValueConstructorVariant::ModuleConstant {
-                        location,
-                        literal: typed_expr.clone(),
-                        module: module_name.join("/"),
-                    },
-                    type_: type_.clone(),
+            let variant = ValueConstructor {
+                public,
+                variant: ValueConstructorVariant::ModuleConstant {
+                    location,
+                    literal: typed_expr.clone(),
+                    module: module_name.join("/"),
                 },
-            );
+                type_: type_.clone(),
+            };
+
+            environment.insert_variable(name.clone(), variant.variant.clone(), type_.clone());
+            environment.insert_module_value(&name, variant);
 
             if !public {
                 environment.init_usage(name.clone(), EntityKind::PrivateConstant, location);
@@ -1691,7 +1690,7 @@ pub fn register_types<'a>(
 
             // Keep track of private types so we can tell if they are later unused
             if !public {
-                let _ = environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
+                environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
             }
         }
 
@@ -1732,7 +1731,7 @@ pub fn register_types<'a>(
 
             // Keep track of private types so we can tell if they are later unused
             if !public {
-                let _ = environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
+                environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
             }
         }
 
@@ -1768,7 +1767,7 @@ pub fn register_types<'a>(
 
             // Keep track of private types so we can tell if they are later unused
             if !public {
-                let _ = environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
+                environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
             }
         }
 
@@ -1867,20 +1866,20 @@ pub fn register_import(
                 }
 
                 if value_imported && type_imported {
-                    let _ = environment.init_usage(
+                    environment.init_usage(
                         imported_name.to_string(),
                         EntityKind::ImportedTypeAndConstructor,
                         *location,
                     );
                 } else if type_imported {
                     let _ = environment.imported_types.insert(imported_name.to_string());
-                    let _ = environment.init_usage(
+                    environment.init_usage(
                         imported_name.to_string(),
                         EntityKind::ImportedType,
                         *location,
                     );
                 } else if value_imported {
-                    let _ = match variant {
+                    match variant {
                         Some(&ValueConstructorVariant::Record { .. }) => environment.init_usage(
                             imported_name.to_string(),
                             EntityKind::ImportedConstructor,
