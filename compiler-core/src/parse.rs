@@ -57,7 +57,7 @@ mod token;
 use crate::ast::{
     Arg, ArgNames, AssignmentKind, BinOp, BitStringSegment, BitStringSegmentOption, CallArg,
     Clause, ClauseGuard, Constant, ExternalFnArg, HasLocation, Module, Pattern, RecordConstructor,
-    RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement, TargetGroup, TypeAst,
+    RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement, TargetGroup, TodoKind, TypeAst,
     UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard, UntypedConstant, UntypedExpr,
     UntypedExternalFnArg, UntypedModule, UntypedPattern, UntypedRecordUpdateArg, UntypedStatement,
     CAPTURE_VARIABLE,
@@ -402,6 +402,7 @@ where
                 }
                 UntypedExpr::Todo {
                     location: SrcSpan { start, end },
+                    kind: TodoKind::Keyword,
                     label,
                 }
             }
@@ -1254,26 +1255,34 @@ where
         let (_, rpar_e) = self.expect_one(&Token::RightParen)?;
         let return_annotation = self.parse_type_annotation(&Token::RArrow, false)?;
         let _ = self.expect_one(&Token::LeftBrace)?;
-        if let Some((body, _)) = self.parse_expression_seq()? {
-            let (_, rbr_e) = self.expect_one(&Token::RightBrace)?;
-            let end = return_annotation
-                .as_ref()
-                .map(|l| l.location().end)
-                .unwrap_or_else(|| if is_anon { rbr_e } else { rpar_e });
-            Ok(Some(Statement::Fn {
-                doc: None,
+        let some_body = self.parse_expression_seq()?;
+        let (_, rbr_e) = self.expect_one(&Token::RightBrace)?;
+        let end = return_annotation
+            .as_ref()
+            .map(|l| l.location().end)
+            .unwrap_or_else(|| if is_anon { rbr_e } else { rpar_e });
+        let body = match some_body {
+            None if is_anon => {
+                return self.next_tok_unexpected(vec!["The body of a function".into()]);
+            }
+            None => UntypedExpr::Todo {
+                kind: TodoKind::EmptyFunction,
                 location: SrcSpan { start, end },
-                end_position: rbr_e - 1,
-                public,
-                name,
-                arguments: args,
-                body,
-                return_type: (),
-                return_annotation,
-            }))
-        } else {
-            self.next_tok_unexpected(vec!["The body of a function".to_string()])
-        }
+                label: None,
+            },
+            Some((body, _)) => body,
+        };
+        Ok(Some(Statement::Fn {
+            doc: None,
+            location: SrcSpan { start, end },
+            end_position: rbr_e - 1,
+            public,
+            name,
+            arguments: args,
+            body,
+            return_type: (),
+            return_annotation,
+        }))
     }
 
     // Starts after "fn"
