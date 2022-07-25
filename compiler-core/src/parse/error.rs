@@ -30,6 +30,7 @@ pub struct ParseError {
 impl ParseError {
     pub fn details(&self) -> (&'static str, Vec<String>) {
         match &self.error {
+            ParseErrorType::ExpectedEqual => ("I was expecting a '=' after this", vec![]),
             ParseErrorType::ExpectedExpr => ("I was expecting an expression after this.", vec![]),
             ParseErrorType::ExpectedName => ("I was expecting a name here.", vec![]),
             ParseErrorType::ExpectedPattern => (
@@ -121,6 +122,13 @@ utf16_codepoint, utf32_codepoint, signed, unsigned, big, little, native, size, u
                 "There must be an expression in here.",
                 vec!["Hint: Put an expression in there or remove the brackets.".to_string()],
             ),
+            ParseErrorType::NoLetBinding => (
+                "There must be a 'let' to bind variable to value",
+                vec![
+                    "Hint: Use let for binding".to_string(),
+                    "See: https://gleam.run/book/tour/let-bindings".to_string(),
+                ],
+            ),
             ParseErrorType::NoValueAfterEqual => (
                 "I was expecting to see a value after this equals sign.",
                 vec![],
@@ -189,6 +197,7 @@ utf16_codepoint, utf32_codepoint, signed, unsigned, big, little, native, size, u
 
 #[derive(Debug, PartialEq)]
 pub enum ParseErrorType {
+    ExpectedEqual,           // expect "="
     ExpectedExpr,            // after "->" in a case clause
     ExpectedName,            // any token used when a Name was expected
     ExpectedPattern,         // after ':' where a pattern is expected
@@ -211,6 +220,7 @@ pub enum ParseErrorType {
     NoConstructors,            // A type "A {}" must have at least one constructor
     NoCaseClause,              // a case with no clauses
     NoExpression, // between "{" and "}" in expression position, there must be an expression
+    NoLetBinding, // Bindings and rebinds always require let and must always bind to a value.
     NoValueAfterEqual, // = <something other than a value>
     NotConstType, // :fn(), name, _  are not valid const types
     OpNakedRight, // Operator with no value to the right

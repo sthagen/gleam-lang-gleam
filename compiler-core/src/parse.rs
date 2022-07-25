@@ -562,6 +562,15 @@ where
                 }
             }
 
+            // if it reaches this code block, there must be no "let" or "assert" at the beginning of the expression
+            Some((start, Token::Equal, end)) => {
+                return parse_error(ParseErrorType::NoLetBinding, SrcSpan { start, end })
+            }
+
+            Some((start, Token::Colon, end)) => {
+                return parse_error(ParseErrorType::NoLetBinding, SrcSpan { start, end })
+            }
+
             t0 => {
                 self.tok0 = t0;
                 return Ok(None);
@@ -685,7 +694,13 @@ where
             ])?;
         };
         let annotation = self.parse_type_annotation(&Token::Colon, false)?;
-        let (eq_s, eq_e) = self.expect_one(&Token::Equal)?;
+        let (eq_s, eq_e) = self.maybe_one(&Token::Equal).ok_or(ParseError {
+            error: ParseErrorType::ExpectedEqual,
+            location: SrcSpan {
+                start: pattern.location().start,
+                end: pattern.location().end,
+            },
+        })?;
         let value = self.parse_expression()?.ok_or(ParseError {
             error: ParseErrorType::ExpectedValue,
             location: SrcSpan {
