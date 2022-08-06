@@ -3142,6 +3142,22 @@ fn tuple_constant() {
 }
 
 #[test]
+fn var_constant() {
+    assert_format!(
+        r#"const x = 1
+
+const x_alias = x
+
+fn f(i: Int) -> Int {
+  i
+}
+
+const f_alias: fn(Int) -> Int = f
+"#
+    );
+}
+
+#[test]
 fn let_as_expression() {
     assert_format!(
         "pub fn main() {

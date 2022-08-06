@@ -1124,6 +1124,7 @@ pub(crate) fn constant_expression<'a>(
             feature: "Bit string syntax".to_string(),
             location: *location,
         }),
+        Constant::Var { name, .. } => Ok(name.to_doc()),
     }
 }
 

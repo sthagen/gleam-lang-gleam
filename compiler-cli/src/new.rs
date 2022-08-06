@@ -223,7 +223,7 @@ pub fn create(options: NewOptions, version: &'static str) -> Result<()> {
     .trim()
     .to_string();
     validate_name(&name)?;
-    validate_root_folder(&name)?;
+    validate_root_folder(&options.project_root)?;
     let creator = Creator::new(options.clone(), name, version);
 
     creator.run()?;

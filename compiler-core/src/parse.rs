@@ -1752,38 +1752,34 @@ where
             }
 
             // Function
-            Some((start, Token::Fn, end)) => {
+            Some((start, Token::Fn, _)) => {
                 let _ = self.next_tok();
-                if for_const {
-                    parse_error(ParseErrorType::NotConstType, SrcSpan { start, end })
+                let _ = self.expect_one(&Token::LeftParen)?;
+                let args = Parser::series_of(
+                    self,
+                    &|x| Parser::parse_type(x, for_const),
+                    Some(&Token::Comma),
+                )?;
+                let _ = self.expect_one(&Token::RightParen)?;
+                let (arr_s, arr_e) = self.expect_one(&Token::RArrow)?;
+                let retrn = self.parse_type(for_const)?;
+                if let Some(retrn) = retrn {
+                    Ok(Some(TypeAst::Fn {
+                        location: SrcSpan {
+                            start,
+                            end: retrn.location().end,
+                        },
+                        return_: Box::new(retrn),
+                        arguments: args,
+                    }))
                 } else {
-                    let _ = self.expect_one(&Token::LeftParen)?;
-                    let args = Parser::series_of(
-                        self,
-                        &|x| Parser::parse_type(x, for_const),
-                        Some(&Token::Comma),
-                    )?;
-                    let _ = self.expect_one(&Token::RightParen)?;
-                    let (arr_s, arr_e) = self.expect_one(&Token::RArrow)?;
-                    let retrn = self.parse_type(for_const)?;
-                    if let Some(retrn) = retrn {
-                        Ok(Some(TypeAst::Fn {
-                            location: SrcSpan {
-                                start,
-                                end: retrn.location().end,
-                            },
-                            return_: Box::new(retrn),
-                            arguments: args,
-                        }))
-                    } else {
-                        parse_error(
-                            ParseErrorType::ExpectedType,
-                            SrcSpan {
-                                start: arr_s,
-                                end: arr_e,
-                            },
-                        )
-                    }
+                    parse_error(
+                        ParseErrorType::ExpectedType,
+                        SrcSpan {
+                            start: arr_s,
+                            end: arr_e,
+                        },
+                    )
                 }
             }
 
@@ -2086,11 +2082,38 @@ where
 
             Some((start, Token::Name { name }, end)) => {
                 let _ = self.next_tok();
-                if self.expect_one(&Token::Dot).is_ok() {
-                    let (_, upname, end) = self.expect_upname()?;
-                    self.parse_const_record_finish(start, Some(name), upname, end)
+                if self.maybe_one(&Token::Dot).is_some() {
+                    match self.tok0.take() {
+                        Some((_, Token::UpName { name: upname }, end)) => {
+                            let _ = self.next_tok();
+                            self.parse_const_record_finish(start, Some(name), upname, end)
+                        }
+                        Some((_, Token::Name { name: end_name }, end)) => Ok(Some(Constant::Var {
+                            location: SrcSpan { start, end },
+                            module: Some(name),
+                            name: end_name,
+                            constructor: None,
+                            typ: (),
+                        })),
+                        Some((start, _, end)) => parse_error(
+                            ParseErrorType::UnexpectedToken {
+                                expected: vec!["UpName".to_string(), "Name".to_string()],
+                                hint: None,
+                            },
+                            SrcSpan { start, end },
+                        ),
+                        None => {
+                            parse_error(ParseErrorType::UnexpectedEof, SrcSpan { start: 0, end: 0 })
+                        }
+                    }
                 } else {
-                    parse_error(ParseErrorType::NotConstType, SrcSpan { start, end })
+                    Ok(Some(Constant::Var {
+                        location: SrcSpan { start, end },
+                        module: None,
+                        name,
+                        constructor: None,
+                        typ: (),
+                    }))
                 }
             }
 

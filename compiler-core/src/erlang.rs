@@ -969,6 +969,16 @@ fn const_inline<'a>(literal: &'a TypedConstant, env: &mut Env<'a>) -> Document<'
                 tuple(std::iter::once(tag).chain(args))
             }
         }
+
+        Constant::Var {
+            name, constructor, ..
+        } => var(
+            name,
+            constructor
+                .as_ref()
+                .expect("This is guaranteed to hold a value."),
+            env,
+        ),
     }
 }
 
@@ -1170,6 +1180,23 @@ fn call<'a>(fun: &'a TypedExpr, args: &'a [CallArg<TypedExpr>], env: &mut Env<'a
     )
 }
 
+fn module_fn_with_args<'a>(
+    module: &'a [String],
+    name: &'a str,
+    args: Vec<Document<'a>>,
+    env: &mut Env<'a>,
+) -> Document<'a> {
+    let args = wrap_args(args);
+    if module == env.module {
+        atom(name.to_string()).append(args)
+    } else {
+        atom(module.join("@"))
+            .append(":")
+            .append(atom(name.to_string()))
+            .append(args)
+    }
+}
+
 fn docs_args_call<'a>(
     fun: &'a TypedExpr,
     mut args: Vec<Document<'a>>,
@@ -1196,15 +1223,31 @@ fn docs_args_call<'a>(
                     ..
                 },
             ..
-        } => {
-            let args = wrap_args(args);
-            if module == env.module {
-                atom(name.to_string()).append(args)
+        } => module_fn_with_args(module, name, args, env),
+
+        // Match against a Constant::Var that contains a function.
+        // We want this to be emitted like a normal function call, not a function variable
+        // substitution.
+        TypedExpr::Var {
+            constructor:
+                ValueConstructor {
+                    variant:
+                        ValueConstructorVariant::ModuleConstant {
+                            literal:
+                                Constant::Var {
+                                    constructor: Some(ref constructor),
+                                    ..
+                                },
+                            ..
+                        },
+                    ..
+                },
+            ..
+        } if constructor.variant.is_module_fn() => {
+            if let ValueConstructorVariant::ModuleFn { module, name, .. } = &constructor.variant {
+                module_fn_with_args(module, name, args, env)
             } else {
-                atom(module.join("@"))
-                    .append(":")
-                    .append(atom(name.to_string()))
-                    .append(args)
+                unreachable!("The above clause guard ensures that this is a module fn")
             }
         }
 
