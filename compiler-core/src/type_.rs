@@ -389,7 +389,7 @@ pub struct Module {
     pub accessors: HashMap<String, AccessorsMap>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatternConstructor {
     Record {
         name: String,
@@ -1927,8 +1927,23 @@ pub fn register_import(
                     .insert(module_name.clone(), *location);
             }
 
+            // Check if value already was imported
+            if let Some(previous) = environment.imported_names.get(&module_name) {
+                return Err(Error::DuplicateImport {
+                    location: *location,
+                    previous_location: *previous,
+                    name: module_name,
+                });
+            }
+
+            // Register the name as imported so it can't be imported a
+            // second time in future
+            let _ = environment
+                .imported_names
+                .insert(module_name.clone(), *location);
+
             // Insert imported module into scope
-            // TODO: use a refernce to the module to avoid copying
+            // TODO: use a reference to the module to avoid copying
             let _ = environment
                 .imported_modules
                 .insert(module_name, module_info.clone());
