@@ -1,12 +1,14 @@
 # Changelog
 
 ## Unreleased
+
 - Fixed a bug where piping to `todo` would generate invalid Erlang code.
 - The `gleam update` command can now be used to update dependency packages to
   their latest versions.
 - Module functions with empty bodies are no longer syntax errors.
 - The format used by the formatter has been improved.
 - OpenSSL swapped out for RustTLS.
+- Generated HTML documentation now includes a search bar.
 - The LSP will now provide autocompletion for imports.
 - A helpful error message is now returned when assignments are missing either a
   keyword or a value.
@@ -17,12 +19,17 @@
   crash.
 - Fixed a bug where the formatter could crash if source code contained 3 or more
   empty lines in a row.
+- Fixed a bug where the formatter would remove braces from blocks used as the
+  subject of a case expression.
 - Fixed a bug alternative patterns with a clause containing a pipe with a pipe
   after the case expresson could render incorrect Erlang.
 - Fixed a bug where formatter would strip curly braces around case guards even
   when they are required to specify boolean precedence.
 - Fixed a bug where `gleam new` would not in some situations not validate the
   target directory correctly.
+- Fixed a bug where pipes inside record update subjects could generate invalid
+  Erlang.
+- Fixed a bug where pipes inside record access could generate invalid Erlang.
 - Qualifiers are now used when multiple types have the same name in an error
   message.
 - In JavaScript, if an object has defined an `equals` method in it's prototype,

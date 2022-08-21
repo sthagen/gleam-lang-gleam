@@ -27,6 +27,7 @@ lazy_static = "1.4.0"
 strsim = "0.10.0"
 # Data (de)serialisation
 serde = { version = "1.0.130", features = ["derive"] }
+serde_json = "*"
 # Cap'n Proto binary format runtime
 capnp = "0.14.3"
 # Enum trait impl macros
@@ -40,7 +41,7 @@ vec1 = "1.8.0"
 # Hex package manager client
 hexpm = "2.0.0"
 # XDG directory locations
-dirs = "4.0.0"
+dirs-next = "2.0.0"
 # HTTP types
 http = "0.2.5"
 # Byte collections
