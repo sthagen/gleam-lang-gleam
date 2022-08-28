@@ -39,21 +39,10 @@ pub struct Module<Info, Statements> {
 }
 
 impl TypedModule {
-    pub fn find_node(&self, byte_index: usize) -> Option<Located<'_>> {
-        let mut in_any_statement = false;
-
-        for statement in &self.statements {
-            if let Some(node) = statement.find_node(byte_index) {
-                return Some(Located::Expression(node));
-            }
-            in_any_statement = in_any_statement || statement.location().contains(byte_index)
-        }
-
-        if !in_any_statement {
-            return Some(Located::OutsideAnyStatement);
-        }
-
-        None
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        self.statements
+            .iter()
+            .find_map(|statement| statement.find_node(byte_index))
     }
 }
 
@@ -387,7 +376,7 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
     /// ```
     Fn {
         location: SrcSpan,
-        end_position: usize,
+        end_position: u32,
         name: String,
         arguments: Vec<Arg<T>>,
         body: Expr,
@@ -518,22 +507,32 @@ pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
 }
 
 impl TypedStatement {
-    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
-        match self {
-            Statement::Fn { body, .. } => body.find_node(byte_index),
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        // TODO: test
+        if !self.location().contains(byte_index) {
+            return None;
+        }
 
+        match self {
+            // TODO: test
+            Statement::Fn { body, .. } => match body.find_node(byte_index) {
+                Some(expression) => Some(Located::Expression(expression)),
+                None => Some(Located::Statement(self)),
+            },
+
+            // TODO: test
             Statement::TypeAlias { .. }
             | Statement::CustomType { .. }
             | Statement::ExternalFn { .. }
             | Statement::ExternalType { .. }
             | Statement::Import { .. }
-            | Statement::ModuleConstant { .. } => None,
+            | Statement::ModuleConstant { .. } => Some(Located::Statement(self)),
         }
     }
 }
 
 impl<A, B, C, E> Statement<A, B, C, E> {
-    pub fn location(&self) -> &SrcSpan {
+    pub fn location(&self) -> SrcSpan {
         match self {
             Statement::Fn { location, .. }
             | Statement::Import { location, .. }
@@ -541,7 +540,7 @@ impl<A, B, C, E> Statement<A, B, C, E> {
             | Statement::CustomType { location, .. }
             | Statement::ExternalFn { location, .. }
             | Statement::ExternalType { location, .. }
-            | Statement::ModuleConstant { location, .. } => location,
+            | Statement::ModuleConstant { location, .. } => *location,
         }
     }
 
@@ -697,7 +696,7 @@ pub struct CallArg<A> {
 }
 
 impl CallArg<TypedExpr> {
-    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+    pub fn find_node(&self, byte_index: u32) -> Option<&TypedExpr> {
         self.value.find_node(byte_index)
     }
 }
@@ -729,11 +728,11 @@ pub struct TypedRecordUpdateArg {
     pub label: String,
     pub location: SrcSpan,
     pub value: TypedExpr,
-    pub index: usize,
+    pub index: u32,
 }
 
 impl TypedRecordUpdateArg {
-    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+    pub fn find_node(&self, byte_index: u32) -> Option<&TypedExpr> {
         self.value.find_node(byte_index)
     }
 }
@@ -768,7 +767,7 @@ impl TypedClause {
         }
     }
 
-    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+    pub fn find_node(&self, byte_index: u32) -> Option<&TypedExpr> {
         self.then.find_node(byte_index)
     }
 }
@@ -935,12 +934,12 @@ impl TypedClauseGuard {
 
 #[derive(Debug, PartialEq, Eq, Default, Clone, Copy)]
 pub struct SrcSpan {
-    pub start: usize,
-    pub end: usize,
+    pub start: u32,
+    pub end: u32,
 }
 
 impl SrcSpan {
-    pub fn contains(&self, byte_index: usize) -> bool {
+    pub fn contains(&self, byte_index: u32) -> bool {
         byte_index >= self.start && byte_index < self.end
     }
 }
@@ -1085,7 +1084,7 @@ pub struct BitStringSegment<Value, Type> {
 }
 
 impl TypedExprBitStringSegment {
-    pub fn find_node(&self, byte_index: usize) -> Option<&TypedExpr> {
+    pub fn find_node(&self, byte_index: u32) -> Option<&TypedExpr> {
         self.value.find_node(byte_index)
     }
 }
