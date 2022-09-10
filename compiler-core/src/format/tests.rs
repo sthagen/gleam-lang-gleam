@@ -3652,3 +3652,27 @@ fn case_subject_block() {
 "#
     );
 }
+
+#[test]
+fn qualified_const_fn() {
+    assert_format!(
+        r#"import other
+
+const x = other.function
+"#
+    );
+}
+
+#[test]
+fn qualified_const_fn_fn_after() {
+    assert_format!(
+        r#"import other
+
+const x = other.function
+
+pub fn main() {
+  io.println("Hello, Joe!")
+}
+"#
+    );
+}
