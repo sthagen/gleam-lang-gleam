@@ -1,12 +1,18 @@
 # Changelog
 
-## v0.23.0-rc2 - Unreleased
+## v0.23.0-rc2 - 2022-09-15
 
+- New Gleam projects are created using GitHub actions erlef/setup-beam@v1.13.0
+  and actions/checkout@3.0.0.
+- New Gleam projects are created using version v0.23.0 of the stdlib.
 - Fixed a bug where LSP hovering would fail to locate the expression.
 
 ## v0.23.0-rc1 - 2022-09-01
 
 - Gleam can now build dependency packages that are managed using Mix.
+- Compiler performance has been improved by buffering disc writing and by lazily
+  loading TLS certs. In testing this doubles performance when compiling the
+  standard library.
 - The `gleam publish` command now adds the `priv` directory and any `NOTICE`
   file to the tarball.
 - The `gleam update` command can now be used to update dependency packages to
@@ -20,7 +26,7 @@
   keyword or a value.
 - Qualifiers are now used when multiple types have the same name in an error
   message.
-- In JavaScript, if an object has defined an `equals` method in it's prototype,
+- In JavaScript, if an object has defined an `equals` method in its prototype,
   Gleam will now use this method when checking for equality.
 - Functions can now be defined and referenced in constant expressions.
 - An error is now raised if the record update syntax is used with a custom type
@@ -41,7 +47,7 @@
   after the case expresson could render incorrect Erlang.
 - Fixed a bug where formatter would strip curly braces around case guards even
   when they are required to specify boolean precedence.
-- Fixed a bug where `gleam new` would not in some situations not validate the
+- Fixed a bug where `gleam new` would in some situations not validate the
   target directory correctly.
 - Fixed a bug where pipes inside record update subjects could generate invalid
   Erlang.
