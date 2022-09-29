@@ -50,3 +50,28 @@ fn go(a) {
 "#,
     );
 }
+
+#[test]
+fn string_concat() {
+    assert_js!(
+        r#"
+fn go() {
+  "Hello, " <> "Joe"
+}
+"#,
+    );
+}
+
+#[test]
+fn string_prefix() {
+    assert_js!(
+        r#"
+pub fn go(x) {
+  case x {
+    "Hello, " <> name -> name
+    _ -> "Unknown"
+  }
+}
+"#,
+    );
+}

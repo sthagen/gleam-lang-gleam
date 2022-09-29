@@ -628,10 +628,14 @@ pub enum BinOp {
     DivInt,
     DivFloat,
     ModuloInt,
+
+    // Strings
+    Concatenate,
 }
 
 impl BinOp {
     pub fn precedence(&self) -> u8 {
+        // Ensure that this matches the other precedence function for guards
         match self {
             Self::Or => 1,
 
@@ -648,10 +652,12 @@ impl BinOp {
             | Self::GtEqFloat
             | Self::GtFloat => 4,
 
-            // Pipe is 5
-            Self::AddInt | Self::AddFloat | Self::SubInt | Self::SubFloat => 6,
+            Self::Concatenate => 5,
 
-            Self::MultInt | Self::MultFloat | Self::DivInt | Self::DivFloat | Self::ModuloInt => 7,
+            // Pipe is 6
+            Self::AddInt | Self::AddFloat | Self::SubInt | Self::SubFloat => 7,
+
+            Self::MultInt | Self::MultFloat | Self::DivInt | Self::DivFloat | Self::ModuloInt => 8,
         }
     }
 
@@ -678,6 +684,7 @@ impl BinOp {
             Self::DivInt => "/",
             Self::DivFloat => "/.",
             Self::ModuloInt => "%",
+            Self::Concatenate => "<>",
         }
     }
 }
@@ -881,6 +888,7 @@ impl<A, B> ClauseGuard<A, B> {
     }
 
     pub fn precedence(&self) -> u8 {
+        // Ensure that this matches the other precedence function for guards
         match self {
             ClauseGuard::Or { .. } => 1,
             ClauseGuard::And { .. } => 2,
@@ -1020,6 +1028,14 @@ pub enum Pattern<Constructor, Type> {
         location: SrcSpan,
         segments: Vec<BitStringSegment<Self, Type>>,
     },
+
+    Concatenate {
+        location: SrcSpan,
+        left_location: SrcSpan,
+        right_location: SrcSpan,
+        left_side_string: String,
+        right_side_assignment: String,
+    },
 }
 
 impl<A, B> Pattern<A, B> {
@@ -1035,6 +1051,7 @@ impl<A, B> Pattern<A, B> {
             | Pattern::String { location, .. }
             | Pattern::Tuple { location, .. }
             | Pattern::Constructor { location, .. }
+            | Pattern::Concatenate { location, .. }
             | Pattern::BitString { location, .. } => *location,
         }
     }

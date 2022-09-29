@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- The `<>` operator can now be used for string concatenation and for string
+  prefix pattern matching.
+- Fixed a bug where TypeScript defintions may have incorrect type parameters.
+
+## v0.23.0 - 2022-09-15
+
+[Release Blog Post](https://gleam.run/news/gleam-v0.23-released/)
+
 ## v0.23.0-rc2 - 2022-09-15
 
 - New Gleam projects are created using GitHub actions erlef/setup-beam@v1.13.0
