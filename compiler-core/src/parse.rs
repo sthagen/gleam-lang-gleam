@@ -55,12 +55,12 @@ pub mod lexer;
 mod token;
 
 use crate::ast::{
-    Arg, ArgNames, AssignmentKind, BinOp, BitStringSegment, BitStringSegmentOption, CallArg,
-    Clause, ClauseGuard, Constant, ExternalFnArg, HasLocation, Module, Pattern, RecordConstructor,
-    RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement, TargetGroup, TodoKind, TypeAst,
-    UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard, UntypedConstant, UntypedExpr,
-    UntypedExternalFnArg, UntypedModule, UntypedPattern, UntypedRecordUpdateArg, UntypedStatement,
-    CAPTURE_VARIABLE,
+    Arg, ArgNames, AssignName, AssignmentKind, BinOp, BitStringSegment, BitStringSegmentOption,
+    CallArg, Clause, ClauseGuard, Constant, ExternalFnArg, HasLocation, Module, Pattern,
+    RecordConstructor, RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement, TargetGroup,
+    TodoKind, TypeAst, UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard,
+    UntypedConstant, UntypedExpr, UntypedExternalFnArg, UntypedModule, UntypedPattern,
+    UntypedRecordUpdateArg, UntypedStatement, CAPTURE_VARIABLE,
 };
 use crate::build::Target;
 use crate::parse::extra::ModuleExtra;
@@ -801,6 +801,12 @@ where
             // Pattern::Var or Pattern::Constructor start
             Some((start, Token::Name { name }, end)) => {
                 let _ = self.next_tok();
+
+                // A variable is not permitted on the left hand side of a `<>`
+                if let Some((_, Token::LtGt, _)) = self.tok0.as_ref() {
+                    return concat_pattern_variable_left_hand_side_error(start, end);
+                }
+
                 if self.maybe_one(&Token::Dot).is_some() {
                     self.expect_constructor_pattern(Some((start, name, end)))?
                 } else {
@@ -823,13 +829,21 @@ where
                 self.tok0 = Some((start, tok, end));
                 self.expect_constructor_pattern(None)?
             }
+
             Some((start, Token::DiscardName { name }, end)) => {
                 let _ = self.next_tok();
+
+                // A discard is not permitted on the left hand side of a `<>`
+                if let Some((_, Token::LtGt, _)) = self.tok0.as_ref() {
+                    return concat_pattern_variable_left_hand_side_error(start, end);
+                }
+
                 Pattern::Discard {
                     location: SrcSpan { start, end },
                     name,
                 }
             }
+
             Some((start, Token::String { value }, end)) => {
                 let _ = self.next_tok();
                 let location = SrcSpan { start, end };
@@ -838,7 +852,7 @@ where
                 // "Hello, " <> name -> ...
                 if let Some((_, Token::LtGt, _)) = self.tok0 {
                     let _ = self.next_tok();
-                    let (r_start, name, r_end) = self.expect_name()?;
+                    let (r_start, right, r_end) = self.expect_assign_name()?;
 
                     Pattern::Concatenate {
                         location: SrcSpan {
@@ -851,7 +865,7 @@ where
                             end: r_end,
                         },
                         left_side_string: value,
-                        right_side_assignment: name,
+                        right_side_assignment: right,
                     }
 
                 // Full string matching
@@ -2409,12 +2423,24 @@ where
 
     // Expect a Name else a token dependent helpful error
     fn expect_name(&mut self) -> Result<(u32, String, u32), ParseError> {
+        let (start, token, end) = self.expect_assign_name()?;
+        match token {
+            AssignName::Variable(name) => Ok((start, name, end)),
+            AssignName::Discard(_) => {
+                parse_error(ParseErrorType::IncorrectName, SrcSpan { start, end })
+            }
+        }
+    }
+
+    fn expect_assign_name(&mut self) -> Result<(u32, AssignName, u32), ParseError> {
         let t = self.next_tok();
         match t {
             Some((start, tok, end)) => {
                 if let Token::Name { name } = tok {
-                    Ok((start, name, end))
-                } else if let Token::UpName { .. } | Token::DiscardName { .. } = tok {
+                    Ok((start, AssignName::Variable(name), end))
+                } else if let Token::DiscardName { name, .. } = tok {
+                    Ok((start, AssignName::Discard(name), end))
+                } else if let Token::UpName { .. } = tok {
                     parse_error(ParseErrorType::IncorrectName, SrcSpan { start, end })
                 } else if is_reserved_word(tok) {
                     parse_error(
@@ -2614,6 +2640,13 @@ where
         self.tok1 = nxt.take();
         t
     }
+}
+
+fn concat_pattern_variable_left_hand_side_error<T>(start: u32, end: u32) -> Result<T, ParseError> {
+    Err(ParseError {
+        error: ParseErrorType::ConcatPatternVariableLeftHandSide,
+        location: SrcSpan::new(start, end),
+    })
 }
 
 // Operator Precedence Parsing

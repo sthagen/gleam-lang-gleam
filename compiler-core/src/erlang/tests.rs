@@ -1,6 +1,7 @@
 mod assert;
 mod bit_strings;
 mod case;
+mod external_fn;
 mod guards;
 mod numbers;
 mod patterns;
@@ -15,6 +16,46 @@ mod variables;
 
 #[macro_export]
 macro_rules! assert_erl {
+    (($dep_package:expr, $dep_name:expr, $dep_src:expr), $src:expr $(,)?) => {{
+        use $crate::{erlang::module, line_numbers::LineNumbers, uid::UniqueIdGenerator};
+        let mut modules = im::HashMap::new();
+        let ids = UniqueIdGenerator::new();
+        // DUPE: preludeinsertion
+        // TODO: Currently we do this here and also in the tests. It would be better
+        // to have one place where we create all this required state for use in each
+        // place.
+        let _ = modules.insert("gleam".to_string(), $crate::type_::build_prelude(&ids));
+        let (mut ast, _) = $crate::parse::parse_module($dep_src).expect("dep syntax error");
+        ast.name = $dep_name;
+        let dep = $crate::type_::infer_module(
+            $crate::build::Target::JavaScript,
+            &ids,
+            ast,
+            $crate::build::Origin::Src,
+            $dep_package,
+            &modules,
+            &mut vec![],
+        )
+        .expect("should successfully infer");
+        let _ = modules.insert($dep_name.join("/"), dep.type_info);
+        let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
+        ast.name = vec!["my".to_string(), "mod".to_string()];
+        let ast = crate::type_::infer_module(
+            crate::build::Target::Erlang,
+            &ids,
+            ast,
+            crate::build::Origin::Src,
+            "thepackage",
+            &modules,
+            &mut vec![],
+        )
+        .expect("should successfully infer");
+        let mut output = String::new();
+        let line_numbers = LineNumbers::new($src);
+        module(&ast, &line_numbers, &mut output).unwrap();
+        insta::assert_snapshot!(insta::internals::AutoName, output, $src);
+    }};
+
     ($src:expr $(,)?) => {{
         use $crate::{
             build::Origin,
@@ -104,11 +145,6 @@ fn integration_test1_2() {
 }
 
 #[test]
-fn integration_test1_3() {
-    assert_erl!(r#"pub external fn run() -> Int = "Elixir.MyApp" "run""#);
-}
-
-#[test]
 fn integration_test1_4() {
     assert_erl!(
         r#"fn inc(x) { x + 1 }
@@ -152,14 +188,6 @@ fn integration_test5() {
 #[test]
 fn integration_test6() {
     assert_erl!(r#"pub fn x() { let x = 1 let x = x + 1 x }"#);
-}
-
-#[test]
-fn integration_test7() {
-    assert_erl!(
-        r#"pub external fn receive() -> Int = "try" "and"
-                    pub fn catch(x) { receive() }"#
-    );
 }
 
 #[test]
@@ -209,34 +237,6 @@ fn integration_test13() {
         r#"pub type State{ Start(Int) End(Int) }
             pub fn build(constructor : fn(Int) -> a) -> a { constructor(1) }
             pub fn main() { build(End) }"#
-    );
-}
-
-#[test]
-fn integration_test14() {
-    // Private external function calls are simply inlined
-    assert_erl!(
-        r#"external fn go(x: Int, y: Int) -> Int = "m" "f"
-pub fn x() { go(x: 1, y: 2) go(y: 3, x: 4) }"#
-    );
-}
-
-#[test]
-fn integration_test4() {
-    // Public external function calls are inlined but the wrapper function is
-    // also printed in the erlang output and exported
-    assert_erl!(
-        r#"pub external fn go(x: Int, y: Int) -> Int = "m" "f"
-                    fn x() { go(x: 1, y: 2) go(y: 3, x: 4) }"#
-    );
-}
-
-#[test]
-fn integration_test15() {
-    // Private external function references are inlined
-    assert_erl!(
-        r#"external fn go(x: Int, y: Int) -> Int = "m" "f"
-pub fn x() { go }"#
     );
 }
 

@@ -35,3 +35,60 @@ pub fn go(x) {
 "#,
     );
 }
+
+#[test]
+fn rest_variable_rewriting() {
+    // This test checks that the the variable on the right hand side of <> has
+    // it's name written correctly when it shadows an existing variable
+    assert_erl!(
+        r#"
+pub fn go(x) {
+  case x {
+    "Hello, " <> x -> x
+    _ -> "Unknown"
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn discard_concat_rest_pattern() {
+    // We can discard the right hand side, it parses and type checks ok
+    assert_erl!(
+        r#"
+pub fn go(x) {
+  case x {
+    "Hello, " <> _ -> Nil
+    _ -> Nil
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn string_of_number_concat() {
+    assert_erl!(
+        r#"
+pub fn go(x) {
+  x <> "1"
+}
+"#,
+    );
+}
+
+#[test]
+fn concat_function_call() {
+    assert_erl!(
+        r#"
+fn x() {
+  ""
+}
+
+pub fn go() {
+  x() <> x()
+}
+"#,
+    );
+}

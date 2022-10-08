@@ -536,11 +536,15 @@ fn string_concatenate<'a>(
 }
 
 fn string_concatenate_argument<'a>(value: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
-    let value = match value {
-        TypedExpr::String { value, .. } => value.to_doc(),
-        _ => maybe_block_expr(value, env),
-    };
-    value.append("/binary")
+    match value {
+        TypedExpr::String { value, .. } => docvec!['"', value, "\"/utf8"],
+        TypedExpr::Var { name, .. } => docvec![env.local_var_name(name), "/binary"],
+        TypedExpr::BinOp {
+            name: BinOp::Concatenate,
+            ..
+        } => docvec![expr(value, env), "/binary"],
+        _ => docvec!["(", expr(value, env), ")/binary"],
+    }
 }
 
 fn bit_string<'a>(elems: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {
@@ -1271,15 +1275,21 @@ fn docs_args_call<'a>(
         }
 
         TypedExpr::ModuleSelect {
-            module_name,
-            label,
-            constructor: ModuleValueConstructor::Fn { .. },
+            constructor: ModuleValueConstructor::Fn { module, name, .. },
             ..
         } => {
             let args = wrap_args(args);
-            atom(module_name.replace('/', "@"))
+            // We use the constructor Fn variant's `module` and function `name`.
+            // It would also be valid to use the module and label as in the
+            // Gleam code, but using the variant can result in an optimisation
+            // in which the target function is used for `external fn`s, removing
+            // one layer of wrapping.
+            // This also enables an optimisation in the Erlang compiler in which
+            // some Erlang BIFs can be replaced with literals if their arguments
+            // are literals, such as `binary_to_atom`.
+            atom(module.join("@"))
                 .append(":")
-                .append(atom(label.to_string()))
+                .append(atom(name.to_string()))
                 .append(args)
         }
 
