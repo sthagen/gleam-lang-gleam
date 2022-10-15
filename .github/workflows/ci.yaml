@@ -32,21 +32,27 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             use-cross: false
+            run-integration-tests: true
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             use-cross: true
+            run-integration-tests: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             use-cross: true
+            run-integration-tests: false # Cannot run aarch64 binaries on x86_64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             use-cross: true
+            run-integration-tests: false # Cannot run aarch64 binaries on x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
             use-cross: false
+            run-integration-tests: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             use-cross: false
+            run-integration-tests: false # https://github.com/erlef/setup-beam/issues/147
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -60,10 +66,32 @@ jobs:
           default: true
           profile: minimal
 
+      - name: Install Erlang (non-macos)
+        uses: erlef/setup-beam@v1.13.0
+        with:
+          otp-version: "25.1"
+          elixir-version: "1.14.1"
+          rebar3-version: "3.16.1"
+        if: ${{ matrix.os != 'macos-latest' }} # setup-beam does not support macOS
+
+      - name: Install Erlang (macos)
+        run: |
+          brew install erlang rebar3 elixir
+          mix local.hex --force
+        if: ${{ matrix.os == 'macos-latest' }} # setup-beam does not support macOS
+
       - name: Handle Rust dependencies caching
         uses: Swatinem/rust-cache@v1
         with:
           key: v1-${{ matrix.target }}
+
+      - name: Install Gleam
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: "--path compiler-cli --target ${{ matrix.target }} --debug --locked"
+          use-cross: ${{ matrix.use-cross }}
+        if: ${{ matrix.run-integration-tests }}
 
       - name: Run tests
         uses: actions-rs/cargo@v1
@@ -71,6 +99,49 @@ jobs:
           command: test
           args: "--workspace --target ${{ matrix.target }}"
           use-cross: ${{ matrix.use-cross }}
+
+      - name: test/project_erlang
+        run: |
+          gleam run
+          gleam test
+          gleam docs build
+        working-directory: ./test/project_erlang
+        if: ${{ matrix.run-integration-tests }}
+
+      - name: test/project_erlang export erlang-shipment
+        run: |
+          gleam export erlang-shipment
+          ./build/erlang-shipment/entrypoint.sh run
+        working-directory: ./test/project_erlang
+        # erlang-shipment does not support Windows
+        if: ${{ matrix.os != 'windows-latest' && matrix.run-integration-tests }} 
+
+      - name: test/project_javascript
+        run: |
+          gleam run
+          gleam test
+          gleam docs build
+        working-directory: ./test/project_javascript
+        if: ${{ matrix.run-integration-tests }}
+
+      - name: Test project generation
+        run: |
+          gleam new lib_project
+          cd lib_project
+          gleam run
+          gleam test
+          gleam docs build
+
+          # Assert that module metadata has been written
+          ls build/dev/erlang/lib_project/build/lib_project.gleam_module
+
+          # Assert that HTML docs have been written
+          ls build/dev/docs/lib_project/index.html
+          ls build/dev/docs/lib_project/index.css
+          ls build/dev/docs/lib_project/gleam.js
+          ls build/dev/docs/lib_project/index.html
+          ls build/dev/docs/lib_project/lib_project.html
+        if: ${{ matrix.run-integration-tests }}
 
   test-wasm:
     runs-on: ubuntu-latest
@@ -199,8 +270,9 @@ jobs:
       - name: Install Erlang
         uses: erlef/setup-beam@v1.13.0
         with:
-          otp-version: "23.2"
-          elixir-version: "1.13.4"
+          otp-version: "25.1"
+          elixir-version: "1.14.1"
+          rebar3-version: "3.16.1"
 
       - name: Download Gleam binary from previous job
         uses: actions/download-artifact@v2
@@ -215,29 +287,6 @@ jobs:
           sed -i 's/cargo run --quiet --/gleam/' */Makefile
           sed -i 's/cargo run --/gleam/' */Makefile
         working-directory: ./test
-
-      - name: test/project_erlang
-        run: |
-          gleam run
-          gleam test
-          gleam docs build
-          gleam export erlang-shipment
-          ./build/erlang-shipment/entrypoint.sh run
-        working-directory: ./test/project_erlang
-
-      - name: test/project_javascript on javascript target
-        run: |
-          gleam run
-          gleam test
-          gleam docs build
-        working-directory: ./test/project_javascript
-
-      - name: test/project_javascript on erlang target
-        run: |
-          gleam run --target erlang
-          gleam test --target erlang
-          gleam docs build
-        working-directory: ./test/project_javascript
 
       - name: test/language Erlang
         run: make clean erlang
@@ -259,20 +308,3 @@ jobs:
         run: make
         working-directory: ./test/javascript_prelude
 
-      - name: Test lib template
-        run: |
-          gleam new lib_project --template=lib
-          cd lib_project
-          gleam run
-          gleam test
-          gleam docs build
-
-          # Assert that module metadata has been written
-          ls build/dev/erlang/lib_project/build/lib_project.gleam_module
-
-          # Assert that HTML docs have been written
-          ls build/dev/docs/lib_project/index.html
-          ls build/dev/docs/lib_project/index.css
-          ls build/dev/docs/lib_project/gleam.js
-          ls build/dev/docs/lib_project/index.html
-          ls build/dev/docs/lib_project/lib_project.html

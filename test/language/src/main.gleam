@@ -7,7 +7,6 @@ import mod_with_numbers_0123456789
 import record_update
 import shadowed_module.{ShadowPerson}
 import gleam
-import port.{Port}
 
 pub fn main() -> Int {
   let stats =
@@ -33,6 +32,7 @@ pub fn main() -> Int {
       suite("call returned function", call_returned_function_tests()),
       suite("floats", floats_tests()),
       suite("ints", ints_tests()),
+      suite("remainder", remainder_tests()),
       suite("mod with numbers", mod_with_numbers_tests()),
       suite("record update", record_update_tests()),
       suite("record access", record_access_tests()),
@@ -1151,6 +1151,29 @@ fn ints_tests() -> List(Test) {
   ]
 }
 
+fn remainder_tests() -> List(Test) {
+  [
+    "1 % 1"
+    |> example(fn() { assert_equal(0, 1 % 1) }),
+    "1 % 0"
+    |> example(fn() { assert_equal(0, 1 % 0) }),
+    "3 % 2"
+    |> example(fn() { assert_equal(1, 3 % 2) }),
+    "3 % 0"
+    |> example(fn() { assert_equal(0, 3 % 0) }),
+    "3 % -2"
+    |> example(fn() { assert_equal(1, 3 % -2) }),
+    "3 % -0"
+    |> example(fn() { assert_equal(0, 3 % -0) }),
+    "-13 % 3"
+    |> example(fn() { assert_equal(-1, -13 % 3) }),
+    "13 % -3"
+    |> example(fn() { assert_equal(1, 13 % -3) }),
+    "-13 % -3"
+    |> example(fn() { assert_equal(-1, -13 % -3) }),
+  ]
+}
+
 fn mod_with_numbers_tests() -> List(Test) {
   [
     "mod_with_numbers_0123456789.hello()"
@@ -1230,13 +1253,6 @@ fn unicode_overflow_tests() {
     |> example(fn() { assert_equal(False, "🌵" == "5") }),
   ]
 }
-
-type PortMonitorFlag {
-  Port
-}
-
-pub external fn go(Port) -> Nil =
-  "" ""
 
 fn id(x) {
   x

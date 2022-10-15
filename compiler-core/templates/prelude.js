@@ -180,7 +180,7 @@ export function toBitString(segments) {
   return new BitString(new Uint8Array(view.buffer));
 }
 
-// Derrived from this answer https://stackoverflow.com/questions/8482309/converting-javascript-integer-to-byte-array-and-back
+// Derived from this answer https://stackoverflow.com/questions/8482309/converting-javascript-integer-to-byte-array-and-back
 export function sizedInteger(value, size) {
   if (size < 0) {
     return new Uint8Array();
@@ -321,7 +321,7 @@ export function isEqual(x, y) {
       try {
         if (a.equals(b)) continue;
         else return false;
-      } catch {}
+      } catch { }
     }
 
     let [keys, get] = getters(a);
@@ -384,6 +384,14 @@ function structurallyCompatibleObjects(a, b) {
     (a.__gleam_prelude_variant__ &&
       a.__gleam_prelude_variant__ === b.__gleam_prelude_variant__)
   );
+}
+
+export function remainderInt(a, b) {
+  if (b === 0) {
+    return 0;
+  } else {
+    return a % b | 0;
+  }
 }
 
 export function divideInt(a, b) {

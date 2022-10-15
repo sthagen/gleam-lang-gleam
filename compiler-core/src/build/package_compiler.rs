@@ -23,6 +23,11 @@ use std::{
 
 use super::{ErlangAppCodegenConfiguration, TargetCodegenConfiguration};
 
+#[cfg(not(target_os = "windows"))]
+const ELIXIR_EXECUTABLE: &str = "elixir";
+#[cfg(target_os = "windows")]
+const ELIXIR_EXECUTABLE: &str = "elixir.bat";
+
 #[derive(Debug)]
 pub struct PackageCompiler<'a, IO> {
     pub io: IO,
@@ -145,16 +150,26 @@ where
         ];
         // Add the list of modules to compile
         for module in modules {
-            let path = self.out.join("build").join(module).with_extension("erl");
+            let path = self.out.join("build").join(module);
             args.push(path.to_string_lossy().to_string());
             self.add_build_journal(path);
-
-            let beam_path = self.out.join("ebin").join(module).with_extension("beam");
-            self.add_build_journal(beam_path);
         }
+        // Compile Erlang and Elixir modules
+        // Write a temporary journal of compiled Beam files
         let status = self
             .io
             .exec("escript", &args, &[], None, self.silence_subprocess_stdout)?;
+
+        let tmp_journal = self.lib.join("gleam_build_journal.tmp");
+        if self.io.is_file(&tmp_journal) {
+            // Consume the temporary journal
+            // Each line is a `.beam` file path
+            let read_tmp_journal = self.io.read(&tmp_journal)?;
+            for beam_path in read_tmp_journal.split('\n') {
+                self.add_build_journal(PathBuf::from(beam_path));
+            }
+            self.io.delete_file(&tmp_journal)?;
+        }
 
         if status == 0 {
             Ok(())
@@ -201,6 +216,8 @@ where
     ) -> Result<()> {
         self.io.mkdir(&out)?;
 
+        // If `src` contains any `.ex` files, Elixir core libs must be loaded
+        let mut check_elixir_libs = true;
         for entry in self.io.read_dir(src_path)? {
             let path = entry.expect("copy_native_files dir_entry").pathbuf;
 
@@ -217,6 +234,18 @@ where
             match extension {
                 "mjs" | "js" | "hrl" => (),
                 "erl" => {
+                    let _ = to_compile_modules.insert(relative_path.clone());
+                }
+                "ex" => {
+                    if check_elixir_libs {
+                        maybe_link_elixir_libs(
+                            &self.io,
+                            &self.lib.to_path_buf(),
+                            self.silence_subprocess_stdout,
+                        )?;
+                        // Check Elixir libs just once
+                        check_elixir_libs = false;
+                    }
                     let _ = to_compile_modules.insert(relative_path.clone());
                 }
                 _ => continue,
@@ -445,6 +474,87 @@ fn type_check(
     }
 
     Ok(modules)
+}
+
+pub fn maybe_link_elixir_libs<IO: CommandExecutor + FileSystemIO + Clone>(
+    io: &IO,
+    build_dir: &PathBuf,
+    silence_subprocess_stdout: bool,
+) -> Result<(), Error> {
+    // These Elixir core libs will be loaded with the current project
+    // Each should be linked into build/{target}/erlang if:
+    // - It isn't already
+    // - Its ebin dir doesn't exist (e.g. Elixir's path changed)
+    let elixir_libs = ["eex", "elixir", "logger", "mix"];
+
+    // The pathfinder is a file in build/{target}/erlang
+    // It contains the full path for each Elixir core lib we need, new-line delimited
+    // The pathfinder saves us from repeatedly loading Elixir to get this info
+    let mut update_links = false;
+    let pathfinder_name = "gleam_elixir_paths";
+    let pathfinder = build_dir.join(pathfinder_name);
+    if !io.is_file(&pathfinder) {
+        // The pathfinder must be written
+        // Any existing core lib links will get updated
+        update_links = true;
+        // TODO: test
+        let env = [("TERM", "dumb".into())];
+        // Prepare the libs for Erlang's code:lib_dir function
+        let elixir_atoms: Vec<String> = elixir_libs.iter().map(|lib| format!(":{}", lib)).collect();
+        // Use Elixir to find its core lib paths and write the pathfinder file
+        let args = [
+            "--eval".into(),
+            format!(
+                ":ok = File.write(~s({}), [{}] |> Stream.map(fn(lib) -> lib |> :code.lib_dir |> Path.expand end) |> Enum.join(~s(\\n)))",
+                pathfinder_name,
+                elixir_atoms.join(", "),
+            )
+            .into(),
+        ];
+        tracing::debug!("writing_elixir_paths_to_build");
+        let status = io.exec(
+            ELIXIR_EXECUTABLE,
+            &args,
+            &env,
+            Some(&build_dir),
+            silence_subprocess_stdout,
+        )?;
+        if status != 0 {
+            return Err(Error::ShellCommand {
+                program: "elixir".to_string(),
+                err: None,
+            });
+        }
+    }
+
+    // Each pathfinder line is a system path for an Elixir core library
+    let read_pathfinder = io.read(&pathfinder)?;
+    for lib_path in read_pathfinder.split('\n') {
+        let source = PathBuf::from(lib_path);
+        let name = source
+            .as_path()
+            .file_name()
+            .expect(&format!("Unexpanded path in {}", pathfinder_name));
+        let dest = build_dir.join(name);
+        let ebin = dest.join("ebin");
+        if !update_links || io.is_directory(&ebin) {
+            // Either links don't need updating
+            // Or this library is already linked
+            continue;
+        }
+        // TODO: unit test
+        if io.is_directory(&dest) {
+            // Delete the existing link
+            io.delete(&dest)?;
+        }
+        tracing::debug!(
+            "linking_{}_to_build",
+            name.to_str().unwrap_or("elixir_core_lib"),
+        );
+        io.symlink_dir(&source, &dest)?;
+    }
+
+    Ok(())
 }
 
 fn convert_deps_tree_error(e: dep_tree::Error) -> Error {

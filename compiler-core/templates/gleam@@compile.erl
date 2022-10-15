@@ -7,14 +7,37 @@
 
 main(Args) ->
     #arguments{out = Out, lib = Lib, modules = Modules} = parse(Args),
+    IsElixirModule = fun(Module) ->
+        filename:extension(Module) =:= ".ex"
+    end,
+    {ElixirModules, ErlangModules} = lists:partition(IsElixirModule, Modules),
     ok = configure_logging(),
     ok = add_lib_to_erlang_path(Lib),
     ok = filelib:ensure_dir([Out, $/]),
+    {ErlangOk, ErlangBeams} = compile_erlang(ErlangModules, Out),
+    {ElixirOk, ElixirBeams} = case ErlangOk of
+        true -> compile_elixir(ElixirModules, Out);
+        false -> {false, []}
+    end,
+    JournalOk = case ErlangBeams ++ ElixirBeams of
+        [] -> true;
+        Beams -> write_journal(Beams, Lib)
+    end,
+    case ErlangOk and ElixirOk and JournalOk of
+        true -> ok;
+        false -> erlang:halt(1)
+    end.
+
+compile_erlang(Modules, Out) ->
     Workers = start_compiler_workers(Out),
     ok = producer_loop(Modules, Workers),
+    collect_results({true, []}).
+
+collect_results(Acc = {Result, Beams}) ->
     receive
-        failed -> erlang:halt(1)
-        after 0 -> ok
+        {compiled, Beam} -> collect_results({Result, [Beam | Beams]});
+        failed -> collect_results({false, Beams})
+        after 0 -> Acc
     end.
 
 producer_loop([], 0) ->
@@ -43,20 +66,87 @@ worker_loop(Parent, Out) ->
     Options = [report_errors, report_warnings, debug_info, {outdir, Out}],
     erlang:send(Parent, {work_please, self()}),
     receive
-        {module, Module} -> 
+        {module, Module} ->
             log({compiling, Module}),
             case compile:file(Module, Options) of
-                {ok, _} -> 
-                    log({compiled, Module});
-                error -> 
+                {ok, ModuleName} ->
+                    Beam = filename:join(Out, ModuleName) ++ ".beam",
+                    Message = {compiled, Beam},
+                    log(Message),
+                    erlang:send(Parent, Message);
+                error ->
                     log({failed, Module}),
                     erlang:send(Parent, failed)
             end,
             worker_loop(Parent, Out)
     end.
 
+compile_elixir(Modules, Out) ->
+    Error = [
+        "The program elixir was not found. Is it installed?",
+        $\n,
+        "Documentation for installing Elixir can be viewed here:",
+        $\n,
+        "https://elixir-lang.org/install.html"
+    ],
+    case Modules of
+        [] -> {true, []};
+        _ ->
+            log({starting, "compiler.app"}),
+            ok = application:start(compiler),
+            log({starting, "elixir.app"}),
+            case application:start(elixir) of
+                ok -> do_compile_elixir(Modules, Out);
+                _ ->
+                    io:put_chars(standard_error, [Error, $\n]),
+                    {false, []}
+            end
+    end.
+
+do_compile_elixir(Modules, Out) ->
+    ModuleBins = lists:map(fun(Module) ->
+        log({compiling, Module}),
+        list_to_binary(Module)
+    end, Modules),
+    OutBin = list_to_binary(Out),
+    Options = [{dest, OutBin}],
+    % Silence "redefining module" warnings.
+    % Compiled modules in the build directory are added to the code path.
+    % These warnings result from recompiling loaded modules.
+    % TODO: This line can likely be removed if/when the build directory is cleaned before every compilation.
+    'Elixir.Code':compiler_options([{ignore_module_conflict, true}]),
+    case 'Elixir.Kernel.ParallelCompiler':compile_to_path(ModuleBins, OutBin, Options) of
+        {ok, ModuleAtoms, _} ->
+            ToBeam = fun(ModuleAtom) ->
+                Beam = filename:join(Out, atom_to_list(ModuleAtom)) ++ ".beam",
+                log({compiled, Beam}),
+                Beam
+            end,
+            {true, lists:map(ToBeam, ModuleAtoms)};
+        {error, Errors, _} ->
+            % Log all filenames associated with modules that failed to compile.
+            % Note: The compiler prints compilation errors upon encountering them.
+            ErrorFiles = lists:usort([File || {File, _, _} <- Errors]),
+            Log = fun(File) ->
+                log({failed, binary_to_list(File)})
+            end,
+            lists:foreach(Log, ErrorFiles),
+            {false, []};
+        _ -> {false, []}
+    end.
+
+write_journal(Beams, Lib) ->
+    Journal = filename:join(Lib, "gleam_build_journal.tmp"),
+    log({writing, Journal}),
+    case file:write_file(Journal, string:join(Beams, "\n")) of
+        ok -> true;
+        {error, Reason} ->
+            log({failed_to_write, Journal, Reason}),
+            false
+    end.
+
 add_lib_to_erlang_path(Lib) ->
-    code:add_paths(filelib:wildcard([Lib, "/*/ebin"])) .
+    code:add_paths(filelib:wildcard([Lib, "/*/ebin"])).
 
 parse(Args) ->
     parse(Args, #arguments{}).
