@@ -1777,3 +1777,36 @@ pub fn main(user: User) {
 "
     );
 }
+
+#[test]
+fn no_hint_for_non_method_call() {
+    assert_module_error!(
+        "
+pub type User {
+  User(id: Int, name: String)
+}
+
+fn login(user: User) {
+  user
+}
+
+pub fn main(user: User) {
+  login(user.wibble)
+}
+"
+    );
+}
+
+#[test]
+fn unknown_imported_module_type() {
+    assert_with_module_error!(
+        (vec!["one".to_string(), "two".to_string()], ""),
+        "
+import one/two
+
+pub fn main(_x: two.Thing) {
+  Nil
+}
+"
+    );
+}
