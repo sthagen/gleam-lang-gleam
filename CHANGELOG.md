@@ -1,5 +1,20 @@
 # Changelog
 
+# Unreleased
+
+- Generated HTML documentation now includes the `theme-color` HTML meta tag.
+- Fixed a bug where the warning for `todo` would not print the type of the code
+  to complete.
+
+## 0.24.0 - 2022-10-25
+
+[Release blog post](https://gleam.run/news/gleam-v0.24-released/)
+
+## 0.24.0-rc4 - 2022-10-23
+
+- Fixed a bug where the string concatenate operator could produce invalid Erlang
+  code when working with pipe expressions.
+
 ## 0.24.0-rc3 - 2022-10-20
 
 - Fixed a bug where the OOP method call error hint would be shown on too many

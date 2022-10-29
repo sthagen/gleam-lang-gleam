@@ -96,6 +96,10 @@ impl Type {
         matches!(self, Self::Var { type_: typ } if typ.borrow().is_unbound())
     }
 
+    pub fn is_variable(&self) -> bool {
+        matches!(self, Self::Var { type_: typ } if typ.borrow().is_variable())
+    }
+
     pub fn return_type(&self) -> Option<Arc<Self>> {
         match self {
             Self::Fn { retrn, .. } => Some(retrn.clone()),
@@ -460,6 +464,10 @@ impl TypeVar {
         matches!(self, Self::Unbound { .. })
     }
 
+    pub fn is_variable(&self) -> bool {
+        matches!(self, Self::Unbound { .. } | Self::Generic { .. })
+    }
+
     pub fn is_nil(&self) -> bool {
         match self {
             Self::Link { type_ } => type_.is_nil(),
@@ -795,6 +803,7 @@ fn register_values<'a>(
                     location: *location,
                 },
                 typ,
+                *public,
             );
             if !public {
                 environment.init_usage(name.clone(), EntityKind::PrivateFunction, *location);
@@ -864,6 +873,7 @@ fn register_values<'a>(
                     location: *location,
                 },
                 typ,
+                *public,
             );
             if !public {
                 environment.init_usage(name.clone(), EntityKind::PrivateFunction, *location);
@@ -959,7 +969,12 @@ fn register_values<'a>(
                     );
                 }
 
-                environment.insert_variable(constructor.name.clone(), constructor_info, typ);
+                environment.insert_variable(
+                    constructor.name.clone(),
+                    constructor_info,
+                    typ,
+                    *public,
+                );
             }
         }
 
@@ -1108,6 +1123,7 @@ fn infer_statement(
                         location,
                     },
                     typ.clone(),
+                    public,
                 );
                 typ
             } else {
@@ -1350,7 +1366,12 @@ fn infer_statement(
                 type_: type_.clone(),
             };
 
-            environment.insert_variable(name.clone(), variant.variant.clone(), type_.clone());
+            environment.insert_variable(
+                name.clone(),
+                variant.variant.clone(),
+                type_.clone(),
+                public,
+            );
             environment.insert_module_value(&name, variant);
 
             if !public {
@@ -1877,6 +1898,7 @@ pub fn register_import(
                         imported_name.clone(),
                         value.variant.clone(),
                         value.type_.clone(),
+                        true,
                     );
                     variant = Some(&value.variant);
                     value_imported = true;
