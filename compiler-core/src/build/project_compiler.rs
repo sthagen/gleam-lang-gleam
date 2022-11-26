@@ -50,6 +50,7 @@ pub struct Options {
 
 #[derive(Debug)]
 pub struct ProjectCompiler<IO> {
+    // The gleam.toml config for the root package of the project
     config: PackageConfig,
     packages: HashMap<String, ManifestPackage>,
     importable_modules: im::HashMap<String, type_::Module>,
@@ -453,7 +454,6 @@ where
     ) -> Result<Vec<Module>, Error> {
         let out_path = paths::build_package(self.mode(), self.target(), &config.name);
         let lib_path = paths::build_packages(self.mode(), self.target());
-        let artifact_path = out_path.join("build");
         let mode = self.mode();
         let target = match self.target() {
             Target::Erlang => super::TargetCodegenConfiguration::Erlang {
@@ -461,7 +461,9 @@ where
                     include_dev_deps: is_root,
                 }),
             },
-            Target::JavaScript => super::TargetCodegenConfiguration::JavaScript,
+            Target::JavaScript => super::TargetCodegenConfiguration::JavaScript {
+                emit_typescript_definitions: self.config.javascript.typescript_declarations,
+            },
         };
         let mut compiler = PackageCompiler::new(
             config,

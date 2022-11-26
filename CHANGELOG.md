@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Fixed a bug where returning an anonymous function from a pipeline and calling
+  it immediately without assigning it to a variable would produce invalid Erlang
+  code.
+
+## v0.25.0 - 2022-11-24
+
+## v0.25.0-rc2 - 2022-11-23
+
+- Fixed a bug where Gleam dependency packages with a `priv` directory could fail
+  to build.
+- Fixed a regression where Elixir and Erlang Markdown code blocks in generated
+  documentation would not be highlighted.
+
+## v0.25.0-rc1 - 2022-11-19
+
 - Generated HTML documentation now includes the `theme-color` HTML meta tag.
 - The `use` expression has been introduced. This is a new syntactic sugar that
   permits callback using code to be written without indentation.
@@ -11,11 +26,21 @@
   starts.
 - Fixed a bug where using a record constructor as a value could generate a
   warning in Erlang.
+- Fixed a bug where the build tool would use precompiled code from Hex packages
+  rather than the latest version, which could result in incorrect external
+  function usage in some cases.
 - Fixed a bug where the warning for `todo` would not print the type of the code
   to complete.
+- Fixed a bug where `try` expressions inside blocks could generate incorrect
+  JavaScript.
 - Generated HTML documentation now includes all static assets (but the web
   fonts), so that it can be accessed offline or in far future once CDNs would
   404.
+- New Gleam projects are created using GitHub actions erlef/setup-beam@v1.14.0
+- The `javascript.typescript_declarations` field in `gleam.toml` now applies to
+  the entire project rather than just the top level package.
+- The formatter now adds a 0 to floats ending with `.` (ie 1. => 1.0).
+- New projects require `gleam_stdlib` v0.25.
 
 ## 0.24.0 - 2022-10-25
 

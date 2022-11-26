@@ -11,8 +11,8 @@ use strum::{Display, EnumString, EnumVariantNames};
 
 use crate::NewOptions;
 
-const GLEAM_STDLIB_VERSION: &str = "0.24";
-const GLEEUNIT_VERSION: &str = "0.6";
+const GLEAM_STDLIB_VERSION: &str = "0.25";
+const GLEEUNIT_VERSION: &str = "0.7";
 const ERLANG_OTP_VERSION: &str = "25.1";
 const ELIXIR_VERSION: &str = "1.14.1";
 
@@ -154,7 +154,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3.0.0
-      - uses: erlef/setup-beam@v1.13.0
+      - uses: erlef/setup-beam@v1.14.0
         with:
           otp-version: "{}"
           gleam-version: "{}"

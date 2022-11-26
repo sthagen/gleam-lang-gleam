@@ -5,7 +5,7 @@ use gleam_core::{
     config::PackageConfig,
     io::{FileSystemReader, FileSystemWriter},
     manifest::{Base16Checksum, ManifestPackage, ManifestPackageSource},
-    Error,
+    paths, Error,
 };
 
 use hexpm::version::Version;
@@ -126,7 +126,7 @@ fn gather_compiled_files(
         Target::JavaScript => OsStr::new("mjs"),
     };
 
-    wfs.read_dir(Path::new("build"))
+    wfs.read_dir(&paths::build())
         .expect("expect the build directory to exist")
         .into_iter()
         .filter_map(|result| result.ok())
@@ -223,8 +223,8 @@ mod test {
         .unwrap();
 
         assert_eq!(
-            result.get("build/dev/javascript/gleam-wasm/dist/main.mjs"),
-            Some(&String::from("import * as $some_library from \"../../some_library/dist/some_library.mjs\";\n\nexport function main() {\n  return $some_library.function$(\"Hello, world!\");\n}\n"))
+            result.get("build/dev/javascript/gleam-wasm/main.mjs"),
+            Some(&String::from("import * as $some_library from \"../some_library/some_library.mjs\";\n\nexport function main() {\n  return $some_library.function$(\"Hello, world!\");\n}\n"))
         );
     }
 
@@ -264,7 +264,7 @@ mod test {
         .unwrap();
 
         assert_eq!(
-            result.get("build/dev/erlang/gleam-wasm/build/main.erl"),
+            result.get("build/dev/erlang/gleam-wasm/_gleam_artefacts/main.erl"),
             Some(&String::from("-module(main).\n-compile(no_auto_import).\n\n-export([main/0]).\n\n-spec main() -> nil.\nmain() ->\n    some_library:function(<<\"Hello, world!\"/utf8>>).\n"))
         );
     }
