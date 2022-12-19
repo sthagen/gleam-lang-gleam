@@ -54,8 +54,8 @@ fn name_with_generics<'a>(
 ) -> Document<'a> {
     let generic_usages = collect_generic_usages(HashMap::new(), types);
     let generic_names: Vec<Document<'_>> = generic_usages
-        .iter()
-        .map(|(id, _use_count)| id_to_type_var(*id))
+        .keys()
+        .map(|id| id_to_type_var(*id))
         .collect();
 
     docvec![

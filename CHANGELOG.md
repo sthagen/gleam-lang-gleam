@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- 4 digit integers are now always formatted without underscores.
+- Running `gleam new` will skip `git init` if the new project directory is
+  already part of a git work tree.
+
+## v0.25.3 - 2022-12-16
+
+- 4 digit integers are no longer automatically formatted with underscores.
+
+## v0.25.2 - 2022-12-16
+
+- Updated `actions/checkout` from `actions/checkout@v3.0.0` to `@v3.2.0` for
+  projects created via `gleam new`.
+- Fixed a bug where `gleam new` would set a `Rebar3` version to `25.1`
+  instead of the latest stable `3`.
+- Updated following runtime versions set via `gleam new`: `Erlang/OTP`
+  to `25.2`, and `Elixir` to `1.14.2`.
+- The formatter now inserts underscores into larger `Int`s and the larger
+  integer parts of `Float`s.
+- Added support for top level TypeScript file inclusion in builds.
+- The build tool will now favour using rebar3 over Mix for packages that support
+  both. This fixes an issue where some packages could not be compiled without
+  Elixir installed even though it is not strictly required.
+
+## v0.25.1 - 2022-12-11
+
+- New Gleam projects are now configured to explicitly install rebar3 using
+  GitHub actions erlef/setup-beam.
 - A better error message is now shown when attempting to use a function within a
   constant expression.
 - Changed float size limit in bitstring expressions to 16, 32 or 64, when static.
@@ -10,8 +37,12 @@
 - Fixed a bug where returning an anonymous function from a pipeline and calling
   it immediately without assigning it to a variable would produce invalid Erlang
   code.
+- Fixed a bug where the formatter would remove the braces from negating boolean
+  expressions.
 
 ## v0.25.0 - 2022-11-24
+
+[Release blog post](https://gleam.run/news/v0.25-introducing-use-expressions/)
 
 ## v0.25.0-rc2 - 2022-11-23
 
@@ -97,7 +128,7 @@
 ## v0.23.0-rc2 - 2022-09-15
 
 - New Gleam projects are created using GitHub actions erlef/setup-beam@v1.13.0
-  and actions/checkout@3.0.0.
+  and actions/checkout@v3.0.0.
 - New Gleam projects are created using version v0.23.0 of the stdlib.
 - Fixed a bug where LSP hovering would fail to locate the expression.
 
@@ -153,6 +184,8 @@
 - Fixed a bug where `todo` would not emit the correct line number to the LSP while.
 
 ## v0.22.0 - 2022-06-12
+
+[Release Blog Post](https://gleam.run/news/gleam-v0.22-released/)
 
 - New projects are created with `gleam_stdlib` v0.22.
 
@@ -217,6 +250,8 @@
 
 ## v0.21.0 - 2022-04-24
 
+[Release Blog Post](https://gleam.run/news/v0.21-introducing-the-gleam-language-server/)
+
 - New projects are created with `gleam_stdlib` v0.21.
 
 ## v0.21.0-rc2 - 2022-04-20
@@ -272,6 +307,8 @@
   without additional annotations.
 
 ## v0.20.0 - 2022-02-23
+
+[Release Blog Post](https://gleam.run/news/gleam-v0.20-released/)
 
 - New projects are created with `gleam_stdlib` v0.20.
 

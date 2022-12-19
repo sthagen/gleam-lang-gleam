@@ -651,9 +651,9 @@ impl<'comments> Formatter<'comments> {
 
             UntypedExpr::PipeLine { expressions, .. } => self.pipeline(expressions),
 
-            UntypedExpr::Int { value, .. } => value.to_doc(),
+            UntypedExpr::Int { value, .. } => self.int(value.as_str()),
 
-            UntypedExpr::Float { value, .. } => self.float(value),
+            UntypedExpr::Float { value, .. } => self.float(value.as_str()),
 
             UntypedExpr::String { value, .. } => self.string(value),
 
@@ -754,14 +754,54 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    fn float<'a>(&self, value: &'a String) -> Document<'a> {
-        let doc = value.to_doc();
-        if value.ends_with('.') {
-            let suffix = "0".to_doc();
-            doc.append(suffix)
-        } else {
-            doc
+    fn float<'a>(&self, value: &'a str) -> Document<'a> {
+        let mut parts = value.split('.');
+        let integer_part = parts.next().unwrap_or_default();
+        let fp_part = parts.next().unwrap_or_default();
+
+        let integer_doc = self.underscore_integer_string(integer_part);
+        let dot_doc = ".".to_doc();
+        let fp_doc = match value.ends_with('.') {
+            true => "0".to_doc(),
+            false => fp_part.to_doc(),
+        };
+
+        integer_doc.append(dot_doc).append(fp_doc)
+    }
+
+    fn int<'a>(&self, value: &'a str) -> Document<'a> {
+        if value.starts_with("0x") || value.starts_with("0b") || value.starts_with("0o") {
+            return value.to_doc();
         }
+
+        self.underscore_integer_string(value)
+    }
+
+    fn underscore_integer_string<'a>(&self, value: &'a str) -> Document<'a> {
+        let underscore_ch = '_';
+        let minus_ch = '-';
+
+        let len = value.len();
+        let underscore_ch_cnt = value.matches(underscore_ch).count();
+        let reformat_watershed = if value.starts_with(minus_ch) { 6 } else { 5 };
+        let insert_underscores = (len - underscore_ch_cnt) >= reformat_watershed;
+
+        let mut new_value = String::new();
+        let mut j = 0;
+        for (i, ch) in value.chars().rev().enumerate() {
+            if ch == '_' {
+                continue;
+            }
+
+            if insert_underscores && i != 0 && ch != minus_ch && i < len && j % 3 == 0 {
+                new_value.push(underscore_ch);
+            }
+            new_value.push(ch);
+
+            j += 1;
+        }
+
+        Document::String(new_value.chars().rev().collect())
     }
 
     fn pattern_constructor<'a>(
@@ -1395,8 +1435,11 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    fn negate<'a>(&mut self, value: &'a UntypedExpr) -> Document<'a> {
-        docvec!["!", self.wrap_expr(value)]
+    fn negate<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
+        match expr {
+            UntypedExpr::BinOp { .. } => docvec!["!{ ", self.expr(expr), " }"],
+            _ => docvec!["!", self.wrap_expr(expr)],
+        }
     }
 
     fn use_<'a>(&mut self, use_: &'a Use) -> Document<'a> {
