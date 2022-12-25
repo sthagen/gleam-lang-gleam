@@ -6,8 +6,6 @@ mod project_compiler;
 mod telemetry;
 
 #[cfg(test)]
-mod package_compilation_tests;
-#[cfg(test)]
 mod tests;
 
 pub use self::package_compiler::PackageCompiler;
@@ -26,6 +24,7 @@ use crate::{
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 use std::{
     collections::HashMap, ffi::OsString, fs::DirEntry, iter::Peekable, path::PathBuf, process,
 };
@@ -69,7 +68,7 @@ impl TargetCodegenConfiguration {
 
 #[derive(Debug)]
 pub struct ErlangAppCodegenConfiguration {
-    include_dev_deps: bool,
+    pub include_dev_deps: bool,
 }
 
 #[derive(
@@ -115,6 +114,7 @@ impl Package {
 pub struct Module {
     pub name: String,
     pub code: String,
+    pub mtime: SystemTime,
     pub input_path: PathBuf,
     pub origin: Origin,
     pub ast: TypedModule,
@@ -126,6 +126,16 @@ impl Module {
         let mut path = self.name.replace("/", "@");
         path.push_str(".erl");
         PathBuf::from(path)
+    }
+
+    /// Get the modification time of this module as the number of seconds since
+    /// the Unix epoch. If the modification time is before the Unix epoch this
+    /// returns 0.
+    pub fn mtime_unix(&self) -> u64 {
+        self.mtime
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     pub fn is_test(&self) -> bool {

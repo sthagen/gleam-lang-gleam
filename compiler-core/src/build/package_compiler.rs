@@ -15,7 +15,7 @@ use crate::{
     Error, Result, Warning,
 };
 use askama::Template;
-use std::{collections::HashMap, fmt::write};
+use std::{collections::HashMap, fmt::write, time::SystemTime};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -34,8 +34,10 @@ pub struct PackageCompiler<'a, IO> {
     pub out: &'a Path,
     pub lib: &'a Path,
     pub root: &'a Path,
+    pub mode: Mode,
     pub target: &'a TargetCodegenConfiguration,
     pub config: &'a PackageConfig,
+    // TODO: remove this. Tests can use the in memory filesystem instead
     pub sources: Vec<Source>,
     pub ids: UniqueIdGenerator,
     pub write_metadata: bool,
@@ -47,16 +49,13 @@ pub struct PackageCompiler<'a, IO> {
     pub build_journal: Option<&'a mut HashSet<PathBuf>>,
 }
 
-// TODO: ensure this is not a duplicate module
-// TODO: tests
-// Including cases for:
-// - modules that don't import anything
 impl<'a, IO> PackageCompiler<'a, IO>
 where
     IO: FileSystemIO + CommandExecutor + Clone,
 {
     pub fn new(
         config: &'a PackageConfig,
+        mode: Mode,
         root: &'a Path,
         out: &'a Path,
         lib: &'a Path,
@@ -71,6 +70,7 @@ where
             out,
             lib,
             root,
+            mode,
             config,
             target,
             sources: vec![],
@@ -92,6 +92,8 @@ where
     ) -> Result<Vec<Module>, Error> {
         let span = tracing::info_span!("compile", package = %self.config.name.as_str());
         let _enter = span.enter();
+
+        self.read_source_files()?;
 
         tracing::info!("Parsing source code");
         let parsed_modules = parse_sources(
@@ -137,9 +139,7 @@ where
             .join("gleam@@compile.erl");
         if !escript_path.exists() {
             let escript_source = std::include_str!("../../templates/gleam@@compile.erl");
-            self.io
-                .writer(&escript_path)?
-                .write(escript_source.as_bytes())?;
+            self.io.write(&escript_path, escript_source)?;
         }
 
         let mut args = vec![
@@ -276,15 +276,25 @@ where
         }
         tracing::info!("Writing package metadata to disc");
         for module in modules {
-            let name = format!("{}.gleam_module", &module.name.replace('/', "@"));
+            let module_name = module.name.replace('/', "@");
+
+            // Write metadata file
+            let name = format!("{}.gleam_module", &module_name);
             let path = self.out.join(paths::ARTEFACT_DIRECTORY_NAME).join(name);
-            ModuleEncoder::new(&module.ast.type_info).write(self.io.writer(&path)?)?;
+            let bytes = ModuleEncoder::new(&module.ast.type_info).encode()?;
+            self.io.write_bytes(&path, &bytes)?;
+            self.add_build_journal(path);
+
+            // Write timestamp
+            let name = format!("{}.timestamp", &module_name);
+            let path = self.out.join(paths::ARTEFACT_DIRECTORY_NAME).join(name);
+            self.io.write(&path, &module.mtime_unix().to_string())?;
             self.add_build_journal(path);
         }
         Ok(())
     }
 
-    pub fn read_source_files(&mut self, mode: Mode) -> Result<()> {
+    fn read_source_files(&mut self) -> Result<()> {
         let span = tracing::info_span!("load", package = %self.config.name.as_str());
         let _enter = span.enter();
         tracing::info!("Reading source files");
@@ -297,7 +307,7 @@ where
         }
 
         // Test
-        if mode.is_dev() && self.io.is_directory(&test) {
+        if self.mode.is_dev() {
             for path in self.io.gleam_source_files(&test) {
                 self.add_module(path, &test, Origin::Test)?;
             }
@@ -308,10 +318,12 @@ where
     fn add_module(&mut self, path: PathBuf, dir: &Path, origin: Origin) -> Result<()> {
         let name = module_name(&dir, &path);
         let code = self.io.read(&path)?;
+        let mtime = self.io.modification_time(&path)?;
         self.sources.push(Source {
             name,
             path,
             code,
+            mtime,
             origin,
         });
         Ok(())
@@ -418,7 +430,7 @@ where
         }
         .render()
         .expect("Erlang entrypoint rendering");
-        self.io.writer(&out.join(name))?.write(module.as_bytes())?;
+        self.io.write(&out.join(name), &module)?;
         let _ = modules_to_compile.insert(name.into());
         self.add_build_journal(out.join(name));
         Ok(())
@@ -449,6 +461,7 @@ fn type_check(
             code,
             ast,
             path,
+            mtime,
             origin,
             package,
             extra,
@@ -488,6 +501,7 @@ fn type_check(
         modules.push(Module {
             origin,
             extra,
+            mtime,
             name,
             code,
             ast,
@@ -607,6 +621,7 @@ fn parse_sources(
         code,
         path,
         origin,
+        mtime,
     } in sources
     {
         let (mut ast, extra) = crate::parse::parse_module(&code).map_err(|error| Error::Parse {
@@ -623,6 +638,7 @@ fn parse_sources(
             package: package_name.to_string(),
             origin,
             extra,
+            mtime,
             path,
             name,
             code,
@@ -674,6 +690,7 @@ pub struct Source {
     pub name: String,
     pub code: String,
     pub origin: Origin, // TODO: is this used?
+    pub mtime: SystemTime,
 }
 
 #[derive(Debug)]
@@ -681,6 +698,7 @@ struct Parsed {
     path: PathBuf,
     name: String,
     code: String,
+    mtime: SystemTime,
     origin: Origin,
     package: String,
     ast: UntypedModule,

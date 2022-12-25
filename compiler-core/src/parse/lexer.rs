@@ -553,10 +553,10 @@ where
                 let _ = self.next_char();
                 self.lex_number_radix(start_pos, 2, "0b")?
             } else {
-                self.lex_normal_number()
+                self.lex_decimal_number()
             }
         } else {
-            self.lex_normal_number()
+            self.lex_decimal_number()
         };
 
         if Some('_') == self.chr0 {
@@ -603,7 +603,7 @@ where
 
     // Lex a normal number, that is, no octal, hex or binary number.
     // This function cannot be reached without the head of the stream being either 0-9 or '-', 0-9
-    fn lex_normal_number(&mut self) -> Spanned {
+    fn lex_decimal_number(&mut self) -> Spanned {
         let start_pos = self.get_pos();
         let mut value = String::new();
         // consume negative sign
@@ -617,6 +617,18 @@ where
         if self.chr0 == Some('.') {
             value.push(self.next_char().expect("lex_normal_number float"));
             value.push_str(&self.radix_run(10));
+
+            // If scientific:
+            if self.chr0 == Some('e') {
+                value.push(self.next_char().expect("lex_normal_number scientific"));
+                if self.chr0 == Some('-') {
+                    value.push(
+                        self.next_char()
+                            .expect("lex_normal_number scientific negative"),
+                    );
+                }
+                value.push_str(&self.radix_run(10));
+            }
             let end_pos = self.get_pos();
             (start_pos, Token::Float { value }, end_pos)
         } else {

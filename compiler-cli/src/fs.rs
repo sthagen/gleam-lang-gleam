@@ -1,8 +1,8 @@
 use gleam_core::{
     error::{Error, FileIoAction, FileKind},
     io::{
-        CommandExecutor, DirEntry, FileSystemIO, FileSystemWriter, OutputFile, ReadDir, Stdio,
-        WrappedReader, WrappedWriter,
+        CommandExecutor, Content, DirEntry, FileSystemIO, FileSystemWriter, OutputFile, ReadDir,
+        Stdio, WrappedReader,
     },
     Result,
 };
@@ -13,6 +13,7 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 #[cfg(test)]
@@ -33,30 +34,34 @@ impl ProjectIO {
 }
 
 impl gleam_core::io::FileSystemReader for ProjectIO {
-    fn gleam_source_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
-        Box::new({
-            let dir = dir.to_path_buf();
-            walkdir::WalkDir::new(dir.clone())
-                .follow_links(true)
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|e| e.file_type().is_file())
-                .map(|d| d.into_path())
-                .filter(move |d| is_gleam_path(d, dir.clone()))
-        })
+    fn gleam_source_files(&self, dir: &Path) -> Vec<PathBuf> {
+        if !dir.is_dir() {
+            return vec![];
+        }
+        let dir = dir.to_path_buf();
+        walkdir::WalkDir::new(dir.clone())
+            .follow_links(true)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .map(|d| d.into_path())
+            .filter(move |d| is_gleam_path(d, dir.clone()))
+            .collect()
     }
 
-    fn gleam_metadata_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
-        Box::new({
-            let dir = dir.to_path_buf();
-            walkdir::WalkDir::new(dir)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|e| e.file_type().is_file())
-                .map(|d| d.into_path())
-                .filter(|p| p.extension().and_then(OsStr::to_str) == Some("gleam_module"))
-        })
+    fn gleam_metadata_files(&self, dir: &Path) -> Vec<PathBuf> {
+        if !dir.is_dir() {
+            return vec![];
+        }
+        let dir = dir.to_path_buf();
+        walkdir::WalkDir::new(dir)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .map(|d| d.into_path())
+            .filter(|p| p.extension().and_then(OsStr::to_str) == Some("gleam_module"))
+            .collect()
     }
 
     fn read(&self, path: &Path) -> Result<String, Error> {
@@ -91,13 +96,20 @@ impl gleam_core::io::FileSystemReader for ProjectIO {
             err: Some(e.to_string()),
         })
     }
+
+    fn modification_time(&self, path: &Path) -> Result<SystemTime, Error> {
+        path.metadata()
+            .map(|m| m.modified().unwrap_or_else(|_| SystemTime::now()))
+            .map_err(|e| Error::FileIo {
+                action: FileIoAction::ReadMetadata,
+                kind: FileKind::File,
+                path: path.to_path_buf(),
+                err: Some(e.to_string()),
+            })
+    }
 }
 
 impl FileSystemWriter for ProjectIO {
-    fn writer(&self, path: &Path) -> Result<WrappedWriter, Error> {
-        writer(path)
-    }
-
     fn delete(&self, path: &Path) -> Result<()> {
         delete_dir(path)
     }
@@ -124,6 +136,14 @@ impl FileSystemWriter for ProjectIO {
 
     fn delete_file(&self, path: &Path) -> Result<()> {
         delete_file(path)
+    }
+
+    fn write(&self, path: &Path, content: &str) -> Result<(), Error> {
+        write(path, content)
+    }
+
+    fn write_bytes(&self, path: &Path, content: &[u8]) -> Result<(), Error> {
+        write_bytes(path, content)
     }
 }
 
@@ -196,19 +216,21 @@ pub fn delete_file(file: &Path) -> Result<(), Error> {
 
 pub fn write_outputs_under(outputs: &[OutputFile], base: &Path) -> Result<(), Error> {
     for file in outputs {
-        write_output_under(file, base)?;
+        let path = base.join(&file.path);
+        match &file.content {
+            Content::Binary(buffer) => write_bytes(&path, buffer),
+            Content::Text(buffer) => write(&path, buffer),
+        }?;
     }
     Ok(())
 }
 
-pub fn write_output_under(file: &OutputFile, base: &Path) -> Result<(), Error> {
-    let OutputFile { path, text } = file;
-    write(&base.join(path), text)
-}
-
 pub fn write_output(file: &OutputFile) -> Result<(), Error> {
-    let OutputFile { path, text } = file;
-    write(path, text)
+    let OutputFile { path, content } = file;
+    match content {
+        Content::Binary(buffer) => write_bytes(path, buffer),
+        Content::Text(buffer) => write(path, buffer),
+    }
 }
 
 pub fn write(path: &Path, text: &str) -> Result<(), Error> {
@@ -234,30 +256,6 @@ pub fn make_executable(path: impl AsRef<Path>) -> Result<(), Error> {
 #[cfg(not(target_family = "unix"))]
 pub fn make_executable(_path: impl AsRef<Path>) -> Result<(), Error> {
     Ok(())
-}
-
-pub fn writer(path: &Path) -> Result<WrappedWriter, Error> {
-    tracing::debug!(path = ?path, "opening_file_writer");
-    let dir_path = path.parent().ok_or_else(|| Error::FileIo {
-        action: FileIoAction::FindParent,
-        kind: FileKind::Directory,
-        path: path.to_path_buf(),
-        err: None,
-    })?;
-    std::fs::create_dir_all(dir_path).map_err(|e| Error::FileIo {
-        action: FileIoAction::Create,
-        kind: FileKind::Directory,
-        path: dir_path.to_path_buf(),
-        err: Some(e.to_string()),
-    })?;
-    let file = File::create(path).map_err(|e| Error::FileIo {
-        action: FileIoAction::Create,
-        kind: FileKind::File,
-        path: path.to_path_buf(),
-        err: Some(e.to_string()),
-    })?;
-    let buffered_writer = io::BufWriter::new(file);
-    Ok(WrappedWriter::new(path, Box::new(buffered_writer)))
 }
 
 pub fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), Error> {
@@ -375,10 +373,10 @@ pub fn create_tar_archive(outputs: Vec<OutputFile>) -> Result<Vec<u8>, Error> {
             path: file.path.clone(),
             err: e.to_string(),
         })?;
-        header.set_size(file.text.as_bytes().len() as u64);
+        header.set_size(file.content.as_bytes().len() as u64);
         header.set_cksum();
         builder
-            .append(&header, file.text.as_bytes())
+            .append(&header, file.content.as_bytes())
             .map_err(|e| Error::AddTar {
                 path: file.path.clone(),
                 err: e.to_string(),

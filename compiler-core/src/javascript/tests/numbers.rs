@@ -33,6 +33,24 @@ fn go() {
 }
 
 #[test]
+fn float_scientific_literals() {
+    assert_js!(
+        r#"
+fn go() {
+    0.01e-1
+    0.01e-0
+    -10.01e-1
+    -10.01e-0
+    100.001e523
+    -100.001e-523
+    100.001e123_456_789
+    -100.001e-123_456_789
+}
+"#,
+    );
+}
+
+#[test]
 fn int_operators() {
     assert_js!(
         r#"

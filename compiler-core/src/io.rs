@@ -8,6 +8,7 @@ use std::{
     fmt::Debug,
     io,
     path::{Path, PathBuf},
+    time::SystemTime,
     vec::IntoIter,
 };
 use tar::{Archive, Entry};
@@ -51,8 +52,23 @@ pub trait Writer: std::io::Write + Utf8Writer {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Content {
+    Binary(Vec<u8>),
+    Text(String),
+}
+
+impl Content {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Content::Binary(data) => data,
+            Content::Text(data) => data.as_bytes(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct OutputFile {
-    pub text: String,
+    pub content: Content,
     pub path: PathBuf,
 }
 
@@ -117,14 +133,15 @@ impl DirEntry {
 /// Typically we use an implementation that reads from the file system,
 /// but in tests and in other places other implementations may be used.
 pub trait FileSystemReader {
-    fn gleam_source_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>>;
-    fn gleam_metadata_files(&self, dir: &Path) -> Box<dyn Iterator<Item = PathBuf>>;
+    fn gleam_source_files(&self, dir: &Path) -> Vec<PathBuf>;
+    fn gleam_metadata_files(&self, dir: &Path) -> Vec<PathBuf>;
     fn read_dir(&self, path: &Path) -> Result<ReadDir>;
     fn read(&self, path: &Path) -> Result<String, Error>;
     fn reader(&self, path: &Path) -> Result<WrappedReader, Error>;
     fn is_file(&self, path: &Path) -> bool;
     fn is_directory(&self, path: &Path) -> bool;
     fn current_dir(&self) -> Result<PathBuf, Error>;
+    fn modification_time(&self, path: &Path) -> Result<SystemTime, Error>;
 }
 
 pub trait FileSystemIO: FileSystemWriter + FileSystemReader {}
@@ -161,7 +178,8 @@ impl Stdio {
 /// but in tests and in other places other implementations may be used.
 pub trait FileSystemWriter {
     fn mkdir(&self, path: &Path) -> Result<(), Error>;
-    fn writer(&self, path: &Path) -> Result<WrappedWriter, Error>;
+    fn write(&self, path: &Path, content: &str) -> Result<(), Error>;
+    fn write_bytes(&self, path: &Path, content: &[u8]) -> Result<(), Error>;
     fn delete(&self, path: &Path) -> Result<(), Error>;
     fn copy(&self, from: &Path, to: &Path) -> Result<(), Error>;
     fn copy_dir(&self, from: &Path, to: &Path) -> Result<(), Error>;
@@ -205,231 +223,6 @@ impl Reader for WrappedReader {
             err: Some(err.to_string()),
         }
     }
-}
-
-#[derive(Debug)]
-/// A wrapper around a Write implementing object that has Gleam's error handling.
-pub struct WrappedWriter {
-    pub path: PathBuf,
-    pub inner: DebugIgnore<Box<dyn std::io::Write>>,
-}
-
-impl Writer for WrappedWriter {}
-
-impl Utf8Writer for WrappedWriter {
-    fn convert_err<E: std::error::Error>(&self, error: E) -> Error {
-        Error::FileIo {
-            action: FileIoAction::WriteTo,
-            kind: FileKind::File,
-            path: self.path.to_path_buf(),
-            err: Some(error.to_string()),
-        }
-    }
-}
-
-impl WrappedWriter {
-    pub fn new(path: &Path, inner: Box<dyn std::io::Write>) -> Self {
-        Self {
-            path: path.to_path_buf(),
-            inner: DebugIgnore(inner),
-        }
-    }
-
-    pub fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        self.inner
-            .write(bytes)
-            .map(|_| ())
-            .map_err(|e| self.convert_err(e))
-    }
-}
-
-impl std::io::Write for WrappedWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-impl std::fmt::Write for WrappedWriter {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        self.inner
-            .write(s.as_bytes())
-            .map(|_| ())
-            .map_err(|_| std::fmt::Error)
-    }
-}
-
-#[cfg(test)]
-pub mod test {
-    use super::*;
-    use std::{
-        cell::RefCell,
-        io::Write,
-        rc::Rc,
-        sync::mpsc::{self, Receiver, Sender},
-    };
-
-    #[derive(Debug, Clone)]
-    pub struct FilesChannel(Sender<(PathBuf, InMemoryFile)>);
-
-    impl FilesChannel {
-        pub fn new() -> (Self, Receiver<(PathBuf, InMemoryFile)>) {
-            let (sender, receiver) = mpsc::channel();
-            (Self(sender), receiver)
-        }
-
-        pub fn recv_utf8_files(
-            receiver: &Receiver<(PathBuf, InMemoryFile)>,
-        ) -> Result<Vec<OutputFile>, ()> {
-            receiver
-                .try_iter()
-                .map(|(path, file)| {
-                    Ok(OutputFile {
-                        path,
-                        text: String::from_utf8(file.into_contents()?).map_err(|_| ())?,
-                    })
-                })
-                .collect()
-        }
-    }
-
-    impl CommandExecutor for FilesChannel {
-        fn exec(
-            &self,
-            _program: &str,
-            _args: &[String],
-            _env: &[(&str, String)],
-            _cwd: Option<&Path>,
-            _stdio: Stdio,
-        ) -> Result<i32, Error> {
-            Ok(0)
-        }
-    }
-
-    impl FileSystemWriter for FilesChannel {
-        fn writer<'a>(&self, path: &'a Path) -> Result<WrappedWriter, Error> {
-            let file = InMemoryFile::new();
-            let _ = self.0.send((path.to_path_buf(), file.clone()));
-            Ok(WrappedWriter::new(path, Box::new(file)))
-        }
-
-        fn delete(&self, _path: &Path) -> Result<(), Error> {
-            panic!("FilesChannel does not support deletion")
-        }
-
-        fn copy(&self, _from: &Path, _to: &Path) -> Result<(), Error> {
-            panic!("FilesChannel does not support copy")
-        }
-
-        fn mkdir(&self, _path: &Path) -> Result<(), Error> {
-            Ok(())
-        }
-
-        fn copy_dir(&self, _from: &Path, _to: &Path) -> Result<(), Error> {
-            panic!("FilesChannel does not support copy_dir")
-        }
-
-        fn hardlink(&self, _: &Path, _: &Path) -> Result<(), Error> {
-            panic!("FilesChannel does not support hardlink")
-        }
-
-        fn symlink_dir(&self, _: &Path, _: &Path) -> Result<(), Error> {
-            panic!("FilesChannel does not support symlink")
-        }
-
-        fn delete_file(&self, _path: &Path) -> Result<(), Error> {
-            panic!("FilesChannel does not support deletion")
-        }
-    }
-
-    impl FileSystemReader for FilesChannel {
-        fn gleam_source_files(&self, _dir: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
-            unimplemented!()
-        }
-
-        fn gleam_metadata_files(&self, _dir: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
-            unimplemented!()
-        }
-
-        fn read(&self, _path: &Path) -> Result<String, Error> {
-            unimplemented!()
-        }
-
-        fn is_file(&self, _path: &Path) -> bool {
-            unimplemented!()
-        }
-
-        fn reader(&self, _path: &Path) -> Result<WrappedReader, Error> {
-            unimplemented!()
-        }
-
-        fn is_directory(&self, _path: &Path) -> bool {
-            unimplemented!()
-        }
-
-        fn read_dir(&self, _path: &Path) -> Result<ReadDir> {
-            unimplemented!()
-        }
-
-        fn current_dir(&self) -> Result<PathBuf, Error> {
-            unimplemented!()
-        }
-    }
-
-    impl FileSystemIO for FilesChannel {}
-
-    #[derive(Debug, Default, Clone)]
-    pub struct InMemoryFile {
-        contents: Rc<RefCell<Vec<u8>>>,
-    }
-
-    impl InMemoryFile {
-        pub fn new() -> Self {
-            Default::default()
-        }
-
-        pub fn into_contents(self) -> Result<Vec<u8>, ()> {
-            Rc::try_unwrap(self.contents)
-                .map_err(|_| ())
-                .map(RefCell::into_inner)
-        }
-    }
-
-    impl Write for InMemoryFile {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.contents.borrow_mut().write(buf)
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.contents.borrow_mut().flush()
-        }
-    }
-
-    impl std::fmt::Write for InMemoryFile {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            self.contents
-                .borrow_mut()
-                .write(s.as_bytes())
-                .map(|_| ())
-                .map_err(|_| std::fmt::Error)
-        }
-    }
-
-    impl Utf8Writer for InMemoryFile {
-        fn convert_err<E: std::error::Error>(&self, error: E) -> Error {
-            Error::FileIo {
-                action: FileIoAction::WriteTo,
-                kind: FileKind::File,
-                path: PathBuf::from("<in memory test file>"),
-                err: Some(error.to_string()),
-            }
-        }
-    }
-
-    impl Writer for InMemoryFile {}
 }
 
 #[async_trait]
