@@ -8,8 +8,12 @@ use std::{
 };
 
 use crate::{
-    build_lock::BuildLock, dependencies::UseManifest, fs::ProjectIO, telemetry::NullTelemetry,
+    build_lock::BuildLock,
+    dependencies::UseManifest,
+    fs::{self, ProjectIO},
+    telemetry::NullTelemetry,
 };
+use gleam_core::build::Mode;
 use gleam_core::{
     ast::{SrcSpan, Statement},
     build::{self, Located, Module, ProjectCompiler},
@@ -998,26 +1002,38 @@ where
     IO: CommandExecutor + FileSystemIO + Clone,
 {
     pub fn new(config: PackageConfig, io: IO) -> Result<Self> {
-        // TODO: different telemetry that doesn't write to stdout
         let telemetry = NullTelemetry;
         let manifest = crate::dependencies::download(telemetry, None, UseManifest::Yes)?;
+        let target = config.target;
+        let name = config.name.clone();
+        let build_lock = BuildLock::new_target(Mode::Lsp, target)?;
 
         let options = build::Options {
-            mode: build::Mode::Dev,
+            mode: build::Mode::Lsp,
             target: None,
             perform_codegen: false,
         };
         let mut project_compiler =
             ProjectCompiler::new(config, options, manifest.packages, Box::new(telemetry), io);
+
         // To avoid the Erlang compiler printing to stdout (and thus
         // violating LSP which is currently using stdout) we silence it.
         project_compiler.subprocess_stdio = Stdio::Null;
+
+        // The build caches do not contain all the information we need in the
+        // LSP (e.g. the typed AST) so delete the caches for the top level
+        // package before we run for the first time.
+        // TODO: remove this once the caches have contain all the information
+        {
+            let _guard = build_lock.lock(&telemetry);
+            fs::delete_dir(&paths::build_package(Mode::Lsp, target, &name))?;
+        }
 
         Ok(Self {
             project_compiler,
             modules: HashMap::new(),
             sources: HashMap::new(),
-            build_lock: BuildLock::new()?,
+            build_lock,
             dependencies_compiled: false,
         })
     }

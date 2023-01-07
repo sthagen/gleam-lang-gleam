@@ -1,7 +1,9 @@
 #![allow(warnings)]
 
 mod dep_tree;
+mod native_file_copier;
 pub mod package_compiler;
+mod package_loader;
 mod project_compiler;
 mod telemetry;
 
@@ -28,10 +30,19 @@ use std::time::SystemTime;
 use std::{
     collections::HashMap, ffi::OsString, fs::DirEntry, iter::Peekable, path::PathBuf, process,
 };
-use strum::{Display, EnumString, EnumVariantNames, VariantNames};
+use strum::{Display, EnumIter, EnumString, EnumVariantNames, VariantNames};
 
 #[derive(
-    Debug, Serialize, Deserialize, Display, EnumString, EnumVariantNames, Clone, Copy, PartialEq,
+    Debug,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    EnumVariantNames,
+    EnumIter,
+    Clone,
+    Copy,
+    PartialEq,
 )]
 #[strum(serialize_all = "lowercase")]
 pub enum Target {
@@ -44,6 +55,23 @@ pub enum Target {
 impl Target {
     pub fn variant_strings() -> Vec<String> {
         Self::VARIANTS.iter().map(|s| s.to_string()).collect()
+    }
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Display, EnumString, EnumVariantNames, Clone, Copy, PartialEq,
+)]
+#[strum(serialize_all = "lowercase")]
+pub enum Runtime {
+    #[serde(rename = "node")]
+    Node,
+    #[serde(rename = "deno")]
+    Deno,
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::Node
     }
 }
 
@@ -72,12 +100,22 @@ pub struct ErlangAppCodegenConfiguration {
 }
 
 #[derive(
-    Debug, Serialize, Deserialize, Display, EnumString, EnumVariantNames, Clone, Copy, PartialEq,
+    Debug,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    EnumVariantNames,
+    EnumIter,
+    Clone,
+    Copy,
+    PartialEq,
 )]
 #[strum(serialize_all = "lowercase")]
 pub enum Mode {
     Dev,
     Prod,
+    Lsp,
 }
 
 impl Mode {
@@ -119,6 +157,7 @@ pub struct Module {
     pub origin: Origin,
     pub ast: TypedModule,
     pub extra: ModuleExtra,
+    pub dependencies: Vec<(String, SrcSpan)>,
 }
 
 impl Module {
@@ -126,16 +165,6 @@ impl Module {
         let mut path = self.name.replace("/", "@");
         path.push_str(".erl");
         PathBuf::from(path)
-    }
-
-    /// Get the modification time of this module as the number of seconds since
-    /// the Unix epoch. If the modification time is before the Unix epoch this
-    /// returns 0.
-    pub fn mtime_unix(&self) -> u64 {
-        self.mtime
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
     }
 
     pub fn is_test(&self) -> bool {
@@ -193,6 +222,13 @@ impl Module {
                 }
             }
         }
+    }
+
+    pub(crate) fn dependencies_list(&self) -> Vec<String> {
+        self.dependencies
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect()
     }
 }
 
