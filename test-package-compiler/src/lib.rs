@@ -9,6 +9,7 @@ use gleam_core::{
     io::{memory::InMemoryFileSystem, Content, FileSystemWriter},
 };
 use itertools::Itertools;
+use regex::Regex;
 use std::{
     collections::HashMap,
     ffi::OsStr,
@@ -64,7 +65,20 @@ pub fn prepare(path: &str) -> String {
             let files = filesystem.into_contents();
             TestCompileOutput { files, warnings }.as_overview_text()
         }
-        Err(error) => error.pretty_string(),
+        Err(error) => {
+            let error = error.pretty_string();
+
+            // There is an extra ^ on Windows in some error messages' code
+            // snippets.
+            // I've not managed to determine why this is yet (it is especially
+            // tricky without a Windows computer) so for now we just squash them
+            // in these cross-platform tests.
+            let error = Regex::new(r"\^+")
+                .expect("^ sequence regex")
+                .replace_all(&error, "^");
+
+            error.replace('\\', "/")
+        }
     }
 }
 
@@ -79,12 +93,12 @@ impl TestCompileOutput {
         let mut buffer = String::new();
         for (path, content) in self.files.iter().sorted_by(|a, b| a.0.cmp(b.0)) {
             buffer.push_str("//// ");
-            buffer.push_str(path.to_str().unwrap());
+            buffer.push_str(&path.to_str().unwrap().replace('\\', "/"));
             buffer.push('\n');
 
             let extension = path.extension().and_then(OsStr::to_str);
             match content {
-                _ if extension == Some("gleam_module") => buffer.push_str("<.gleam_module binary>"),
+                _ if extension == Some("cache") => buffer.push_str("<.cache binary>"),
 
                 _ if path.ends_with("gleam.mjs") || path.ends_with("gleam.d.ts") => {
                     buffer.push_str("<prelude>")

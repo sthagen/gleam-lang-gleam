@@ -395,7 +395,7 @@ where
         build_dir: PathBuf,
         package: &ManifestPackage,
     ) -> Result<(), Error> {
-        for path in self.io.gleam_metadata_files(&build_dir) {
+        for path in self.io.gleam_cache_files(&build_dir) {
             let reader = BufReader::new(self.io.reader(&path)?);
             let module = metadata::ModuleDecoder::new(self.ids.clone()).read(reader)?;
             let _ = self
@@ -438,6 +438,7 @@ where
         );
         compiler.write_metadata = true;
         compiler.write_entrypoint = is_root;
+        compiler.perform_codegen = !is_root || self.options.perform_codegen;
         compiler.compile_beam_bytecode = !is_root || self.options.perform_codegen;
         compiler.subprocess_stdio = self.subprocess_stdio;
 

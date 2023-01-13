@@ -2,7 +2,7 @@ use vec1::Vec1;
 
 use super::*;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UntypedExpr {
     Int {
         location: SrcSpan,
@@ -210,6 +210,14 @@ impl UntypedExpr {
             Self::String { .. } | Self::Int { .. } | Self::Float { .. }
         )
     }
+
+    /// Returns `true` if the untyped expr is [`Call`].
+    ///
+    /// [`Call`]: UntypedExpr::Call
+    #[must_use]
+    pub fn is_call(&self) -> bool {
+        matches!(self, Self::Call { .. })
+    }
 }
 
 impl HasLocation for UntypedExpr {
@@ -218,7 +226,7 @@ impl HasLocation for UntypedExpr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Use {
     pub location: SrcSpan,
     pub call: Box<UntypedExpr>,

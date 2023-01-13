@@ -1,8 +1,10 @@
 use crate::{
     ast::{SrcSpan, TypedModule, UntypedModule},
     build::{
-        dep_tree, native_file_copier::NativeFileCopier, package_loader::PackageLoader, Mode,
-        Module, Origin, Package, Target,
+        dep_tree,
+        native_file_copier::NativeFileCopier,
+        package_loader::{CodegenRequired, PackageLoader},
+        Mode, Module, Origin, Package, Target,
     },
     codegen::{Erlang, ErlangApp, JavaScript, TypeScriptDeclarations},
     config::PackageConfig,
@@ -92,11 +94,17 @@ where
         let _enter = span.enter();
 
         let artefact_directory = self.out.join(paths::ARTEFACT_DIRECTORY_NAME);
+        let codegen_required = if self.perform_codegen {
+            CodegenRequired::Yes
+        } else {
+            CodegenRequired::No
+        };
         let loaded = PackageLoader::new(
             self.io.clone(),
             self.ids.clone(),
             self.mode,
             self.root,
+            codegen_required,
             &artefact_directory,
             self.target.target(),
             &self.config.name,
@@ -204,18 +212,21 @@ where
 
     fn encode_and_write_metadata(&mut self, modules: &[Module]) -> Result<()> {
         if !self.write_metadata {
-            tracing::info!("Package metadata writing disabled");
+            tracing::info!("package_metadata_writing_disabled");
+            return Ok(());
+        }
+        if modules.is_empty() {
             return Ok(());
         }
 
         let artefact_dir = self.out.join(paths::ARTEFACT_DIRECTORY_NAME);
 
-        tracing::info!("Writing package metadata to disc");
+        tracing::info!("writing_module_caches");
         for module in modules {
             let module_name = module.name.replace('/', "@");
 
             // Write metadata file
-            let name = format!("{}.gleam_module", &module_name);
+            let name = format!("{}.cache", &module_name);
             let path = artefact_dir.join(name);
             let bytes = ModuleEncoder::new(&module.ast.type_info).encode()?;
             self.io.write_bytes(&path, &bytes)?;
@@ -225,6 +236,7 @@ where
             let path = artefact_dir.join(name);
             let info = CacheMetadata {
                 mtime: module.mtime,
+                codegen_performed: self.perform_codegen,
                 dependencies: module.dependencies_list(),
             };
             self.io.write_bytes(&path, &info.to_binary())?;
@@ -260,12 +272,6 @@ where
 
         io.mkdir(&build_dir)?;
 
-        if self.write_entrypoint {
-            self.render_erlang_entrypoint_module(&build_dir, &mut written)?;
-        } else {
-            tracing::info!("skipping_entrypoint_generation");
-        }
-
         if self.copy_native_files {
             self.copy_project_native_files(&build_dir, &mut written)?;
         } else {
@@ -278,6 +284,12 @@ where
                 &self.config,
                 modules,
             )?;
+        }
+
+        if self.compile_beam_bytecode && self.write_entrypoint {
+            self.render_erlang_entrypoint_module(&build_dir, &mut written)?;
+        } else {
+            tracing::info!("skipping_entrypoint_generation");
         }
 
         // NOTE: This must come after `copy_project_native_files` to ensure that
@@ -308,12 +320,6 @@ where
         };
 
         JavaScript::new(&self.out, typescript).render(&self.io, modules)?;
-
-        if self.write_entrypoint {
-            self.render_javascript_entrypoint_module(&self.out, &mut written)?;
-        } else {
-            tracing::info!("skipping_entrypoint_generation");
-        }
 
         if self.copy_native_files {
             self.copy_project_native_files(&self.out, &mut written)?;
@@ -346,22 +352,6 @@ where
         self.io.write(&path, &module)?;
         let _ = modules_to_compile.insert(name.into());
         tracing::debug!("erlang_entrypoint_written");
-        Ok(())
-    }
-
-    fn render_javascript_entrypoint_module(
-        &mut self,
-        out: &Path,
-        modules_to_compile: &mut HashSet<PathBuf>,
-    ) -> Result<(), Error> {
-        let name = "gleam.main.mjs";
-        let module = JavaScriptEntrypointModule {
-            application: &self.config.name,
-        }
-        .render()
-        .expect("Javascript entrypoint rendering");
-        self.io.write(&out.join(name), &module)?;
-        let _ = modules_to_compile.insert(name.into());
         Ok(())
     }
 }
@@ -569,6 +559,22 @@ impl Input {
             Input::Cached(m) => m.dependencies.clone(),
         }
     }
+
+    /// Returns `true` if the input is [`New`].
+    ///
+    /// [`New`]: Input::New
+    #[must_use]
+    pub(crate) fn is_new(&self) -> bool {
+        matches!(self, Self::New(..))
+    }
+
+    /// Returns `true` if the input is [`Cached`].
+    ///
+    /// [`Cached`]: Input::Cached
+    #[must_use]
+    pub(crate) fn is_cached(&self) -> bool {
+        matches!(self, Self::Cached(..))
+    }
 }
 
 #[derive(Debug)]
@@ -582,6 +588,7 @@ pub(crate) struct CachedModule {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CacheMetadata {
     pub mtime: SystemTime,
+    pub codegen_performed: bool,
     pub dependencies: Vec<String>,
 }
 
@@ -595,13 +602,13 @@ impl CacheMetadata {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Loaded {
     pub to_compile: Vec<UncompiledModule>,
     pub cached: Vec<type_::Module>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct UncompiledModule {
     pub path: PathBuf,
     pub name: String,
@@ -617,11 +624,5 @@ pub(crate) struct UncompiledModule {
 #[derive(Template)]
 #[template(path = "gleam@@main.erl", escape = "none")]
 struct ErlangEntrypointModule<'a> {
-    application: &'a str,
-}
-
-#[derive(Template)]
-#[template(path = "gleam.main.js", escape = "none")]
-struct JavaScriptEntrypointModule<'a> {
     application: &'a str,
 }
