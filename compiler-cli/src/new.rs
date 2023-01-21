@@ -14,8 +14,8 @@ mod tests;
 
 use crate::NewOptions;
 
-const GLEAM_STDLIB_VERSION: &str = "0.25";
-const GLEEUNIT_VERSION: &str = "0.7";
+const GLEAM_STDLIB_VERSION: &str = "0.26";
+const GLEEUNIT_VERSION: &str = "0.10";
 const ERLANG_OTP_VERSION: &str = "25.2";
 const REBAR3_VERSION: &str = "3";
 const ELIXIR_VERSION: &str = "1.14.2";
@@ -250,7 +250,7 @@ pub fn create(options: NewOptions, version: &'static str) -> Result<()> {
     creator.run()?;
 
     let cd_folder = if options.project_root == "." {
-        "".to_string()
+        "".into()
     } else {
         format!("\tcd {}\n", creator.options.project_root)
     };

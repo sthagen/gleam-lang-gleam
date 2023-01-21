@@ -11,15 +11,16 @@ use crate::{
     Error, Result,
 };
 use itertools::Itertools;
+use smol_str::SmolStr;
 use std::{path::Path, sync::Arc};
 use vec1::Vec1;
 
 const INDENT: isize = 2;
 
-pub fn pretty(writer: &mut impl Utf8Writer, src: &str, path: &Path) -> Result<()> {
+pub fn pretty(writer: &mut impl Utf8Writer, src: &SmolStr, path: &Path) -> Result<()> {
     let (module, extra) = crate::parse::parse_module(src).map_err(|error| Error::Parse {
         path: path.to_path_buf(),
-        src: src.to_string(),
+        src: src.clone(),
         error,
     })?;
     let intermediate = Intermediate {
@@ -264,7 +265,7 @@ impl<'comments> Formatter<'comments> {
                 ..
             } => "import "
                 .to_doc()
-                .append(Document::String(module.join("/")))
+                .append(module.as_str())
                 .append(if unqualified.is_empty() {
                     nil()
                 } else {
@@ -435,7 +436,7 @@ impl<'comments> Formatter<'comments> {
 
     fn type_ast_constructor<'a>(
         &mut self,
-        module: &'a Option<String>,
+        module: &'a Option<SmolStr>,
         name: &'a str,
         args: &'a [TypeAst],
     ) -> Document<'a> {
@@ -488,7 +489,7 @@ impl<'comments> Formatter<'comments> {
         &mut self,
         public: bool,
         name: &'a str,
-        args: &'a [String],
+        args: &'a [SmolStr],
         typ: &'a TypeAst,
     ) -> Document<'a> {
         let head = pub_(public).append("type ").append(name);
@@ -759,7 +760,7 @@ impl<'comments> Formatter<'comments> {
         commented(document, comments)
     }
 
-    fn string<'a>(&self, string: &'a String) -> Document<'a> {
+    fn string<'a>(&self, string: &'a SmolStr) -> Document<'a> {
         let doc = string.to_doc().surround("\"", "\"");
         if string.contains('\n') {
             doc.force_break()
@@ -815,14 +816,14 @@ impl<'comments> Formatter<'comments> {
             j += 1;
         }
 
-        Document::String(new_value.chars().rev().collect())
+        new_value.chars().rev().collect::<SmolStr>().to_doc()
     }
 
     fn pattern_constructor<'a>(
         &mut self,
         name: &'a str,
         args: &'a [CallArg<UntypedPattern>],
-        module: &'a Option<String>,
+        module: &'a Option<SmolStr>,
         with_spread: bool,
     ) -> Document<'a> {
         fn is_breakable(expr: &UntypedPattern) -> bool {
@@ -1043,10 +1044,11 @@ impl<'comments> Formatter<'comments> {
         let doc_comments = self.doc_comments(constructor.location.start);
 
         let doc = if constructor.arguments.is_empty() {
-            constructor.name.to_doc()
+            constructor.name.as_str().to_doc()
         } else {
             constructor
                 .name
+                .as_str()
                 .to_doc()
                 .append(wrap_args(constructor.arguments.iter().map(
                     |RecordConstructorArg {
@@ -1078,7 +1080,7 @@ impl<'comments> Formatter<'comments> {
         public: bool,
         opaque: bool,
         name: &'a str,
-        args: &'a [String],
+        args: &'a [SmolStr],
         constructors: &'a [RecordConstructor<A>],
         location: &'a SrcSpan,
     ) -> Document<'a> {
@@ -1112,7 +1114,7 @@ impl<'comments> Formatter<'comments> {
         &mut self,
         public: bool,
         name: &'a str,
-        args: &'a [String],
+        args: &'a [SmolStr],
         location: &'a SrcSpan,
     ) -> Document<'a> {
         let _ = self.pop_empty_lines(location.start);
@@ -1199,6 +1201,7 @@ impl<'comments> Formatter<'comments> {
         let comments = self.pop_comments(arg.location.start);
         let doc = arg
             .label
+            .as_str()
             .to_doc()
             .append(": ")
             .append(self.wrap_expr(&arg.value));
@@ -1271,7 +1274,7 @@ impl<'comments> Formatter<'comments> {
         &mut self,
         public: bool,
         name: &'a str,
-        args: &'a [String],
+        args: &'a [SmolStr],
     ) -> Document<'a> {
         pub_(public)
             .append("external type ")
@@ -1546,16 +1549,16 @@ fn pub_(public: bool) -> Document<'static> {
 
 impl<'a> Documentable<'a> for &'a UnqualifiedImport {
     fn to_doc(self) -> Document<'a> {
-        self.name.to_doc().append(match &self.as_name {
+        self.name.as_str().to_doc().append(match &self.as_name {
             None => nil(),
             Some(s) => " as ".to_doc().append(s.as_str()),
         })
     }
 }
 
-fn label(label: &Option<String>) -> Document<'_> {
+fn label(label: &Option<SmolStr>) -> Document<'_> {
     match label {
-        Some(s) => Document::Str(s).append(": "),
+        Some(s) => s.to_doc().append(": "),
         None => nil(),
     }
 }

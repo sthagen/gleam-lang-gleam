@@ -1,3 +1,5 @@
+use smol_str::SmolStr;
+
 use crate::{
     ast::{
         Constant, SrcSpan, TypedConstant, TypedConstantBitStringSegment,
@@ -35,11 +37,11 @@ impl<'a> ModuleEncoder<'a> {
         let mut message = capnp::message::Builder::new_default();
 
         let mut module = message.init_root::<module::Builder<'_>>();
-        self.set_name(&mut module);
+        module.set_name(&self.data.name);
+        module.set_package(&self.data.package);
         self.set_module_types(&mut module);
         self.set_module_values(&mut module);
         self.set_module_accessors(&mut module);
-        module.set_package(&self.data.package);
         self.set_module_types_constructors(&mut module);
 
         capnp::serialize_packed::write_message(&mut buffer, &message).expect("capnp encode");
@@ -82,19 +84,6 @@ impl<'a> ModuleEncoder<'a> {
         builder.set_index(accessor.index as u16);
     }
 
-    fn set_name(&mut self, module: &mut module::Builder<'_>) {
-        let mut name = module.reborrow().init_name(self.data.name.len() as u32);
-        for (i, s) in self.data.name.iter().enumerate() {
-            name.set(i as u32, s);
-        }
-    }
-
-    fn build_module_name(&mut self, mut builder: capnp::text_list::Builder<'_>, module: &[String]) {
-        for (i, s) in module.iter().enumerate() {
-            builder.set(i as u32, s);
-        }
-    }
-
     fn set_module_types(&mut self, module: &mut module::Builder<'_>) {
         tracing::trace!("Writing module metadata types");
         let mut types = module.reborrow().init_types(self.data.types.len() as u32);
@@ -135,6 +124,7 @@ impl<'a> ModuleEncoder<'a> {
         mut builder: type_constructor::Builder<'_>,
         constructor: &TypeConstructor,
     ) {
+        builder.set_module(&constructor.module);
         let type_builder = builder.reborrow().init_type();
         self.build_type(type_builder, &constructor.typ);
         self.build_types(
@@ -143,16 +133,12 @@ impl<'a> ModuleEncoder<'a> {
                 .init_parameters(constructor.parameters.len() as u32),
             &constructor.parameters,
         );
-        self.build_module_name(
-            builder.init_module(constructor.module.len() as u32),
-            &constructor.module,
-        );
     }
 
     fn build_types_constructors_mapping(
         &mut self,
         mut builder: capnp::text_list::Builder<'_>,
-        constructors: &[String],
+        constructors: &[SmolStr],
     ) {
         for (i, s) in constructors.iter().enumerate() {
             builder.set(i as u32, s);
@@ -220,14 +206,9 @@ impl<'a> ModuleEncoder<'a> {
             } => {
                 let mut builder = builder.init_module_fn();
                 builder.set_name(name);
-                self.build_optional_field_map(builder.reborrow().init_field_map(), field_map);
-                {
-                    let mut builder = builder.reborrow().init_module(module.len() as u32);
-                    for (i, s) in module.iter().enumerate() {
-                        builder.set(i as u32, s);
-                    }
-                }
+                builder.set_module(module);
                 builder.set_arity(*arity as u16);
+                self.build_optional_field_map(builder.reborrow().init_field_map(), field_map);
                 self.build_src_span(builder.init_location(), *location);
             }
         }
@@ -394,8 +375,8 @@ impl<'a> ModuleEncoder<'a> {
             } => {
                 let mut app = builder.init_app();
                 app.set_name(name);
+                app.set_module(module);
                 self.build_types(app.reborrow().init_parameters(args.len() as u32), args);
-                self.build_module_name(app.init_module(module.len() as u32), module);
             }
 
             Type::Tuple { elems } => self.build_types(

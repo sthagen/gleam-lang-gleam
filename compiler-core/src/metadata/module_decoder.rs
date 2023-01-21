@@ -1,6 +1,7 @@
 #![allow(clippy::unnecessary_wraps)] // Needed for macro
 
 use itertools::Itertools;
+use smol_str::SmolStr;
 
 use crate::{
     ast::{
@@ -35,9 +36,9 @@ macro_rules! read_hashmap {
         let reader = $reader;
         let mut map = HashMap::with_capacity(reader.len() as usize);
         for prop in reader.into_iter() {
-            let name = prop.get_key()?;
-            let type_ = $self.$method(&prop.get_value()?)?;
-            let _ = map.insert(name.to_string(), type_);
+            let name = prop.get_key()?.into();
+            let values = $self.$method(&prop.get_value()?.into())?;
+            let _ = map.insert(name, values);
         }
         map
     }};
@@ -63,8 +64,8 @@ impl ModuleDecoder {
         let reader = message_reader.get_root::<module::Reader<'_>>()?;
 
         Ok(Module {
-            name: module_name(&reader.get_name()?)?,
-            package: reader.get_package()?.to_string(),
+            name: reader.get_name()?.into(),
+            package: reader.get_package()?.into(),
             origin: Origin::Src,
             types: read_hashmap!(reader.get_types()?, self, type_constructor),
             types_constructors: read_hashmap!(
@@ -82,11 +83,10 @@ impl ModuleDecoder {
         reader: &type_constructor::Reader<'_>,
     ) -> Result<TypeConstructor> {
         let type_ = self.type_(&reader.get_type()?)?;
-        let module = module_name(&reader.get_module()?)?;
         Ok(TypeConstructor {
             public: true,
             origin: Default::default(),
-            module,
+            module: reader.get_module()?.into(),
             parameters: read_vec!(reader.get_parameters()?, self, type_),
             typ: type_,
         })
@@ -103,8 +103,8 @@ impl ModuleDecoder {
     }
 
     fn type_app(&mut self, reader: &schema::type_::app::Reader<'_>) -> Result<Arc<Type>> {
-        let module = module_name(&reader.get_module()?)?;
-        let name = reader.get_name()?.to_string();
+        let module = reader.get_module()?.into();
+        let name = reader.get_name()?.into();
         let args = read_vec!(&reader.get_parameters()?, self, type_);
         Ok(Arc::new(Type::App {
             public: true,
@@ -138,9 +138,8 @@ impl ModuleDecoder {
         Ok(type_::generic_var(id))
     }
 
-    fn constructors_list(&mut self, reader: &capnp::text_list::Reader<'_>) -> Result<Vec<String>> {
-        let vec = reader.iter().map_ok(String::from).try_collect()?;
-        Ok(vec)
+    fn constructors_list(&mut self, reader: &capnp::text_list::Reader<'_>) -> Result<Vec<SmolStr>> {
+        Ok(reader.iter().map_ok(SmolStr::new).try_collect()?)
     }
 
     fn value_constructor(
@@ -173,21 +172,21 @@ impl ModuleDecoder {
     fn constant_int(&self, value: &str) -> TypedConstant {
         Constant::Int {
             location: Default::default(),
-            value: value.to_string(),
+            value: value.into(),
         }
     }
 
     fn constant_float(&self, value: &str) -> TypedConstant {
         Constant::Float {
             location: Default::default(),
-            value: value.to_string(),
+            value: value.into(),
         }
     }
 
     fn constant_string(&self, value: &str) -> TypedConstant {
         Constant::String {
             location: Default::default(),
-            value: value.to_string(),
+            value: value.into(),
         }
     }
 
@@ -212,7 +211,7 @@ impl ModuleDecoder {
 
     fn constant_record(&mut self, reader: &constant::record::Reader<'_>) -> Result<TypedConstant> {
         let type_ = self.type_(&reader.get_typ()?)?;
-        let tag = reader.get_tag()?.to_string();
+        let tag = reader.get_tag()?.into();
         let args = read_vec!(reader.get_args()?, self, constant_call_arg);
         Ok(Constant::Record {
             location: Default::default(),
@@ -257,8 +256,8 @@ impl ModuleDecoder {
         let constructor = self.value_constructor(&reader.get_constructor()?)?;
         Ok(Constant::Var {
             location: Default::default(),
-            module: module.map(String::from),
-            name: String::from(name),
+            module: module.map(SmolStr::from),
+            name: name.into(),
             constructor: Some(Box::from(constructor)),
             typ: type_,
         })
@@ -358,7 +357,7 @@ impl ModuleDecoder {
         Ok(ValueConstructorVariant::ModuleConstant {
             location: self.src_span(&reader.get_location()?)?,
             literal: self.constant(&reader.get_literal()?)?,
-            module: reader.get_module()?.to_string(),
+            module: reader.get_module()?.into(),
         })
     }
 
@@ -374,8 +373,8 @@ impl ModuleDecoder {
         reader: &value_constructor_variant::module_fn::Reader<'_>,
     ) -> Result<ValueConstructorVariant> {
         Ok(ValueConstructorVariant::ModuleFn {
-            name: reader.get_name()?.to_string(),
-            module: module_name(&reader.get_module()?)?,
+            name: reader.get_name()?.into(),
+            module: reader.get_module()?.into(),
             arity: reader.get_arity() as usize,
             field_map: self.field_map(&reader.get_field_map()?)?,
             location: self.src_span(&reader.get_location()?)?,
@@ -387,8 +386,8 @@ impl ModuleDecoder {
         reader: &value_constructor_variant::record::Reader<'_>,
     ) -> Result<ValueConstructorVariant> {
         Ok(ValueConstructorVariant::Record {
-            name: reader.get_name()?.to_string(),
-            module: reader.get_module()?.to_string(),
+            name: reader.get_name()?.into(),
+            module: reader.get_module()?.into(),
             arity: reader.get_arity(),
             constructors_count: reader.get_constructors_count(),
             field_map: self.field_map(&reader.get_field_map()?)?,
@@ -425,13 +424,8 @@ impl ModuleDecoder {
     fn record_accessor(&mut self, reader: &record_accessor::Reader<'_>) -> Result<RecordAccessor> {
         Ok(RecordAccessor {
             index: reader.get_index() as u64,
-            label: reader.get_label()?.to_string(),
+            label: reader.get_label()?.into(),
             type_: self.type_(&reader.get_type()?)?,
         })
     }
-}
-
-fn module_name(module: &capnp::text_list::Reader<'_>) -> Result<Vec<String>> {
-    let name = module.iter().map_ok(String::from).try_collect()?;
-    Ok(name)
 }

@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use crate::build::{Runtime, Target};
 use crate::diagnostic::{Diagnostic, Label, Location};
-use crate::type_::FieldAccessUsage;
+use crate::type_::{error::PatternMatchKind, FieldAccessUsage};
 use crate::{ast::BinOp, parse::error::ParseErrorType, type_::Type};
 use crate::{
     bit_string,
@@ -12,14 +12,14 @@ use crate::{
 use hexpm::version::pubgrub_report::{DefaultStringReporter, Reporter};
 use hexpm::version::ResolutionError;
 use itertools::Itertools;
+use smol_str::SmolStr;
 use std::env;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use termcolor::Buffer;
 use thiserror::Error;
 
-pub type Src = String;
-pub type Name = String;
+pub type Name = SmolStr;
 
 pub type Result<Ok, Err = Error> = std::result::Result<Ok, Err>;
 
@@ -34,14 +34,14 @@ pub enum Error {
     #[error("failed to parse Gleam source code")]
     Parse {
         path: PathBuf,
-        src: Src,
+        src: SmolStr,
         error: crate::parse::error::ParseError,
     },
 
     #[error("type checking failed")]
     Type {
         path: PathBuf,
-        src: Src,
+        src: SmolStr,
         error: crate::type_::Error,
     },
 
@@ -51,8 +51,8 @@ pub enum Error {
         import: Name,
         location: crate::ast::SrcSpan,
         path: PathBuf,
-        src: String,
-        modules: Vec<String>,
+        src: SmolStr,
+        modules: Vec<SmolStr>,
     },
 
     #[error("duplicate module {module}")]
@@ -66,10 +66,10 @@ pub enum Error {
     DuplicateSourceFile { file: String },
 
     #[error("cyclical module imports")]
-    ImportCycle { modules: Vec<String> },
+    ImportCycle { modules: Vec<SmolStr> },
 
     #[error("cyclical package dependencies")]
-    PackageCycle { packages: Vec<String> },
+    PackageCycle { packages: Vec<SmolStr> },
 
     #[error("file operation failed")]
     FileIo {
@@ -142,7 +142,7 @@ pub enum Error {
     #[error("javascript codegen failed")]
     JavaScript {
         path: PathBuf,
-        src: Src,
+        src: SmolStr,
         error: crate::javascript::Error,
     },
 
@@ -335,7 +335,7 @@ impl FileKind {
     }
 }
 
-fn did_you_mean(name: &str, options: &[String]) -> Option<String> {
+fn did_you_mean(name: &str, options: &[SmolStr]) -> Option<String> {
     // Find best match
     options
         .iter()
@@ -715,7 +715,7 @@ Test modules are not included in production builds so test modules cannot import
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -726,10 +726,10 @@ Test modules are not included in production builds so test modules cannot import
                     valid,
                     supplied,
                 } => {
-                    let other_labels: Vec<String> = valid
+                    let other_labels: Vec<_> = valid
                         .iter()
-                        .cloned()
                         .filter(|label| !supplied.contains(label))
+                        .cloned()
                         .collect();
 
                     let title = if unknown.len() > 1 {
@@ -737,7 +737,7 @@ Test modules are not included in production builds so test modules cannot import
                     } else {
                         "Unknown label"
                     }
-                    .to_string();
+                    .into();
 
                     let mut labels = unknown.iter().map(|(label, location)| {
                         let text = did_you_mean(label, &other_labels)
@@ -771,7 +771,7 @@ constructor accepts."
                         location: Some(Location {
                             label,
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels,
                         }),
                     }
@@ -794,7 +794,7 @@ not expect any. Please remove the label `{}`.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -817,7 +817,7 @@ also be labelled."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -844,7 +844,7 @@ Names in a Gleam module must be unique so one will need to be renamed.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![Label {
                                 text: Some("First imported here".into()),
                                 span: *previous_location,
@@ -875,7 +875,7 @@ Names in a Gleam module must be unique so one will need to be renamed.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![Label {
                                 text: Some("First defined here".into()),
                                 span: *previous_location,
@@ -906,7 +906,7 @@ Names in a Gleam module must be unique so one will need to be renamed.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![Label {
                                 text: Some("First defined here".into()),
                                 span: *previous_location,
@@ -937,7 +937,7 @@ Names in a Gleam module must be unique so one will need to be renamed.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![Label {
                                 text: Some("First defined here".into()),
                                 span: *previous_location,
@@ -962,7 +962,7 @@ Names in a Gleam module must be unique so one will need to be renamed.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -984,7 +984,7 @@ Names in a Gleam module must be unique so one will need to be renamed.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1007,7 +1007,7 @@ Hint: Add some type annotations and try again."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1030,7 +1030,7 @@ Hint: Add some type annotations and try again."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1092,7 +1092,7 @@ to call a method on this value you may want to use the function syntax instead."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1135,7 +1135,7 @@ But this argument has this type:
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1186,7 +1186,7 @@ But function expects:
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1225,7 +1225,7 @@ But function expects:
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1256,7 +1256,7 @@ number of arguments."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1298,7 +1298,7 @@ number of arguments."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1320,7 +1320,7 @@ assigned variables to all of them."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1348,7 +1348,7 @@ constructing a new record with its values."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1373,7 +1373,7 @@ constructing a new record with its values."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1394,7 +1394,7 @@ constructing a new record with its values."
                             span: *location,
                         },
                         path: path.clone(),
-                        src: src.into(),
+                        src: src.clone(),
                         extra_labels: vec![],
                     }),
                 },
@@ -1426,7 +1426,7 @@ Private types can only be used within the module that defines them.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1447,7 +1447,7 @@ Private types can only be used within the module that defines them.",
                             span: *location,
                         },
                         path: path.clone(),
-                        src: src.into(),
+                        src: src.clone(),
                         extra_labels: vec![],
                     }),
                 },
@@ -1458,11 +1458,8 @@ Private types can only be used within the module that defines them.",
                     module_name,
                     type_constructors,
                 } => {
-                    let text = format!(
-                        "The module `{}` does not have a `{}` type.",
-                        module_name.join("/"),
-                        name
-                    );
+                    let text =
+                        format!("The module `{module_name}` does not have a `{name}` type.",);
                     Diagnostic {
                         title: "Unknown module type".into(),
                         text,
@@ -1474,7 +1471,7 @@ Private types can only be used within the module that defines them.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1486,11 +1483,8 @@ Private types can only be used within the module that defines them.",
                     module_name,
                     value_constructors,
                 } => {
-                    let text = format!(
-                        "The module `{}` does not have a `{}` field.",
-                        module_name.join("/"),
-                        name
-                    );
+                    let text =
+                        format!("The module `{module_name}` does not have a `{name}` field.",);
                     Diagnostic {
                         title: "Unknown module field".into(),
                         text,
@@ -1502,7 +1496,7 @@ Private types can only be used within the module that defines them.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1515,16 +1509,13 @@ Private types can only be used within the module that defines them.",
                     type_constructors,
                     value_constructors,
                 } => {
-                    let options: Vec<String> = type_constructors
+                    let options: Vec<_> = type_constructors
                         .iter()
                         .chain(value_constructors)
-                        .map(|s| s.to_string())
+                        .cloned()
                         .collect();
-                    let text = format!(
-                        "The module `{}` does not have a `{}` field.",
-                        module_name.join("/"),
-                        name
-                    );
+                    let text =
+                        format!("The module `{module_name}` does not have a `{name}` field.",);
                     Diagnostic {
                         title: "Unknown module field".into(),
                         text,
@@ -1536,7 +1527,7 @@ Private types can only be used within the module that defines them.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1567,7 +1558,7 @@ Each clause must have a pattern for every subject value.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1589,7 +1580,7 @@ Each clause must have a pattern for every subject value.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1612,7 +1603,7 @@ This variable `{}` has not been previously defined.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1635,7 +1626,7 @@ as the initial pattern, but the `{}` variable is missing.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1661,7 +1652,7 @@ e.g. (x, y) if x == y -> ...",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1680,7 +1671,7 @@ e.g. (x, y) if x == y -> ...",
                             span: *location,
                         },
                         path: path.clone(),
-                        src: src.into(),
+                        src: src.clone(),
                         extra_labels: vec![],
                     }),
                 },
@@ -1708,7 +1699,7 @@ tuple has {} elements so the highest valid index is {}.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1733,7 +1724,7 @@ tuple has {} elements so the highest valid index is {}.",
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1755,7 +1746,7 @@ we can continue."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1777,7 +1768,7 @@ function and try again."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1873,7 +1864,7 @@ function and try again."
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
@@ -1890,7 +1881,7 @@ function and try again."
                             span: *location,
                         },
                         path: path.clone(),
-                        src: src.into(),
+                        src: src.clone(),
                         extra_labels: vec![],
                     }),
                 },
@@ -1907,7 +1898,7 @@ function and try again."
                             span: *location,
                         },
                         path: path.clone(),
-                        src: src.into(),
+                        src: src.clone(),
                         extra_labels: vec![],
                     }),
                 },
@@ -1946,17 +1937,28 @@ Try a different name for this module.",
                 TypeError::NotExhaustivePatternMatch {
                     location,
                     unmatched,
+                    kind,
                 } => {
-                    let text = format!(
-                        "This case expression does not match all possibilities.
+                    let mut text = match kind {
+                        PatternMatchKind::Case => {
+                            "This case expression does not match all possibilities.
 Each constructor must have a pattern that matches it or
-else it could crash.
+else it could crash."
+                        }
+                        PatternMatchKind::Assignment => {
+                            "This assignment does not match all possibilities.
+Either use a case expression with patterns for each possible
+value, or use `assert` rather than `let`."
+                        }
+                    }
+                    .to_string();
 
-These values are not matched:
-
-  - {}",
-                        unmatched.join("\n  - "),
-                    );
+                    text.push_str("\n\nThese values are not matched:\n\n");
+                    for unmatched in unmatched {
+                        text.push_str("  - ");
+                        text.push_str(unmatched);
+                        text.push('\n');
+                    }
                     Diagnostic {
                         title: "Not exhaustive pattern match".into(),
                         text,
@@ -1968,11 +1970,27 @@ These values are not matched:
                                 span: *location,
                             },
                             path: path.clone(),
-                            src: src.into(),
+                            src: src.clone(),
                             extra_labels: vec![],
                         }),
                     }
                 }
+
+                TypeError::ArgumentNameAlreadyUsed { location, name } => Diagnostic {
+                    title: "Argument name already used".into(),
+                    text: format!("Two `{name}` arguments have been defined for this function."),
+                    hint: None,
+                    level: Level::Error,
+                    location: Some(Location {
+                        label: Label {
+                            text: None,
+                            span: *location,
+                        },
+                        path: path.clone(),
+                        src: src.clone(),
+                        extra_labels: vec![],
+                    }),
+                },
             },
 
             Error::Parse { path, src, error } => {
@@ -1999,7 +2017,7 @@ These values are not matched:
                             span: adjusted_location,
                         },
                         path: path.clone(),
-                        src: src.into(),
+                        src: src.clone(),
                         extra_labels: vec![],
                     }),
                 }
@@ -2064,7 +2082,7 @@ cycle to continue.",
                             span: *location,
                         },
                         path: path.clone(),
-                        src: src.into(),
+                        src: src.clone(),
                         extra_labels: vec![],
                     }),
                 }
@@ -2140,7 +2158,7 @@ Fix the warnings and try again."
                             span: *location,
                         },
                         path: path.clone(),
-                        src: src.into(),
+                        src: src.clone(),
                         extra_labels: vec![],
                     }),
                 },
@@ -2294,7 +2312,7 @@ issue in our tracker: https://github.com/gleam-lang/gleam/issues",
 
                 let hint = match target {
                     Target::JavaScript => {
-                        Some("available runtimes for JavaScript are: node, deno".to_string())
+                        Some("available runtimes for JavaScript are: node, deno".into())
                     }
                     Target::Erlang => Some(
                         "You can not set a runtime for Erlang. Did you mean to target JavaScript?"
@@ -2340,7 +2358,7 @@ fn std_io_error_kind_text(kind: &std::io::ErrorKind) -> String {
     }
 }
 
-fn import_cycle(buffer: &mut String, modules: &[String]) {
+fn import_cycle(buffer: &mut String, modules: &[SmolStr]) {
     buffer.push_str(
         "
     ┌─────┐\n",
@@ -2395,7 +2413,7 @@ fn hint_string_message() -> String {
 pub struct Unformatted {
     pub source: PathBuf,
     pub destination: PathBuf,
-    pub input: String,
+    pub input: SmolStr,
     pub output: String,
 }
 

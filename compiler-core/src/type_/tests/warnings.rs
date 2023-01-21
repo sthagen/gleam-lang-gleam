@@ -236,7 +236,7 @@ fn unused_private_type_warnings_test() {
     assert_warning!(
         "external type X",
         Warning::UnusedType {
-            name: "X".to_string(),
+            name: "X".into(),
             location: SrcSpan { start: 0, end: 15 },
             imported: false
         }
@@ -254,7 +254,7 @@ fn unused_private_type_warnings_test3() {
     assert_warning!(
         "type X = Int",
         Warning::UnusedType {
-            name: "X".to_string(),
+            name: "X".into(),
             location: SrcSpan { start: 0, end: 12 },
             imported: false
         }
@@ -277,7 +277,7 @@ fn unused_private_type_warnings_test6() {
     assert_warning!(
         "type X { X }",
         Warning::UnusedConstructor {
-            name: "X".to_string(),
+            name: "X".into(),
             location: SrcSpan { start: 9, end: 10 },
             imported: false
         }
@@ -299,7 +299,7 @@ fn unused_private_fn_warnings_test() {
     assert_warning!(
         "fn a() { 1 }",
         Warning::UnusedPrivateFunction {
-            name: "a".to_string(),
+            name: "a".into(),
             location: SrcSpan { start: 0, end: 6 },
         }
     );
@@ -320,7 +320,7 @@ fn unused_private_const_warnings_test() {
     assert_warning!(
         "const a = 1",
         Warning::UnusedPrivateModuleConstant {
-            name: "a".to_string(),
+            name: "a".into(),
             location: SrcSpan { start: 6, end: 7 },
         }
     );
@@ -342,7 +342,7 @@ fn unused_variable_warnings_test() {
     assert_warning!(
         "pub fn a(b) { 1 }",
         Warning::UnusedVariable {
-            name: "b".to_string(),
+            name: "b".into(),
             location: SrcSpan { start: 9, end: 10 },
         }
     );
@@ -359,7 +359,7 @@ fn unused_variable_warnings_test2() {
     assert_warning!(
         "pub fn a() { let b = 1 5 }",
         Warning::UnusedVariable {
-            name: "b".to_string(),
+            name: "b".into(),
             location: SrcSpan { start: 17, end: 18 },
         }
     );
@@ -375,7 +375,7 @@ fn unused_variable_shadowing_test() {
     assert_warning!(
         "pub fn a() { let b = 1 let b = 2 b }",
         Warning::UnusedVariable {
-            name: "b".to_string(),
+            name: "b".into(),
             location: SrcSpan { start: 17, end: 18 },
         }
     );
@@ -392,7 +392,7 @@ fn unused_destructure() {
     assert_warning!(
         "pub fn a(b) { case b { #(c, _) -> 5 } }",
         Warning::UnusedVariable {
-            name: "c".to_string(),
+            name: "c".into(),
             location: SrcSpan { start: 25, end: 26 },
         }
     );
@@ -406,13 +406,10 @@ fn used_destructure() {
 #[test]
 fn unused_imported_module_warnings_test() {
     assert_warning!(
-        (
-            vec!["gleam".to_string(), "foo".to_string()],
-            "pub fn bar() { 1 }"
-        ),
+        ("gleam/foo", "pub fn bar() { 1 }"),
         "import gleam/foo",
         Warning::UnusedImportedModule {
-            name: "foo".to_string(),
+            name: "foo".into(),
             location: SrcSpan { start: 7, end: 16 },
         }
     );
@@ -421,13 +418,10 @@ fn unused_imported_module_warnings_test() {
 #[test]
 fn unused_imported_module_with_alias_warnings_test() {
     assert_warning!(
-        (
-            vec!["gleam".to_string(), "foo".to_string()],
-            "pub fn bar() { 1 }"
-        ),
+        ("gleam/foo", "pub fn bar() { 1 }"),
         "import gleam/foo as bar",
         Warning::UnusedImportedModule {
-            name: "bar".to_string(),
+            name: "bar".into(),
             location: SrcSpan { start: 7, end: 23 },
         }
     );
@@ -436,10 +430,7 @@ fn unused_imported_module_with_alias_warnings_test() {
 #[test]
 fn unused_imported_module_no_warning_on_used_function_test() {
     assert_no_warnings!(
-        (
-            vec!["gleam".to_string(), "foo".to_string()],
-            "pub fn bar() { 1 }"
-        ),
+        ("gleam/foo", "pub fn bar() { 1 }"),
         "import gleam/foo; pub fn baz() { foo.bar() }",
     );
 }
@@ -447,10 +438,7 @@ fn unused_imported_module_no_warning_on_used_function_test() {
 #[test]
 fn unused_imported_module_no_warning_on_used_type_test() {
     assert_no_warnings!(
-        (
-            vec!["gleam".to_string(), "foo".to_string()],
-            "pub type Foo = Int"
-        ),
+        ("gleam/foo", "pub type Foo = Int"),
         "import gleam/foo; pub fn baz(a: foo.Foo) { a }",
     );
 }
@@ -458,10 +446,7 @@ fn unused_imported_module_no_warning_on_used_type_test() {
 #[test]
 fn unused_imported_module_no_warning_on_used_unqualified_function_test() {
     assert_no_warnings!(
-        (
-            vec!["gleam".to_string(), "foo".to_string()],
-            "pub fn bar() { 1 }"
-        ),
+        ("gleam/foo", "pub fn bar() { 1 }"),
         "import gleam/foo.{bar}; pub fn baz() { bar() }",
     );
 }
@@ -469,10 +454,7 @@ fn unused_imported_module_no_warning_on_used_unqualified_function_test() {
 #[test]
 fn unused_imported_module_no_warning_on_used_unqualified_type_test() {
     assert_no_warnings!(
-        (
-            vec!["gleam".to_string(), "foo".to_string()],
-            "pub type Foo = Int"
-        ),
+        ("gleam/foo", "pub type Foo = Int"),
         "import gleam/foo.{Foo}; pub fn baz(a: Foo) { a }",
     );
 }
@@ -480,10 +462,7 @@ fn unused_imported_module_no_warning_on_used_unqualified_type_test() {
 #[test]
 fn module_access_registers_import_usage() {
     assert_no_warnings!(
-        (
-            vec!["gleam".to_string(), "bibble".to_string()],
-            "pub const bobble = 1"
-        ),
+        ("gleam/bibble", "pub const bobble = 1"),
         "import gleam/bibble pub fn main() { bibble.bobble }",
     );
 }
@@ -518,7 +497,7 @@ pub fn main(s) {
 #[test]
 fn imported_function_referenced_in_constant() {
     assert_no_warnings!(
-        (vec!["one".to_string()], "pub fn two() { 2 }"),
+        ("one", "pub fn two() { 2 }"),
         "
 import one
 
@@ -531,7 +510,7 @@ pub const make_two = one.two
 #[test]
 fn imported_constructor_referenced_in_constant() {
     assert_no_warnings!(
-        (vec!["one".to_string()], "pub type Two { Two(Int) }"),
+        ("one", "pub type Two { Two(Int) }"),
         "
 import one
 

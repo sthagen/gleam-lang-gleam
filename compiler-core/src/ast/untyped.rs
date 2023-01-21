@@ -6,17 +6,17 @@ use super::*;
 pub enum UntypedExpr {
     Int {
         location: SrcSpan,
-        value: String,
+        value: SmolStr,
     },
 
     Float {
         location: SrcSpan,
-        value: String,
+        value: SmolStr,
     },
 
     String {
         location: SrcSpan,
-        value: String,
+        value: SmolStr,
     },
 
     Sequence {
@@ -26,7 +26,7 @@ pub enum UntypedExpr {
 
     Var {
         location: SrcSpan,
-        name: String,
+        name: SmolStr,
     },
 
     Fn {
@@ -86,7 +86,7 @@ pub enum UntypedExpr {
 
     FieldAccess {
         location: SrcSpan,
-        label: String,
+        label: SmolStr,
         container: Box<Self>,
     },
 
@@ -104,7 +104,7 @@ pub enum UntypedExpr {
     Todo {
         kind: TodoKind,
         location: SrcSpan,
-        label: Option<String>,
+        label: Option<SmolStr>,
     },
 
     BitString {

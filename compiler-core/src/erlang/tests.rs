@@ -2,6 +2,7 @@ mod assert;
 mod bit_strings;
 mod case;
 mod external_fn;
+mod functions;
 mod guards;
 mod numbers;
 mod patterns;
@@ -25,28 +26,28 @@ macro_rules! assert_erl {
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), $crate::type_::build_prelude(&ids));
+        let _ = modules.insert("gleam".into(), $crate::type_::build_prelude(&ids));
         let (mut ast, _) = $crate::parse::parse_module($dep_src).expect("dep syntax error");
-        ast.name = $dep_name;
+        ast.name = $dep_name.into();
         let dep = $crate::type_::infer_module(
             $crate::build::Target::JavaScript,
             &ids,
             ast,
             $crate::build::Origin::Src,
-            $dep_package,
+            &$dep_package.into(),
             &modules,
             &mut vec![],
         )
         .expect("should successfully infer");
-        let _ = modules.insert($dep_name.join("/"), dep.type_info);
+        let _ = modules.insert($dep_name.into(), dep.type_info);
         let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
-        ast.name = vec!["my".to_string(), "mod".to_string()];
+        ast.name = "my/mod".into();
         let ast = $crate::type_::infer_module(
             $crate::build::Target::Erlang,
             &ids,
             ast,
             $crate::build::Origin::Src,
-            "thepackage",
+            &"thepackage".into(),
             &modules,
             &mut vec![],
         )
@@ -65,20 +66,20 @@ macro_rules! assert_erl {
             uid::UniqueIdGenerator,
         };
         let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
-        ast.name = vec!["the_app".to_string()];
+        ast.name = "the_app".into();
         let mut modules = im::HashMap::new();
         let ids = UniqueIdGenerator::new();
         // DUPE: preludeinsertion
         // TODO: Currently we do this here and also in the tests. It would be better
         // to have one place where we create all this required state for use in each
         // place.
-        let _ = modules.insert("gleam".to_string(), build_prelude(&ids));
+        let _ = modules.insert("gleam".into(), build_prelude(&ids));
         let ast = infer_module(
             $crate::build::Target::Erlang,
             &ids,
             ast,
             Origin::Src,
-            "thepackage",
+            &"thepackage".into(),
             &modules,
             &mut vec![],
         )

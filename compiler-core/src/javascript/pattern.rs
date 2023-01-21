@@ -1,7 +1,12 @@
 use super::{expression::is_js_scalar, *};
 use crate::type_::{FieldMap, PatternConstructor};
+use lazy_static::lazy_static;
 
 pub static ASSIGNMENT_VAR: &str = "$";
+
+lazy_static! {
+    pub static ref ASSIGNMENT_VAR_SMOL_STR: SmolStr = ASSIGNMENT_VAR.into();
+}
 
 #[derive(Debug)]
 enum Index<'a> {
@@ -62,11 +67,11 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
         }
     }
 
-    fn next_local_var(&mut self, name: &'a str) -> Document<'a> {
+    fn next_local_var(&mut self, name: &'a SmolStr) -> Document<'a> {
         self.expression_generator.next_local_var(name)
     }
 
-    fn local_var(&mut self, name: &'a str) -> Document<'a> {
+    fn local_var(&mut self, name: &'a SmolStr) -> Document<'a> {
         self.expression_generator.local_var(name)
     }
 
@@ -361,7 +366,7 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
                 self.push_string_prefix_check(subject.clone(), left_side_string);
                 self.push_string_prefix_slice(left_side_string.len());
                 if let AssignName::Variable(right) = right_side_assignment {
-                    self.push_assignment(subject.clone(), right.as_ref());
+                    self.push_assignment(subject.clone(), right);
                 }
                 self.pop();
                 Ok(())
@@ -438,7 +443,7 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
                                 Ok(())
                             }
                             _ => Err(Error::Unsupported {
-                                feature: "This bit string size option in patterns".to_string(),
+                                feature: "This bit string size option in patterns".into(),
                                 location: segment.location,
                             }),
                         },
@@ -460,7 +465,7 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
                         }
 
                         _ => Err(Error::Unsupported {
-                            feature: "This bit string segment option in patterns".to_string(),
+                            feature: "This bit string segment option in patterns".into(),
                             location: segment.location,
                         }),
                     }?;
@@ -470,13 +475,13 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
                 Ok(())
             }
             Pattern::VarUsage { location, .. } => Err(Error::Unsupported {
-                feature: "Bit string matching".to_string(),
+                feature: "Bit string matching".into(),
                 location: *location,
             }),
         }
     }
 
-    fn push_assignment(&mut self, subject: Document<'a>, name: &'a str) {
+    fn push_assignment(&mut self, subject: Document<'a>, name: &'a SmolStr) {
         let var = self.next_local_var(name);
         let path = self.path_document();
         self.assignments.push(Assignment {
@@ -742,7 +747,7 @@ pub(crate) fn assign_subject<'a>(
         // If it's not a variable we need to assign it to a variable
         // to avoid rendering the subject expression multiple times
         _ => {
-            let subject = expression_generator.next_local_var(ASSIGNMENT_VAR);
+            let subject = expression_generator.next_local_var(&ASSIGNMENT_VAR_SMOL_STR);
             (subject.clone(), Some(subject))
         }
     }

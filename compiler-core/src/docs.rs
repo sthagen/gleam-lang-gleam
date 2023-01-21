@@ -16,6 +16,7 @@ use askama::Template;
 use itertools::Itertools;
 use serde::Serialize;
 use serde_json::to_string as serde_to_string;
+use smol_str::SmolStr;
 
 const MAX_COLUMNS: isize = 65;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -51,7 +52,7 @@ pub fn generate_html(
     });
 
     let repo_link = config.repository.url().map(|path| Link {
-        name: "Repository".to_string(),
+        name: "Repository".into(),
         path,
     });
 
@@ -403,7 +404,7 @@ fn page_unnest(path: &str) -> String {
         .map(|_| "..")
         .join("/");
     if unnest.is_empty() {
-        ".".to_string()
+        ".".into()
     } else {
         unnest
     }
@@ -490,17 +491,17 @@ fn function<'a>(
     }
 }
 
-fn text_documentation(doc: &Option<String>) -> String {
+fn text_documentation(doc: &Option<SmolStr>) -> String {
     let raw_text = doc
         .as_ref()
         .map(|it| it.to_string())
-        .unwrap_or_else(|| "".to_string());
+        .unwrap_or_else(|| "".into());
 
     // TODO: parse markdown properly and extract the text nodes
     raw_text.replace("```gleam", "").replace("```", "")
 }
 
-fn markdown_documentation(doc: &Option<String>) -> String {
+fn markdown_documentation(doc: &Option<SmolStr>) -> String {
     doc.as_deref().map(render_markdown).unwrap_or_default()
 }
 
@@ -705,7 +706,7 @@ struct ModuleTemplate<'a> {
     gleam_version: &'a str,
     unnest: String,
     page_title: &'a str,
-    module_name: String,
+    module_name: SmolStr,
     project_name: &'a str,
     project_version: &'a str,
     pages: &'a [Link],

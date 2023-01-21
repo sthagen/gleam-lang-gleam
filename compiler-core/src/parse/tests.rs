@@ -12,7 +12,7 @@ macro_rules! assert_error {
     ($src:expr) => {
         let result = crate::parse::parse_expression_sequence($src).expect_err("should not parse");
         let error = crate::error::Error::Parse {
-            src: $src.to_string(),
+            src: $src.into(),
             path: PathBuf::from("/src/parse/error.gleam"),
             error: result,
         };
@@ -144,9 +144,7 @@ fn name_tests() {
         ParseError {
             error: ParseErrorType::LexError {
                 error: LexicalError {
-                    error: LexicalErrorType::BadName {
-                        name: "xS".to_string()
-                    },
+                    error: LexicalErrorType::BadName { name: "xS".into() },
                     location: SrcSpan { start: 4, end: 6 },
                 }
             },
@@ -159,9 +157,7 @@ fn name_tests() {
         ParseError {
             error: ParseErrorType::LexError {
                 error: LexicalError {
-                    error: LexicalErrorType::BadDiscardName {
-                        name: "_xS".to_string()
-                    },
+                    error: LexicalErrorType::BadDiscardName { name: "_xS".into() },
                     location: SrcSpan { start: 4, end: 7 },
                 }
             },
@@ -174,9 +170,7 @@ fn name_tests() {
         ParseError {
             error: ParseErrorType::LexError {
                 error: LexicalError {
-                    error: LexicalErrorType::BadUpname {
-                        name: "S_m".to_string()
-                    },
+                    error: LexicalErrorType::BadUpname { name: "S_m".into() },
                     location: SrcSpan { start: 5, end: 8 },
                 }
             },
@@ -223,8 +217,8 @@ False -> 0
         ParseError {
             location: SrcSpan { start: 36, end: 37 },
             error: ParseErrorType::UnexpectedToken {
-                expected: vec!["\"->\"".to_string()],
-                hint: Some("Did you mean to wrap a multi line clause in curly braces?".to_string())
+                expected: vec!["\"->\"".into()],
+                hint: Some("Did you mean to wrap a multi line clause in curly braces?".into())
             },
         }
     );
@@ -360,4 +354,10 @@ fn assign_left_hand_side_of_concat_pattern() {
         }
         "#
     );
+}
+
+// https://github.com/gleam-lang/gleam/issues/1890
+#[test]
+fn valueless_list_spread_expression() {
+    assert_error!(r#"let x = [1, 2, 3, ..]"#);
 }

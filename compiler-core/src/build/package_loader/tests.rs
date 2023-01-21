@@ -1,3 +1,5 @@
+use smol_str::SmolStr;
+
 use super::*;
 use crate::{
     io::{memory::InMemoryFileSystem, FileSystemWriter},
@@ -7,8 +9,8 @@ use std::time::Duration;
 
 #[derive(Debug)]
 struct LoaderTestOutput {
-    to_compile: Vec<String>,
-    cached: Vec<String>,
+    to_compile: Vec<SmolStr>,
+    cached: Vec<SmolStr>,
 }
 
 fn write_src(fs: &InMemoryFileSystem, path: &str, seconds: u64, src: &str) {
@@ -17,7 +19,7 @@ fn write_src(fs: &InMemoryFileSystem, path: &str, seconds: u64, src: &str) {
     fs.set_modification_time(&path, SystemTime::UNIX_EPOCH + Duration::from_secs(seconds));
 }
 
-fn write_cache(fs: &InMemoryFileSystem, name: &str, seconds: u64, deps: Vec<String>) {
+fn write_cache(fs: &InMemoryFileSystem, name: &str, seconds: u64, deps: Vec<SmolStr>) {
     let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(seconds);
     let cache_metadata = CacheMetadata {
         mtime,
@@ -28,7 +30,7 @@ fn write_cache(fs: &InMemoryFileSystem, name: &str, seconds: u64, deps: Vec<Stri
     fs.write_bytes(&path, &cache_metadata.to_binary()).unwrap();
 
     let cache = crate::type_::Module {
-        name: vec![name.to_string()],
+        name: name.into(),
         origin: Origin::Src,
         package: "my_package".into(),
         types: Default::default(),
@@ -54,7 +56,7 @@ fn run_loader(fs: InMemoryFileSystem, root: &Path, artefact: &Path) -> LoaderTes
         root: &root,
         codegen: CodegenRequired::Yes,
         artefact_directory: &artefact,
-        package_name: "my_package",
+        package_name: &"my_package".into(),
         target: Target::JavaScript,
         already_defined_modules: &mut defined,
     };
@@ -62,11 +64,7 @@ fn run_loader(fs: InMemoryFileSystem, root: &Path, artefact: &Path) -> LoaderTes
 
     LoaderTestOutput {
         to_compile: loaded.to_compile.into_iter().map(|m| m.name).collect(),
-        cached: loaded
-            .cached
-            .into_iter()
-            .map(|m| m.name.join("/"))
-            .collect(),
+        cached: loaded.cached.into_iter().map(|m| m.name).collect(),
     }
 }
 
@@ -90,7 +88,7 @@ fn one_src_module() {
     write_src(&fs, "/src/main.gleam", 0, "const x = 1");
 
     let loaded = run_loader(fs, root, artefact);
-    assert_eq!(loaded.to_compile, vec!["main".to_string()]);
+    assert_eq!(loaded.to_compile, vec![SmolStr::new("main")]);
     assert!(loaded.cached.is_empty());
 }
 
@@ -103,7 +101,7 @@ fn one_test_module() {
     write_src(&fs, "/test/main.gleam", 0, "const x = 1");
 
     let loaded = run_loader(fs, root, artefact);
-    assert_eq!(loaded.to_compile, vec!["main".to_string()]);
+    assert_eq!(loaded.to_compile, vec![SmolStr::new("main")]);
     assert!(loaded.cached.is_empty());
 }
 
@@ -120,7 +118,11 @@ fn importing() {
     let loaded = run_loader(fs, root, artefact);
     assert_eq!(
         loaded.to_compile,
-        vec!["one".to_string(), "two".to_string(), "three".to_string()]
+        vec![
+            SmolStr::new("one"),
+            SmolStr::new("two"),
+            SmolStr::new("three")
+        ]
     );
     assert!(loaded.cached.is_empty());
 }
@@ -136,7 +138,7 @@ fn reading_cache() {
 
     let loaded = run_loader(fs, root, artefact);
     assert!(loaded.to_compile.is_empty());
-    assert_eq!(loaded.cached, vec!["one".to_string()]);
+    assert_eq!(loaded.cached, vec![SmolStr::new("one")]);
 }
 
 #[test]
@@ -149,7 +151,7 @@ fn module_is_stale_if_cache_older() {
     write_cache(&fs, "one", 0, vec![]);
 
     let loaded = run_loader(fs, root, artefact);
-    assert_eq!(loaded.to_compile, vec!["one".to_string()]);
+    assert_eq!(loaded.to_compile, vec![SmolStr::new("one")]);
     assert!(loaded.cached.is_empty());
 }
 
@@ -165,7 +167,7 @@ fn module_is_stale_if_deps_are_stale() {
 
     // Cache is fresh but dep is stale
     write_src(&fs, "/src/two.gleam", 1, "import one");
-    write_cache(&fs, "two", 2, vec!["one".to_string()]);
+    write_cache(&fs, "two", 2, vec![SmolStr::new("one")]);
 
     // Cache is fresh
     write_src(&fs, "/src/three.gleam", 1, "");
@@ -174,7 +176,7 @@ fn module_is_stale_if_deps_are_stale() {
     let loaded = run_loader(fs, root, artefact);
     assert_eq!(
         loaded.to_compile,
-        vec!["one".to_string(), "two".to_string()]
+        vec![SmolStr::new("one"), SmolStr::new("two")]
     );
-    assert_eq!(loaded.cached, vec!["three".to_string()]);
+    assert_eq!(loaded.cached, vec![SmolStr::new("three")]);
 }

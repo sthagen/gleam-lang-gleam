@@ -3,17 +3,16 @@ use crate::{
     diagnostic::{self, Diagnostic, Location},
     type_,
 };
+use smol_str::SmolStr;
 use std::io::Write;
 use std::path::PathBuf;
 use termcolor::Buffer;
-
-pub type Src = String;
 
 #[derive(Debug, PartialEq)]
 pub enum Warning {
     Type {
         path: PathBuf,
-        src: Src,
+        src: SmolStr,
         warning: crate::type_::Warning,
     },
 }
@@ -59,7 +58,7 @@ expression.",
                         level: diagnostic::Level::Warning,
                         location: Some(Location {
                             path: path.to_path_buf(),
-                            src: src.to_string(),
+                            src: src.clone(),
                             label: diagnostic::Label {
                                 text: Some("This code is incomplete".into()),
                                 span: *location,
@@ -77,7 +76,7 @@ expression.",
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
                         path: path.to_path_buf(),
-                        src: src.to_string(),
+                        src: src.clone(),
                         label: diagnostic::Label {
                             text: Some("The Result value created here is unused".into()),
                             span: *location,
@@ -93,7 +92,7 @@ expression.",
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
                         path: path.to_path_buf(),
-                        src: src.to_string(),
+                        src: src.clone(),
                         label: diagnostic::Label {
                             text: Some("This value is never used".into()),
                             span: *location,
@@ -111,7 +110,7 @@ expression.",
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
                         path: path.to_path_buf(),
-                        src: src.to_string(),
+                        src: src.clone(),
                         label: diagnostic::Label {
                             text: Some("This record update doesn't change any fields.".into()),
                             span: *location,
@@ -126,7 +125,7 @@ expression.",
                     hint: Some("It is better style to use the record creation syntax.".into()),
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
-                        src: src.to_string(),
+                        src: src.clone(),
                         path: path.to_path_buf(),
                         label: diagnostic::Label {
                             text: Some("This record update specifies all fields".into()),
@@ -155,7 +154,7 @@ expression.",
                         hint: Some("You can safely remove it.".into()),
                         level: diagnostic::Level::Warning,
                         location: Some(Location {
-                            src: src.to_string(),
+                            src: src.clone(),
                             path: path.to_path_buf(),
                             label: diagnostic::Label {
                                 text: Some(label),
@@ -185,7 +184,7 @@ expression.",
                         hint: Some("You can safely remove it.".into()),
                         level: diagnostic::Level::Warning,
                         location: Some(Location {
-                            src: src.to_string(),
+                            src: src.clone(),
                             path: path.to_path_buf(),
                             label: diagnostic::Label {
                                 text: Some(label),
@@ -202,7 +201,7 @@ expression.",
                     hint: Some("You can safely remove it.".into()),
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
-                        src: src.to_string(),
+                        src: src.clone(),
                         path: path.to_path_buf(),
                         label: diagnostic::Label {
                             text: Some("This imported module is never used.".into()),
@@ -218,7 +217,7 @@ expression.",
                     hint: Some("You can safely remove it.".into()),
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
-                        src: src.to_string(),
+                        src: src.clone(),
                         path: path.to_path_buf(),
                         label: diagnostic::Label {
                             text: Some("This imported value is never used.".into()),
@@ -234,7 +233,7 @@ expression.",
                     hint: Some("You can safely remove it.".into()),
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
-                        src: src.to_string(),
+                        src: src.clone(),
                         path: path.to_path_buf(),
                         label: diagnostic::Label {
                             text: Some("This private constant is never used.".into()),
@@ -250,7 +249,7 @@ expression.",
                     hint: Some("You can safely remove it.".into()),
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
-                        src: src.to_string(),
+                        src: src.clone(),
                         path: path.to_path_buf(),
                         label: diagnostic::Label {
                             text: Some("This private function is never used.".into()),
@@ -269,7 +268,7 @@ expression.",
                     )),
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
-                        src: src.to_string(),
+                        src: src.clone(),
                         path: path.to_path_buf(),
                         label: diagnostic::Label {
                             text: Some("This variable is never used.".into()),

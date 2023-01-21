@@ -181,7 +181,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 arguments: args,
             } => self.infer_record_update(*constructor, spread, args, location),
 
-            UntypedExpr::Negate { location, value } => self.infer_negate(location, value),
+            UntypedExpr::Negate { location, value } => self.infer_negate(location, *value),
 
             UntypedExpr::Use(use_) => {
                 let location = use_.location;
@@ -198,7 +198,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         &mut self,
         location: SrcSpan,
         kind: TodoKind,
-        label: Option<String>,
+        label: Option<SmolStr>,
     ) -> TypedExpr {
         let typ = self.new_unbound_var();
         self.environment.warnings.push(Warning::Todo {
@@ -214,7 +214,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
     }
 
-    fn infer_string(&mut self, value: String, location: SrcSpan) -> TypedExpr {
+    fn infer_string(&mut self, value: SmolStr, location: SrcSpan) -> TypedExpr {
         TypedExpr::String {
             location,
             value,
@@ -222,7 +222,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
     }
 
-    fn infer_int(&mut self, value: String, location: SrcSpan) -> TypedExpr {
+    fn infer_int(&mut self, value: SmolStr, location: SrcSpan) -> TypedExpr {
         TypedExpr::Int {
             location,
             value,
@@ -230,7 +230,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
     }
 
-    fn infer_float(&mut self, value: String, location: SrcSpan) -> TypedExpr {
+    fn infer_float(&mut self, value: SmolStr, location: SrcSpan) -> TypedExpr {
         TypedExpr::Float {
             location,
             value,
@@ -358,12 +358,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
-    fn infer_negate(
-        &mut self,
-        location: SrcSpan,
-        value: Box<UntypedExpr>,
-    ) -> Result<TypedExpr, Error> {
-        let value = self.infer(*value)?;
+    fn infer_negate(&mut self, location: SrcSpan, value: UntypedExpr) -> Result<TypedExpr, Error> {
+        let value = self.infer(value)?;
 
         unify(bool(), value.type_()).map_err(|e| convert_unify_error(e, value.location()))?;
 
@@ -493,7 +489,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             typ,
         })
     }
-    fn infer_var(&mut self, name: String, location: SrcSpan) -> Result<TypedExpr, Error> {
+
+    fn infer_var(&mut self, name: SmolStr, location: SrcSpan) -> Result<TypedExpr, Error> {
         let constructor = self.infer_value_constructor(&None, &name, &location)?;
         Ok(TypedExpr::Var {
             constructor,
@@ -505,7 +502,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     fn infer_field_access(
         &mut self,
         container: UntypedExpr,
-        label: String,
+        label: SmolStr,
         access_location: SrcSpan,
         usage: FieldAccessUsage,
     ) -> Result<TypedExpr, Error> {
@@ -748,6 +745,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 return Err(Error::NotExhaustivePatternMatch {
                     location,
                     unmatched,
+                    kind: PatternMatchKind::Assignment,
                 });
             }
         }
@@ -854,6 +852,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             return Err(Error::NotExhaustivePatternMatch {
                 location,
                 unmatched,
+                kind: PatternMatchKind::Case,
             });
         }
 
@@ -1227,8 +1226,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     fn infer_module_access(
         &mut self,
-        module_alias: &str,
-        label: String,
+        module_alias: &SmolStr,
+        label: SmolStr,
         module_location: &SrcSpan,
         select_location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
@@ -1238,14 +1237,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 .imported_modules
                 .get(module_alias)
                 .ok_or_else(|| Error::UnknownModule {
-                    name: module_alias.to_string(),
+                    name: module_alias.clone(),
                     location: *module_location,
-                    imported_modules: self
-                        .environment
-                        .imported_modules
-                        .keys()
-                        .map(|t| t.to_string())
-                        .collect(),
+                    imported_modules: self.environment.imported_modules.keys().cloned().collect(),
                 })?;
 
             let constructor =
@@ -1259,7 +1253,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             end: select_location.end,
                         },
                         module_name: module.name.clone(),
-                        value_constructors: module.values.keys().map(|t| t.to_string()).collect(),
+                        value_constructors: module.values.keys().cloned().collect(),
                     })?;
 
             // Register this imported module as having been used, to inform
@@ -1287,8 +1281,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             label,
             typ: Arc::clone(&type_),
             location: select_location,
-            module_name: module_name.join("/"),
-            module_alias: module_alias.to_string(),
+            module_name,
+            module_alias: module_alias.clone(),
             constructor,
         })
     }
@@ -1296,7 +1290,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     fn infer_record_access(
         &mut self,
         record: UntypedExpr,
-        label: String,
+        label: SmolStr,
         location: SrcSpan,
         usage: FieldAccessUsage,
     ) -> Result<TypedExpr, Error> {
@@ -1309,7 +1303,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     fn infer_known_record_access(
         &mut self,
         record: TypedExpr,
-        label: String,
+        label: SmolStr,
         location: SrcSpan,
         usage: FieldAccessUsage,
     ) -> Result<TypedExpr, Error> {
@@ -1342,7 +1336,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             Type::App { module, name, .. } => self
                 .environment
                 .importable_modules
-                .get(&module.join("/"))
+                .get(module)
                 .and_then(|module| module.accessors.get(name)),
 
             _something_without_fields => return Err(unknown_field(vec![])),
@@ -1357,9 +1351,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         } = accessors
             .accessors
             .get(&label)
-            .ok_or_else(|| {
-                unknown_field(accessors.accessors.keys().map(|t| t.to_string()).collect())
-            })?
+            .ok_or_else(|| unknown_field(accessors.accessors.keys().cloned().collect()))?
             .clone();
 
         // Unify the record type with the accessor's stored copy of the record type.
@@ -1461,7 +1453,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     let value = self.infer(value.clone())?;
                     let spread_field = self.infer_known_record_access(
                         spread.clone(),
-                        label.to_string(),
+                        label.clone(),
                         *location,
                         FieldAccessUsage::Other,
                     )?;
@@ -1479,7 +1471,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         ),
                         Some(p) => Ok(TypedRecordUpdateArg {
                             location: *location,
-                            label: label.to_string(),
+                            label: label.clone(),
                             value,
                             index: *p,
                         }),
@@ -1510,8 +1502,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     fn infer_value_constructor(
         &mut self,
-        module: &Option<String>,
-        name: &str,
+        module: &Option<SmolStr>,
+        name: &SmolStr,
         location: &SrcSpan,
     ) -> Result<ValueConstructor, Error> {
         let constructor = match module {
@@ -1523,7 +1515,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         .cloned()
                         .ok_or_else(|| Error::UnknownVariable {
                             location: *location,
-                            name: name.to_string(),
+                            name: name.clone(),
                             variables: self.environment.local_value_names(),
                         })?;
 
@@ -1553,12 +1545,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     .get(module_name)
                     .ok_or_else(|| Error::UnknownModule {
                         location: *location,
-                        name: module_name.to_string(),
+                        name: module_name.clone(),
                         imported_modules: self
                             .environment
                             .imported_modules
                             .keys()
-                            .map(|t| t.to_string())
+                            .cloned()
                             .collect(),
                     })?;
                 module
@@ -1567,9 +1559,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     .cloned()
                     .ok_or_else(|| Error::UnknownModuleValue {
                         location: *location,
-                        module_name: vec![module_name.to_string()],
-                        name: name.to_string(),
-                        value_constructors: module.values.keys().map(|t| t.to_string()).collect(),
+                        module_name: module_name.clone(),
+                        name: name.clone(),
+                        value_constructors: module.values.keys().cloned().collect(),
                     })?
             }
         };
@@ -1706,11 +1698,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         let module_name = self
                             .environment
                             .imported_modules
+                            // TODO: remove
                             .get(module_alias)
                             .expect("Failed to find previously located module import")
                             .1
                             .name
-                            .join("/");
+                            .clone();
                         let module_value_constructor = ModuleValueConstructor::Record {
                             name: name.clone(),
                             field_map: field_map.clone(),
@@ -1873,7 +1866,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 module_alias,
                 label,
                 ..
-            } => (Some(module_alias), label),
+            } => (Some(SmolStr::from(module_alias.as_str())), label),
 
             TypedExpr::Var { name, .. } => (None, name),
 
@@ -1882,7 +1875,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         Ok(self
             .environment
-            .get_value_constructor(module, name)?
+            .get_value_constructor(module.as_ref(), name)?
             .field_map())
     }
 
@@ -2027,16 +2020,30 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         return_type: Option<Arc<Type>>,
     ) -> Result<(Vec<TypedArg>, TypedExpr), Error> {
         let (body_rigid_names, body_infer) = self.in_new_scope(|body_typer| {
+            // Used to track if any argument names are used more than once
+            let mut argument_names = HashSet::with_capacity(args.len());
+
             for (arg, t) in args.iter().zip(args.iter().map(|arg| arg.type_.clone())) {
                 match &arg.names {
                     ArgNames::Named { name } | ArgNames::NamedLabelled { name, .. } => {
-                        body_typer.environment.insert_local_variable(
-                            name.to_string(),
-                            arg.location,
-                            t,
-                        );
+                        // Check that this name has not already been used for
+                        // another argument
+                        if !argument_names.insert(name) {
+                            return Err(Error::ArgumentNameAlreadyUsed {
+                                location: arg.location,
+                                name: name.clone(),
+                            });
+                        }
+
+                        // Insert a variable for the argument into the environment
+                        body_typer
+                            .environment
+                            .insert_local_variable(name.clone(), arg.location, t);
+
+                        // Register the variable in the usage tracker so that we
+                        // can identify if it is unused
                         body_typer.environment.init_usage(
-                            name.to_string(),
+                            name.clone(),
                             EntityKind::Variable,
                             arg.location,
                         );
@@ -2045,8 +2052,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 };
             }
 
-            (body_typer.hydrator.rigid_names(), body_typer.infer(body))
-        });
+            Ok((body_typer.hydrator.rigid_names(), body_typer.infer(body)))
+        })?;
 
         let body = body_infer.map_err(|e| e.with_unify_error_rigid_names(&body_rigid_names))?;
 
@@ -2066,8 +2073,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         &mut self,
         subjects_count: usize,
         subjects: &[Arc<Type>],
-        typed_clauses: &[Clause<TypedExpr, PatternConstructor, Arc<Type>, String>],
-    ) -> Result<(), Vec<String>> {
+        typed_clauses: &[Clause<TypedExpr, PatternConstructor, Arc<Type>, SmolStr>],
+    ) -> Result<(), Vec<SmolStr>> {
         // Because exhaustiveness checking in presence of multiple subjects is similar
         // to full exhaustiveness checking of tuples or other nested record patterns,
         // and we currently only do only limited exhaustiveness checking of custom types

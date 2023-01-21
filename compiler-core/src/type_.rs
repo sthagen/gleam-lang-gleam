@@ -1,11 +1,11 @@
-mod environment;
-mod error;
-mod expression;
-mod fields;
-mod hydrator;
-mod pattern;
-mod pipe;
-mod prelude;
+pub(crate) mod environment;
+pub(crate) mod error;
+pub(crate) mod expression;
+pub(crate) mod fields;
+pub(crate) mod hydrator;
+pub(crate) mod pattern;
+pub(crate) mod pipe;
+pub(crate) mod prelude;
 pub mod pretty;
 #[cfg(test)]
 mod tests;
@@ -15,6 +15,7 @@ pub use error::{Error, UnifyErrorSituation, Warning};
 pub(crate) use expression::ExprTyper;
 pub use fields::FieldMap;
 pub use prelude::*;
+use smol_str::SmolStr;
 
 use crate::{
     ast::{
@@ -57,8 +58,8 @@ pub enum Type {
     ///
     App {
         public: bool,
-        module: Vec<String>,
-        name: String,
+        module: SmolStr,
+        name: SmolStr,
         args: Vec<Arc<Type>>,
     },
 
@@ -159,10 +160,11 @@ impl Type {
     ///
     /// This function is currently only used for finding the `List` type.
     ///
+    // TODO: specialise this to just List.
     pub fn get_app_args(
         &self,
         public: bool,
-        module: &[String],
+        module: &str,
         name: &str,
         arity: usize,
         environment: &mut Environment<'_>,
@@ -198,8 +200,8 @@ impl Type {
                 // to the desired type.
                 *typ.borrow_mut() = TypeVar::Link {
                     type_: Arc::new(Self::App {
-                        name: name.to_string(),
-                        module: module.to_owned(),
+                        name: name.into(),
+                        module: module.into(),
                         args: args.clone(),
                         public,
                     }),
@@ -254,14 +256,14 @@ pub fn collapse_links(t: Arc<Type>) -> Arc<Type> {
 pub struct AccessorsMap {
     pub public: bool,
     pub type_: Arc<Type>,
-    pub accessors: HashMap<String, RecordAccessor>,
+    pub accessors: HashMap<SmolStr, RecordAccessor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordAccessor {
     // TODO: smaller int. Doesn't need to be this big
     pub index: u64,
-    pub label: String,
+    pub label: SmolStr,
     pub type_: Arc<Type>,
 }
 
@@ -273,26 +275,26 @@ pub enum ValueConstructorVariant {
     /// A module constant
     ModuleConstant {
         location: SrcSpan,
-        module: String,
-        literal: Constant<Arc<Type>, String>,
+        module: SmolStr,
+        literal: Constant<Arc<Type>, SmolStr>,
     },
 
     /// A function belonging to the module
     ModuleFn {
-        name: String,
+        name: SmolStr,
         field_map: Option<FieldMap>,
-        module: Vec<String>,
+        module: SmolStr,
         arity: usize,
         location: SrcSpan,
     },
 
     /// A constructor for a custom type
     Record {
-        name: String,
+        name: SmolStr,
         arity: u16,
         field_map: Option<FieldMap>,
         location: SrcSpan,
-        module: String,
+        module: SmolStr,
         constructors_count: u16,
     },
 }
@@ -301,8 +303,8 @@ impl ValueConstructorVariant {
     fn to_module_value_constructor(
         &self,
         type_: Arc<Type>,
-        module_name: &[String],
-        function_name: &str,
+        module_name: &SmolStr,
+        function_name: &SmolStr,
     ) -> ModuleValueConstructor {
         match self {
             Self::Record {
@@ -328,8 +330,8 @@ impl ValueConstructorVariant {
             },
 
             Self::LocalVariable { location, .. } => ModuleValueConstructor::Fn {
-                name: function_name.to_string(),
-                module: module_name.to_vec(),
+                name: function_name.clone(),
+                module: module_name.clone(),
                 location: *location,
             },
 
@@ -372,7 +374,7 @@ impl ValueConstructorVariant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleValueConstructor {
     Record {
-        name: String,
+        name: SmolStr,
         arity: u16,
         type_: Arc<Type>,
         field_map: Option<FieldMap>,
@@ -393,8 +395,8 @@ pub enum ModuleValueConstructor {
         ///     pub external fn wibble() -> Nil =
         ///       "other" "whoop"
         ///
-        module: Vec<String>,
-        name: String,
+        module: SmolStr,
+        name: SmolStr,
     },
 
     Constant {
@@ -415,19 +417,19 @@ impl ModuleValueConstructor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
-    pub name: Vec<String>,
+    pub name: SmolStr,
     pub origin: Origin,
-    pub package: String,
-    pub types: HashMap<String, TypeConstructor>,
-    pub types_constructors: HashMap<String, Vec<String>>,
-    pub values: HashMap<String, ValueConstructor>,
-    pub accessors: HashMap<String, AccessorsMap>,
+    pub package: SmolStr,
+    pub types: HashMap<SmolStr, TypeConstructor>,
+    pub types_constructors: HashMap<SmolStr, Vec<SmolStr>>,
+    pub values: HashMap<SmolStr, ValueConstructor>,
+    pub accessors: HashMap<SmolStr, AccessorsMap>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatternConstructor {
     Record {
-        name: String,
+        name: SmolStr,
         field_map: Option<FieldMap>,
     },
 }
@@ -508,7 +510,7 @@ impl TypeVar {
 pub struct TypeConstructor {
     pub public: bool,
     pub origin: SrcSpan,
-    pub module: Vec<String>,
+    pub module: SmolStr,
     pub parameters: Vec<Arc<Type>>,
     pub typ: Arc<Type>,
 }
@@ -549,7 +551,7 @@ impl ValueConstructor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeAliasConstructor {
     pub public: bool,
-    pub module: Vec<String>,
+    pub module: SmolStr,
     pub type_: Type,
     pub arity: usize,
 }
@@ -573,13 +575,13 @@ pub fn infer_module(
     ids: &UniqueIdGenerator,
     mut module: UntypedModule,
     origin: Origin,
-    package: &str,
-    modules: &im::HashMap<String, Module>,
+    package: &SmolStr,
+    modules: &im::HashMap<SmolStr, Module>,
     warnings: &mut Vec<Warning>,
 ) -> Result<TypedModule, Error> {
     let name = module.name.clone();
     let documentation = std::mem::take(&mut module.documentation);
-    let mut environment = Environment::new(ids.clone(), &name, modules, warnings);
+    let mut env = Environment::new(ids.clone(), &name, modules, warnings);
     validate_module_name(&name)?;
 
     let mut type_names = HashMap::with_capacity(module.statements.len());
@@ -590,18 +592,18 @@ pub fn infer_module(
     // We process imports first so that anything imported can be referenced
     // anywhere in the module.
     for s in module.iter_statements(target) {
-        register_import(s, &name, origin, &mut environment)?;
+        register_import(s, &name, origin, &mut env)?;
     }
 
     // Register types so they can be used in constructors and functions
     // earlier in the module.
     for s in module.iter_statements(target) {
-        register_types(s, &name, &mut hydrators, &mut type_names, &mut environment)?;
+        register_types(s, name.clone(), &mut hydrators, &mut type_names, &mut env)?;
     }
 
     // Register values so they can be used in functions earlier in the module.
     for s in module.iter_statements(target) {
-        register_values(s, &name, &mut hydrators, &mut value_names, &mut environment)?;
+        register_values(s, &name, &mut hydrators, &mut value_names, &mut env)?;
     }
 
     // Infer the types of each statement in the module
@@ -624,30 +626,27 @@ pub fn infer_module(
     }
 
     for statement in consts.into_iter().chain(not_consts) {
-        let statement = infer_statement(statement, &name, &mut hydrators, &mut environment)?;
+        let statement = infer_statement(statement, &name, &mut hydrators, &mut env)?;
         statements.push(statement);
     }
 
     // Generalise functions now that the entire module has been inferred
     let statements = statements
         .into_iter()
-        .map(|s| generalise_statement(s, &name, &mut environment))
+        .map(|s| generalise_statement(s, &name, &mut env))
         .collect();
 
     // Generate warnings for unused items
-    environment.convert_unused_to_warnings();
+    env.convert_unused_to_warnings();
 
     // Remove private and imported types and values to create the public interface
-    environment
-        .module_types
+    env.module_types
         .retain(|_, info| info.public && info.module == name);
-    environment.module_values.retain(|_, info| info.public);
-    environment
-        .accessors
-        .retain(|_, accessors| accessors.public);
+    env.module_values.retain(|_, info| info.public);
+    env.accessors.retain(|_, accessors| accessors.public);
 
     // Ensure no exported values have private types in their type signature
-    for value in environment.module_values.values() {
+    for value in env.module_values.values() {
         if let Some(leaked) = value.type_.find_private_type() {
             return Err(Error::PrivateTypeLeak {
                 location: value.variant.definition_location(),
@@ -662,7 +661,7 @@ pub fn infer_module(
         module_values: values,
         accessors,
         ..
-    } = environment;
+    } = env;
 
     Ok(ast::Module {
         documentation,
@@ -675,22 +674,20 @@ pub fn infer_module(
             values,
             accessors,
             origin,
-            package: package.to_string(),
+            package: package.clone(),
         },
     })
 }
 
-fn validate_module_name(name: &[String]) -> Result<(), Error> {
-    if name == ["gleam"] {
-        return Err(Error::ReservedModuleName {
-            name: name.join("/"),
-        });
+fn validate_module_name(name: &SmolStr) -> Result<(), Error> {
+    if name == "gleam" {
+        return Err(Error::ReservedModuleName { name: name.clone() });
     };
-    for segment in name {
+    for segment in name.split('/') {
         if crate::parse::lexer::str_to_keyword(segment).is_some() {
             return Err(Error::KeywordInModuleName {
-                name: name.join("/"),
-                keyword: segment.to_string(),
+                name: name.clone(),
+                keyword: segment.into(),
             });
         }
     }
@@ -698,13 +695,13 @@ fn validate_module_name(name: &[String]) -> Result<(), Error> {
 }
 
 fn assert_unique_value_name<'a>(
-    names: &mut HashMap<&'a str, &'a SrcSpan>,
-    name: &'a str,
+    names: &mut HashMap<&'a SmolStr, &'a SrcSpan>,
+    name: &'a SmolStr,
     location: &'a SrcSpan,
 ) -> Result<(), Error> {
     match names.insert(name, location) {
         Some(previous_location) => Err(Error::DuplicateName {
-            name: name.to_string(),
+            name: name.clone(),
             previous_location: *previous_location,
             location: *location,
         }),
@@ -713,13 +710,13 @@ fn assert_unique_value_name<'a>(
 }
 
 fn assert_unique_type_name<'a>(
-    names: &mut HashMap<&'a str, &'a SrcSpan>,
-    name: &'a str,
+    names: &mut HashMap<&'a SmolStr, &'a SrcSpan>,
+    name: &'a SmolStr,
     location: &'a SrcSpan,
 ) -> Result<(), Error> {
     match names.insert(name, location) {
         Some(previous_location) => Err(Error::DuplicateTypeName {
-            name: name.to_string(),
+            name: name.clone(),
             previous_location: *previous_location,
             location: *location,
         }),
@@ -728,13 +725,13 @@ fn assert_unique_type_name<'a>(
 }
 
 fn assert_unique_const_name<'a>(
-    names: &mut HashMap<&'a str, &'a SrcSpan>,
-    name: &'a str,
+    names: &mut HashMap<&'a SmolStr, &'a SrcSpan>,
+    name: &'a SmolStr,
     location: &'a SrcSpan,
 ) -> Result<(), Error> {
     match names.insert(name, location) {
         Some(previous_location) => Err(Error::DuplicateConstName {
-            name: name.to_string(),
+            name: name.clone(),
             previous_location: *previous_location,
             location: *location,
         }),
@@ -744,9 +741,9 @@ fn assert_unique_const_name<'a>(
 
 fn register_values<'a>(
     s: &'a UntypedStatement,
-    module_name: &[String],
-    hydrators: &mut HashMap<String, Hydrator>,
-    names: &mut HashMap<&'a str, &'a SrcSpan>,
+    module_name: &'a SmolStr,
+    hydrators: &mut HashMap<SmolStr, Hydrator>,
+    names: &mut HashMap<&'a SmolStr, &'a SrcSpan>,
     environment: &mut Environment<'_>,
 ) -> Result<(), Error> {
     match s {
@@ -759,7 +756,7 @@ fn register_values<'a>(
             ..
         } => {
             assert_unique_value_name(names, name, location)?;
-            let _ = environment.ungeneralised_functions.insert(name.to_string());
+            let _ = environment.ungeneralised_functions.insert(name.clone());
 
             // Create the field map so we can reorder labels for usage of this function
             let mut field_map = FieldMap::new(args.len() as u32);
@@ -769,7 +766,7 @@ fn register_values<'a>(
                 {
                     field_map.insert(label.clone(), i as u32).map_err(|_| {
                         Error::DuplicateField {
-                            label: label.to_string(),
+                            label: label.clone(),
                             location: *location,
                         }
                     })?;
@@ -798,7 +795,7 @@ fn register_values<'a>(
                 ValueConstructorVariant::ModuleFn {
                     name: name.clone(),
                     field_map,
-                    module: module_name.to_vec(),
+                    module: module_name.clone(),
                     arity: args.len(),
                     location: *location,
                 },
@@ -834,7 +831,7 @@ fn register_values<'a>(
                     if let Some(label) = &arg.label {
                         field_map.insert(label.clone(), i as u32).map_err(|_| {
                             Error::DuplicateField {
-                                label: label.to_string(),
+                                label: label.clone(),
                                 location: *location,
                             }
                         })?;
@@ -848,14 +845,14 @@ fn register_values<'a>(
 
             // Insert function into module
             environment.insert_module_value(
-                name,
+                name.clone(),
                 ValueConstructor {
                     public: *public,
                     type_: typ.clone(),
                     variant: ValueConstructorVariant::ModuleFn {
                         name: fun.clone(),
                         field_map: field_map.clone(),
-                        module: vec![module.clone()],
+                        module: module.clone(),
                         arity: args.len(),
                         location: *location,
                     },
@@ -867,7 +864,7 @@ fn register_values<'a>(
                 name.clone(),
                 ValueConstructorVariant::ModuleFn {
                     name: fun.clone(),
-                    module: vec![module.clone()],
+                    module: module.clone(),
                     arity: args.len(),
                     field_map,
                     location: *location,
@@ -912,7 +909,7 @@ fn register_values<'a>(
                     // `return_type_constructor` below rather than looking it up twice.
                     type_: typ.clone(),
                 };
-                environment.insert_accessors(name, map)
+                environment.insert_accessors(name.clone(), map)
             }
 
             // Check and register constructors
@@ -929,7 +926,7 @@ fn register_values<'a>(
                     if let Some(label) = label {
                         field_map.insert(label.clone(), i as u32).map_err(|_| {
                             Error::DuplicateField {
-                                label: label.to_string(),
+                                label: label.clone(),
                                 location: *location,
                             }
                         })?;
@@ -947,12 +944,12 @@ fn register_values<'a>(
                     arity: constructor.arguments.len() as u16,
                     field_map: field_map.clone(),
                     location: constructor.location,
-                    module: module_name.join("/"),
+                    module: module_name.clone(),
                 };
 
                 if !opaque {
                     environment.insert_module_value(
-                        &constructor.name,
+                        constructor.name.clone(),
                         ValueConstructor {
                             public: *public,
                             type_: typ.clone(),
@@ -990,7 +987,7 @@ fn register_values<'a>(
 
 fn generalise_statement(
     s: TypedStatement,
-    module_name: &[String],
+    module_name: &SmolStr,
     environment: &mut Environment<'_>,
 ) -> TypedStatement {
     match s {
@@ -1021,14 +1018,14 @@ fn generalise_statement(
 
             // Insert the function into the module's interface
             environment.insert_module_value(
-                &name,
+                name.clone(),
                 ValueConstructor {
                     public,
                     type_: typ,
                     variant: ValueConstructorVariant::ModuleFn {
                         name: name.clone(),
                         field_map,
-                        module: module_name.to_vec(),
+                        module: module_name.clone(),
                         arity: args.len(),
                         location,
                     },
@@ -1059,8 +1056,8 @@ fn generalise_statement(
 
 fn infer_statement(
     s: UntypedStatement,
-    module_name: &[String],
-    hydrators: &mut HashMap<String, Hydrator>,
+    module_name: &SmolStr,
+    hydrators: &mut HashMap<SmolStr, Hydrator>,
     environment: &mut Environment<'_>,
 ) -> Result<TypedStatement, Error> {
     match s {
@@ -1116,7 +1113,7 @@ fn infer_statement(
                     ValueConstructorVariant::ModuleFn {
                         name: name.clone(),
                         field_map,
-                        module: module_name.to_vec(),
+                        module: module_name.clone(),
                         arity: args.len(),
                         location,
                     },
@@ -1296,7 +1293,7 @@ fn infer_statement(
             for arg in &args {
                 let var = TypeAst::Var {
                     location,
-                    name: arg.to_string(),
+                    name: arg.clone(),
                 };
                 let _ = hydrator.type_from_ast(&var, environment)?;
             }
@@ -1316,17 +1313,14 @@ fn infer_statement(
             mut unqualified,
             ..
         } => {
-            let name = module.join("/");
             // Find imported module
-            let module_info =
-                environment
-                    .importable_modules
-                    .get(&name)
-                    .ok_or_else(|| Error::UnknownModule {
-                        location,
-                        name,
-                        imported_modules: environment.imported_modules.keys().cloned().collect(),
-                    })?;
+            let module_info = environment.importable_modules.get(&module).ok_or_else(|| {
+                Error::UnknownModule {
+                    location,
+                    name: module.clone(),
+                    imported_modules: environment.imported_modules.keys().cloned().collect(),
+                }
+            })?;
             // Record any imports that are types only as this information is
             // needed to prevent types being imported in generated JavaScript
             for import in unqualified.iter_mut() {
@@ -1359,7 +1353,7 @@ fn infer_statement(
                 variant: ValueConstructorVariant::ModuleConstant {
                     location,
                     literal: typed_expr.clone(),
-                    module: module_name.join("/"),
+                    module: module_name.clone(),
                 },
                 type_: type_.clone(),
             };
@@ -1370,7 +1364,7 @@ fn infer_statement(
                 type_.clone(),
                 public,
             );
-            environment.insert_module_value(&name, variant);
+            environment.insert_module_value(name.clone(), variant);
 
             if !public {
                 environment.init_usage(name.clone(), EntityKind::PrivateConstant, location);
@@ -1464,7 +1458,7 @@ fn assert_no_labelled_arguments<A>(args: &[CallArg<A>]) -> Result<(), Error> {
         if let Some(label) = &arg.label {
             return Err(Error::UnexpectedLabelledArg {
                 location: arg.location,
-                label: label.to_string(),
+                label: label.clone(),
             });
         }
     }
@@ -1600,7 +1594,7 @@ fn generalise(t: Arc<Type>) -> Arc<Type> {
 }
 
 fn make_type_vars(
-    args: &[String],
+    args: &[SmolStr],
     location: &SrcSpan,
     hydrator: &mut Hydrator,
     environment: &mut Environment<'_>,
@@ -1608,7 +1602,7 @@ fn make_type_vars(
     args.iter()
         .map(|arg| TypeAst::Var {
             location: *location,
-            name: arg.to_string(),
+            name: arg.clone(),
         })
         .map(|ast| hydrator.type_from_ast(&ast, environment))
         .try_collect()
@@ -1618,7 +1612,7 @@ fn custom_type_accessors<A>(
     constructors: &[RecordConstructor<A>],
     hydrator: &mut Hydrator,
     environment: &mut Environment<'_>,
-) -> Result<Option<HashMap<String, RecordAccessor>>, Error> {
+) -> Result<Option<HashMap<SmolStr, RecordAccessor>>, Error> {
     let args = get_compatible_record_fields(constructors);
 
     let mut fields = HashMap::with_capacity(args.len());
@@ -1626,10 +1620,10 @@ fn custom_type_accessors<A>(
     for (index, label, ast) in args {
         let typ = hydrator.type_from_ast(ast, environment)?;
         let _ = fields.insert(
-            label.to_string(),
+            label.clone(),
             RecordAccessor {
                 index: index as u64,
-                label: label.to_string(),
+                label: label.clone(),
                 type_: typ,
             },
         );
@@ -1641,7 +1635,7 @@ fn custom_type_accessors<A>(
 /// the given type.
 fn get_compatible_record_fields<A>(
     constructors: &[RecordConstructor<A>],
-) -> Vec<(usize, &str, &TypeAst)> {
+) -> Vec<(usize, &SmolStr, &TypeAst)> {
     let mut compatible = vec![];
 
     let first = match constructors.get(0) {
@@ -1652,7 +1646,7 @@ fn get_compatible_record_fields<A>(
     'next_argument: for (index, first_argument) in first.arguments.iter().enumerate() {
         // Fields without labels do not have accessors
         let label = match first_argument.label.as_ref() {
-            Some(label) => label.as_str(),
+            Some(label) => label,
             None => continue 'next_argument,
         };
 
@@ -1688,9 +1682,9 @@ fn get_compatible_record_fields<A>(
 /// Iterate over a module, registering any new types created by the module into the typer
 pub fn register_types<'a>(
     statement: &'a UntypedStatement,
-    module: &[String],
-    hydrators: &mut HashMap<String, Hydrator>,
-    names: &mut HashMap<&'a str, &'a SrcSpan>,
+    module: SmolStr,
+    hydrators: &mut HashMap<SmolStr, Hydrator>,
+    names: &mut HashMap<&'a SmolStr, &'a SrcSpan>,
     environment: &mut Environment<'_>,
 ) -> Result<(), Error> {
     match statement {
@@ -1708,7 +1702,7 @@ pub fn register_types<'a>(
             let parameters = make_type_vars(args, location, &mut hydrator, environment)?;
             let typ = Arc::new(Type::App {
                 public: *public,
-                module: module.to_owned(),
+                module: module.as_str().into(),
                 name: name.clone(),
                 args: parameters.clone(),
             });
@@ -1718,7 +1712,7 @@ pub fn register_types<'a>(
                 name.clone(),
                 TypeConstructor {
                     origin: *location,
-                    module: module.to_owned(),
+                    module,
                     public: *public,
                     parameters,
                     typ,
@@ -1750,13 +1744,13 @@ pub fn register_types<'a>(
                 name: name.clone(),
                 args: parameters.clone(),
             });
-            let _ = hydrators.insert(name.to_string(), hydrator);
+            let _ = hydrators.insert(name.clone(), hydrator);
 
             environment.insert_type_constructor(
                 name.clone(),
                 TypeConstructor {
                     origin: *location,
-                    module: module.to_owned(),
+                    module,
                     public: *public,
                     parameters,
                     typ,
@@ -1795,7 +1789,7 @@ pub fn register_types<'a>(
                 name.clone(),
                 TypeConstructor {
                     origin: *location,
-                    module: module.to_owned(),
+                    module,
                     public: *public,
                     parameters,
                     typ,
@@ -1819,7 +1813,7 @@ pub fn register_types<'a>(
 
 pub fn register_import(
     s: &UntypedStatement,
-    current_module: &[String],
+    current_module: &str,
     origin: Origin,
     environment: &mut Environment<'_>,
 ) -> Result<(), Error> {
@@ -1831,7 +1825,7 @@ pub fn register_import(
             location,
             ..
         } => {
-            let name = module.join("/");
+            let name = module.clone();
             // Find imported module
             let module_info =
                 environment
@@ -1846,7 +1840,7 @@ pub fn register_import(
             if origin.is_src() && !module_info.origin.is_src() {
                 return Err(Error::SrcImportingTest {
                     location: *location,
-                    src_module: current_module.join("/"),
+                    src_module: current_module.into(),
                     test_module: name,
                 });
             }
@@ -1854,9 +1848,9 @@ pub fn register_import(
             // Determine local alias of imported module
             let module_name = as_name
                 .as_ref()
-                .or_else(|| module.last())
-                .expect("Typer could not identify module name.")
-                .clone();
+                .cloned()
+                .or_else(|| module.split('/').last().map(|s| s.into()))
+                .expect("Typer could not identify module name.");
 
             // Insert unqualified imports into scope
             for UnqualifiedImport {
@@ -1877,7 +1871,7 @@ pub fn register_import(
                     return Err(Error::DuplicateImport {
                         location: *location,
                         previous_location: *previous,
-                        name: name.to_string(),
+                        name: name.clone(),
                     });
                 }
 
@@ -1915,26 +1909,26 @@ pub fn register_import(
 
                 if value_imported && type_imported {
                     environment.init_usage(
-                        imported_name.to_string(),
+                        imported_name.clone(),
                         EntityKind::ImportedTypeAndConstructor,
                         *location,
                     );
                 } else if type_imported {
-                    let _ = environment.imported_types.insert(imported_name.to_string());
+                    let _ = environment.imported_types.insert(imported_name.clone());
                     environment.init_usage(
-                        imported_name.to_string(),
+                        imported_name.clone(),
                         EntityKind::ImportedType,
                         *location,
                     );
                 } else if value_imported {
                     match variant {
                         Some(&ValueConstructorVariant::Record { .. }) => environment.init_usage(
-                            imported_name.to_string(),
+                            imported_name.clone(),
                             EntityKind::ImportedConstructor,
                             *location,
                         ),
                         _ => environment.init_usage(
-                            imported_name.to_string(),
+                            imported_name.clone(),
                             EntityKind::ImportedValue,
                             *location,
                         ),
@@ -1945,16 +1939,8 @@ pub fn register_import(
                         location: *location,
                         name: name.clone(),
                         module_name: module.clone(),
-                        value_constructors: module_info
-                            .values
-                            .keys()
-                            .map(|t| t.to_string())
-                            .collect(),
-                        type_constructors: module_info
-                            .types
-                            .keys()
-                            .map(|t| t.to_string())
-                            .collect(),
+                        value_constructors: module_info.values.keys().cloned().collect(),
+                        type_constructors: module_info.types.keys().cloned().collect(),
                     });
                 }
             }
@@ -1972,7 +1958,7 @@ pub fn register_import(
                 return Err(Error::DuplicateImport {
                     location: *location,
                     previous_location: *previous_location,
-                    name: module_name,
+                    name: module_name.clone(),
                 });
             }
 

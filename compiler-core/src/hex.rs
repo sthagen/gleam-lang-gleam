@@ -35,7 +35,7 @@ pub fn resolve_versions(
     tracing::info!("resolving_versions");
     hexpm::version::resolve_versions(
         package_fetcher,
-        config.name.clone(),
+        config.name.to_string(),
         specified_dependencies,
         &locked,
     )
@@ -253,7 +253,7 @@ impl Downloader {
         }
 
         Err(Error::ExpandTar {
-            error: "Unable to locate Hex package contents.tar.gz".to_string(),
+            error: "Unable to locate Hex package contents.tar.gz".into(),
         })
     }
 

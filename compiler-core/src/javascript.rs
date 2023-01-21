@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::{ast::*, docvec, line_numbers::LineNumbers, pretty::*};
 use itertools::Itertools;
+use smol_str::SmolStr;
 
 use self::import::{Imports, Member};
 
@@ -24,12 +25,15 @@ pub struct Generator<'a> {
     line_numbers: &'a LineNumbers,
     module: &'a TypedModule,
     tracker: UsageTracker,
-    module_scope: im::HashMap<String, usize>,
+    module_scope: im::HashMap<SmolStr, usize>,
+    current_module_name_segments_count: usize,
 }
 
 impl<'a> Generator<'a> {
     pub fn new(line_numbers: &'a LineNumbers, module: &'a TypedModule) -> Self {
+        let current_module_name_segments_count = module.name.split('/').count();
         Self {
+            current_module_name_segments_count,
             line_numbers,
             module,
             tracker: UsageTracker::default(),
@@ -136,7 +140,7 @@ impl<'a> Generator<'a> {
         name: &'static str,
         alias: Option<&'static str>,
     ) {
-        let path = self.import_path(&self.module.type_info.package, &["gleam".to_string()]);
+        let path = self.import_path(&self.module.type_info.package, "gleam");
         let member = Member {
             name: name.to_doc(),
             alias: alias.map(|a| a.to_doc()),
@@ -308,24 +312,22 @@ impl<'a> Generator<'a> {
         imports
     }
 
-    fn import_path(&self, package: &'a str, module: &'a [String]) -> String {
-        let path = module.join("/");
-
+    fn import_path(&self, package: &'a str, module: &'a str) -> String {
         // TODO: strip shared prefixed between current module and imported
         // module to avoid decending and climbing back out again
         if package == self.module.type_info.package || package.is_empty() {
             // Same package
-            match self.module.name.len() {
-                1 => format!("./{}.mjs", path),
+            match self.current_module_name_segments_count {
+                1 => format!("./{}.mjs", module),
                 _ => {
-                    let prefix = "../".repeat(self.module.name.len() - 1);
-                    format!("{}{}.mjs", prefix, path)
+                    let prefix = "../".repeat(self.current_module_name_segments_count - 1);
+                    format!("{}{}.mjs", prefix, module)
                 }
             }
         } else {
             // Different package
-            let prefix = "../".repeat(self.module.name.len());
-            format!("{}{}/{}.mjs", prefix, package, path)
+            let prefix = "../".repeat(self.current_module_name_segments_count);
+            format!("{}{}/{}.mjs", prefix, package, module)
         }
     }
 
@@ -333,12 +335,13 @@ impl<'a> Generator<'a> {
         &mut self,
         imports: &mut Imports<'a>,
         package: &'a str,
-        module: &'a [String],
-        as_name: &'a Option<String>,
+        module: &'a str,
+        as_name: &'a Option<SmolStr>,
         unqualified: &'a [UnqualifiedImport],
     ) {
-        let module_name = as_name.as_ref().unwrap_or_else(|| {
+        let module_name = as_name.as_ref().map(SmolStr::as_str).unwrap_or_else(|| {
             module
+                .split('/')
                 .last()
                 .expect("JavaScript generator could not identify imported module name.")
         });
@@ -402,13 +405,13 @@ impl<'a> Generator<'a> {
     }
 
     fn register_in_scope(&mut self, name: &str) {
-        let _ = self.module_scope.insert(name.to_string(), 0);
+        let _ = self.module_scope.insert(name.into(), 0);
     }
 
     fn module_function(
         &mut self,
         public: bool,
-        name: &'a str,
+        name: &'a SmolStr,
         args: &'a [TypedArg],
         body: &'a TypedExpr,
     ) -> Output<'a> {
@@ -417,7 +420,7 @@ impl<'a> Generator<'a> {
             .map(|arg| arg.names.get_variable_name())
             .collect();
         let mut generator = expression::Generator::new(
-            &self.module.name,
+            self.module.name.clone(),
             self.line_numbers,
             name,
             argument_names,
@@ -467,15 +470,16 @@ impl<'a> Generator<'a> {
     fn register_module_definitions_in_scope(&mut self) {
         for statement in self.module.statements.iter() {
             match statement {
-                Statement::ModuleConstant { name, .. } | Statement::Fn { name, .. } => {
-                    self.register_in_scope(name)
-                }
+                Statement::ExternalFn { name, .. }
+                | Statement::ModuleConstant { name, .. }
+                | Statement::Fn { name, .. } => self.register_in_scope(name),
+
                 Statement::Import { unqualified, .. } => unqualified
                     .iter()
                     .for_each(|unq_import| self.register_in_scope(unq_import.variable_name())),
+
                 Statement::TypeAlias { .. }
                 | Statement::CustomType { .. }
-                | Statement::ExternalFn { .. }
                 | Statement::ExternalType { .. } => (),
             }
         }
@@ -500,13 +504,13 @@ pub fn module(
     module: &TypedModule,
     line_numbers: &LineNumbers,
     path: &Path,
-    src: &str,
+    src: &SmolStr,
 ) -> Result<String, crate::Error> {
     let document = Generator::new(line_numbers, module)
         .compile()
         .map_err(|error| crate::Error::JavaScript {
             path: path.to_path_buf(),
-            src: src.to_string(),
+            src: src.clone(),
             error,
         })?;
     Ok(document.to_pretty_string(80))
@@ -515,13 +519,13 @@ pub fn module(
 pub fn ts_declaration(
     module: &TypedModule,
     path: &Path,
-    src: &str,
+    src: &SmolStr,
 ) -> Result<String, crate::Error> {
     let document = typescript::TypeScriptGenerator::new(module)
         .compile()
         .map_err(|error| crate::Error::JavaScript {
             path: path.to_path_buf(),
-            src: src.to_string(),
+            src: src.clone(),
             error,
         })?;
     Ok(document.to_pretty_string(80))

@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- New projects now require `gleeunit` v0.10.
+- An error is now emitted if a list spread expression is written without a tail
+  value.
+- An error is now emitted when a function is defined with multiple arguments
+  with the same name.
+- The error message emitted when a `let` does not match all possible values has
+  been improved.
+- Fixed a bug where `assert` expressions can generate invalid Erlang.
+- Fixed a bug where `assert` expressions can generate Erlang that emits a
+  warning.
+- Fixed a bug where arguments would be passed incorrectly to Deno.
+- Fixed a bug where defining variables that shadow external functions could
+  generate invalid JavaScript.
+
+## v0.26.0 - 2023-01-19
+
+[Release blog post](https://gleam.run/news/v0.26-incremental-compilation-and-deno/)
+
+
+- New projects require `gleam_stdlib` v0.26 and `gleeunit` v0.9.
+- Fixed a bug where JavaScript default projects would fail to publish to Hex.
+
 ## v0.26.0-rc1 - 2023-01-12
 
 - Added support for Deno runtime for JavaScript target.

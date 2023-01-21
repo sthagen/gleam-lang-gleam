@@ -10,11 +10,7 @@ fn empty_module() {
 #[test]
 fn unqualified_fn_call() {
     assert_js!(
-        (
-            CURRENT_PACKAGE,
-            vec!["rocket_ship".to_string()],
-            r#"pub fn launch() { 1 }"#
-        ),
+        (CURRENT_PACKAGE, "rocket_ship", r#"pub fn launch() { 1 }"#),
         r#"import rocket_ship.{launch}
 pub fn go() { launch() }
 "#,
@@ -24,11 +20,7 @@ pub fn go() { launch() }
 #[test]
 fn aliased_unqualified_fn_call() {
     assert_js!(
-        (
-            CURRENT_PACKAGE,
-            vec!["rocket_ship".to_string()],
-            r#"pub fn launch() { 1 }"#
-        ),
+        (CURRENT_PACKAGE, "rocket_ship", r#"pub fn launch() { 1 }"#),
         r#"import rocket_ship.{launch as boom_time}
 pub fn go() { boom_time() }
 "#,
@@ -40,7 +32,7 @@ fn multiple_unqualified_fn_call() {
     assert_js!(
         (
             CURRENT_PACKAGE,
-            vec!["rocket_ship".to_string()],
+            "rocket_ship",
             r#"
 pub fn a() { 1 }
 pub fn b() { 2 }"#
@@ -54,11 +46,7 @@ pub fn go() { a() + bb() }
 #[test]
 fn constant() {
     assert_js!(
-        (
-            CURRENT_PACKAGE,
-            vec!["rocket_ship".to_string()],
-            r#"pub const x = 1"#
-        ),
+        (CURRENT_PACKAGE, "rocket_ship", r#"pub const x = 1"#),
         r#"
 import rocket_ship
 pub fn go() { rocket_ship.x }
@@ -69,11 +57,7 @@ pub fn go() { rocket_ship.x }
 #[test]
 fn alias_constant() {
     assert_js!(
-        (
-            CURRENT_PACKAGE,
-            vec!["rocket_ship".to_string()],
-            r#"pub const x = 1"#
-        ),
+        (CURRENT_PACKAGE, "rocket_ship", r#"pub const x = 1"#),
         r#"
 import rocket_ship as boop
 pub fn go() { boop.x }
@@ -84,11 +68,7 @@ pub fn go() { boop.x }
 #[test]
 fn alias_fn_call() {
     assert_js!(
-        (
-            CURRENT_PACKAGE,
-            vec!["rocket_ship".to_string()],
-            r#"pub fn go() { 1 }"#
-        ),
+        (CURRENT_PACKAGE, "rocket_ship", r#"pub fn go() { 1 }"#),
         r#"
 import rocket_ship as boop
 pub fn go() { boop.go() }
@@ -99,11 +79,7 @@ pub fn go() { boop.go() }
 #[test]
 fn nested_fn_call() {
     assert_js!(
-        (
-            CURRENT_PACKAGE,
-            vec!["one".to_string(), "two".to_string()],
-            r#"pub fn go() { 1 }"#
-        ),
+        (CURRENT_PACKAGE, "one/two", r#"pub fn go() { 1 }"#),
         r#"import one/two
 pub fn go() { two.go() }"#,
     );
@@ -112,11 +88,7 @@ pub fn go() { two.go() }"#,
 #[test]
 fn nested_nested_fn_call() {
     assert_js!(
-        (
-            CURRENT_PACKAGE,
-            vec!["one".to_string(), "two".to_string(), "three".to_string()],
-            r#"pub fn go() { 1 }"#
-        ),
+        (CURRENT_PACKAGE, "one/two/three", r#"pub fn go() { 1 }"#),
         r#"import one/two/three
 pub fn go() { three.go() }"#,
     );
@@ -125,11 +97,7 @@ pub fn go() { three.go() }"#,
 #[test]
 fn different_package_import() {
     assert_js!(
-        (
-            "other_package",
-            vec!["one".to_string()],
-            r#"pub fn go() { 1 }"#
-        ),
+        ("other_package", "one", r#"pub fn go() { 1 }"#),
         r#"import one
 pub fn go() { one.go() }
 "#,
@@ -139,11 +107,7 @@ pub fn go() { one.go() }
 #[test]
 fn nested_same_package() {
     assert_js!(
-        (
-            CURRENT_PACKAGE,
-            vec!["one".to_string(), "two".to_string(), "three".to_string()],
-            r#"pub fn go() { 1 }"#
-        ),
+        (CURRENT_PACKAGE, "one/two/three", r#"pub fn go() { 1 }"#),
         r#"import one/two/three
 pub fn go() { three.go() }
 "#,
@@ -155,7 +119,7 @@ fn imported_external_types_dont_get_rendered() {
     assert_js!(
         (
             CURRENT_PACKAGE,
-            vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            "one/two/three",
             r#"pub external type External"#
         ),
         r#"import one/two/three.{External}
@@ -170,7 +134,7 @@ fn imported_custom_types_dont_get_rendered() {
     assert_js!(
         (
             CURRENT_PACKAGE,
-            vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            "one/two/three",
             r#"pub type Custom { One Two }"#
         ),
         r#"import one/two/three.{Custom, One, Two}
@@ -185,7 +149,7 @@ fn imported_custom_types_do_get_rendered_in_typescript() {
     assert_ts_def!(
         (
             CURRENT_PACKAGE,
-            vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            "one/two/three",
             r#"pub type Custom { One Two }"#
         ),
         r#"import one/two/three.{Custom, One, Two}
@@ -200,7 +164,7 @@ fn imported_external_types_dont_get_rendered_with_value_of_same_name() {
     assert_js!(
         (
             CURRENT_PACKAGE,
-            vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            "one/two/three",
             r#"pub external type Thingy"#
         ),
         r#"import one/two/three.{Thingy}

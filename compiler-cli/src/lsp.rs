@@ -35,6 +35,7 @@ use lsp_types::{
     HoverContents, HoverProviderCapability, InitializeParams, MarkedString, Position,
     PublishDiagnosticsParams, Range, TextEdit, Url,
 };
+use smol_str::SmolStr;
 #[cfg(target_os = "windows")]
 use urlencoding::decode;
 
@@ -154,7 +155,7 @@ pub struct LanguageServer {
     project_root: PathBuf,
 
     /// Files that have been edited in memory
-    edited: HashMap<String, String>,
+    edited: HashMap<String, SmolStr>,
 
     /// Diagnostics that have been emitted by the compiler but not yet published
     /// to the client
@@ -544,7 +545,7 @@ impl LanguageServer {
         // A file has changed in the editor so store a copy of the new content in memory
         let path = params.text_document.uri.path().to_string();
         if let Some(changes) = params.content_changes.into_iter().next() {
-            let _ = self.edited.insert(path, changes.text);
+            let _ = self.edited.insert(path, changes.text.into());
         }
         Ok(())
     }
@@ -666,7 +667,7 @@ impl LanguageServer {
             .project_compiler
             .get_importable_modules()
             .keys()
-            .cloned();
+            .map(|name| name.to_string());
         // TODO: Test
         let project_modules = compiler
             .modules
@@ -748,7 +749,7 @@ impl LanguageServer {
 
             // Otherwise format the file from disc
             None => {
-                let src = crate::fs::read(path)?;
+                let src = crate::fs::read(path)?.into();
                 gleam_core::format::pretty(&mut new_text, &src, Path::new(path))?;
             }
         };
@@ -1068,8 +1069,8 @@ where
             let path = path.as_os_str().to_string_lossy().to_string();
             let line_numbers = LineNumbers::new(&module.code);
             let source = ModuleSourceInformation { path, line_numbers };
-            let _ = self.sources.insert(module.name.clone(), source);
-            let _ = self.modules.insert(module.name.clone(), module);
+            let _ = self.sources.insert(module.name.to_string(), source);
+            let _ = self.modules.insert(module.name.to_string(), module);
         }
 
         Ok(())

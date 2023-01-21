@@ -1,24 +1,24 @@
 use super::*;
 use crate::type_::{FieldMap, HasType};
 
-pub type TypedConstant = Constant<Arc<Type>, String>;
+pub type TypedConstant = Constant<Arc<Type>, SmolStr>;
 pub type UntypedConstant = Constant<(), ()>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Constant<T, RecordTag> {
     Int {
         location: SrcSpan,
-        value: String,
+        value: SmolStr,
     },
 
     Float {
         location: SrcSpan,
-        value: String,
+        value: SmolStr,
     },
 
     String {
         location: SrcSpan,
-        value: String,
+        value: SmolStr,
     },
 
     Tuple {
@@ -34,8 +34,8 @@ pub enum Constant<T, RecordTag> {
 
     Record {
         location: SrcSpan,
-        module: Option<String>,
-        name: String,
+        module: Option<SmolStr>,
+        name: SmolStr,
         args: Vec<CallArg<Self>>,
         tag: RecordTag,
         typ: T,
@@ -49,8 +49,8 @@ pub enum Constant<T, RecordTag> {
 
     Var {
         location: SrcSpan,
-        module: Option<String>,
-        name: String,
+        module: Option<SmolStr>,
+        name: SmolStr,
         constructor: Option<Box<ValueConstructor>>,
         typ: T,
     },

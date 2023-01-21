@@ -21,6 +21,7 @@ use heck::ToSnakeCase;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use pattern::pattern;
+use smol_str::SmolStr;
 use std::{char, collections::HashMap, ops::Deref, str::FromStr, sync::Arc};
 
 const INDENT: isize = 4;
@@ -30,20 +31,13 @@ fn module_name_to_erlang(module: &str) -> Document<'_> {
     Document::String(module.replace('/', "@"))
 }
 
-fn module_name_join(module: &[String]) -> Document<'_> {
-    let mut name = String::new();
-    for (i, segment) in module.iter().enumerate() {
-        if i != 0 {
-            name.push('@')
-        }
-        name.push_str(segment)
-    }
-    atom(name)
+fn module_name_atom(module: &str) -> Document<'static> {
+    atom(module.replace('/', "@"))
 }
 
 #[derive(Debug, Clone)]
 struct Env<'a> {
-    module: &'a [String],
+    module: &'a str,
     function: &'a str,
     line_numbers: &'a LineNumbers,
     current_scope_vars: im::HashMap<String, usize>,
@@ -51,12 +45,8 @@ struct Env<'a> {
 }
 
 impl<'env> Env<'env> {
-    pub fn new(
-        module: &'env [String],
-        function: &'env str,
-        line_numbers: &'env LineNumbers,
-    ) -> Self {
-        let vars: im::HashMap<_, _> = std::iter::once(("_".to_string(), 0)).collect();
+    pub fn new(module: &'env str, function: &'env str, line_numbers: &'env LineNumbers) -> Self {
+        let vars: im::HashMap<_, _> = std::iter::once(("_".into(), 0)).collect();
         Self {
             current_scope_vars: vars.clone(),
             erl_function_scope_vars: vars,
@@ -129,7 +119,7 @@ pub fn records(module: &TypedModule) -> Vec<(&str, String)> {
 
 pub fn record_definition(name: &str, fields: &[(&str, Arc<Type>)]) -> String {
     let name = &name.to_snake_case();
-    let type_printer = TypePrinter::new(&[]).var_as_any();
+    let type_printer = TypePrinter::new("").var_as_any();
     let fields = fields.iter().map(move |(name, type_)| {
         let type_ = type_printer.print(type_);
         docvec!(atom((*name).to_string()), " :: ", type_.group())
@@ -164,7 +154,7 @@ fn module_document<'a>(
 
     let header = "-module("
         .to_doc()
-        .append(module_name_join(&module.name))
+        .append(Document::String(module.name.replace('/', "@")))
         .append(").")
         .append(line());
 
@@ -244,7 +234,7 @@ fn register_imports(
     exports: &mut Vec<Document<'_>>,
     type_exports: &mut Vec<Document<'_>>,
     type_defs: &mut Vec<Document<'_>>,
-    module_name: &[String],
+    module_name: &str,
 ) {
     match s {
         Statement::Fn {
@@ -383,9 +373,9 @@ fn register_imports(
 }
 
 fn statement<'a>(
-    current_module: &'a [String],
+    current_module: &'a str,
     statement: &'a TypedStatement,
-    module: &'a [String],
+    module: &'a str,
     line_numbers: &'a LineNumbers,
 ) -> Vec<Document<'a>> {
     match statement {
@@ -426,7 +416,7 @@ fn mod_fun<'a>(
     name: &'a str,
     args: &'a [TypedArg],
     body: &'a TypedExpr,
-    module: &'a [String],
+    module: &'a str,
     return_type: &'a Arc<Type>,
     line_numbers: &'a LineNumbers,
 ) -> Document<'a> {
@@ -487,7 +477,7 @@ fn fun_spec<'a>(
         .group()
 }
 
-fn atom<'a>(value: String) -> Document<'a> {
+fn atom(value: String) -> Document<'static> {
     Document::String(escape_atom(value))
 }
 
@@ -854,15 +844,22 @@ fn try_<'a>(
 fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) -> Document<'a> {
     let mut vars: Vec<&str> = vec![];
     let body = maybe_block_expr(value, env);
-    let pattern1 = pattern::to_doc(pat, &mut vars, env);
-    let pattern2 = pattern::to_doc(pat, &mut vars, env);
+    let (subject_var, subject_definition) = if value.is_var() {
+        (body, docvec![])
+    } else {
+        let var = env.next_local_var_name(ASSERT_SUBJECT_VARIABLE);
+        let definition = docvec![var.clone(), " = ", body, ",", line()];
+        (var, definition)
+    };
+    let check_pattern = pattern::to_doc_discarding_all(pat, &mut vars, env);
+    let assign_pattern = pattern::to_doc(pat, &mut vars, env);
     let clauses = docvec![
-        pattern1.clone(),
+        check_pattern.clone(),
         " -> ",
-        pattern1.clone(),
+        subject_var.clone(),
         ";",
         line(),
-        env.next_local_var_name(ASSERT_VARIABLE),
+        env.next_local_var_name(ASSERT_FAIL_VARIABLE),
         " ->",
         docvec![
             line(),
@@ -870,7 +867,7 @@ fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) ->
                 "assert",
                 "Assertion pattern match failed",
                 pat.location(),
-                vec![("value", env.local_var_name(ASSERT_VARIABLE))],
+                vec![("value", env.local_var_name(ASSERT_FAIL_VARIABLE))],
                 env,
             )
             .nest(INDENT)
@@ -878,9 +875,10 @@ fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) ->
         .nest(INDENT)
     ];
     docvec![
-        pattern2,
+        subject_definition,
+        assign_pattern,
         " = case ",
-        body,
+        subject_var,
         " of",
         docvec![line(), clauses].nest(INDENT),
         line(),
@@ -961,7 +959,7 @@ fn var<'a>(name: &'a str, constructor: &'a ValueConstructor, env: &mut Env<'a>) 
             ..
         } => "fun "
             .to_doc()
-            .append(module_name_join(module))
+            .append(module_name_atom(module))
             .append(":")
             .append(atom(name.to_string()))
             .append("/")
@@ -1221,7 +1219,7 @@ fn call<'a>(fun: &'a TypedExpr, args: &'a [CallArg<TypedExpr>], env: &mut Env<'a
 }
 
 fn module_fn_with_args<'a>(
-    module: &'a [String],
+    module: &'a str,
     name: &'a str,
     args: Vec<Document<'a>>,
     env: &mut Env<'a>,
@@ -1230,7 +1228,7 @@ fn module_fn_with_args<'a>(
     if module == env.module {
         atom(name.to_string()).append(args)
     } else {
-        atom(module.join("@"))
+        atom(module.replace('/', "@"))
             .append(":")
             .append(atom(name.to_string()))
             .append(args)
@@ -1304,7 +1302,7 @@ fn docs_args_call<'a>(
             // This also enables an optimisation in the Erlang compiler in which
             // some Erlang BIFs can be replaced with literals if their arguments
             // are literals, such as `binary_to_atom`.
-            atom(module.join("@"))
+            atom(module.replace('/', "@"))
                 .append(":")
                 .append(atom(name.to_string()))
                 .append(args)
@@ -1399,7 +1397,7 @@ fn needs_wrapping_in_block(expression: &TypedExpr) -> bool {
     )
 }
 
-fn todo<'a>(message: &'a Option<String>, location: SrcSpan, env: &mut Env<'a>) -> Document<'a> {
+fn todo<'a>(message: &'a Option<SmolStr>, location: SrcSpan, env: &mut Env<'a>) -> Document<'a> {
     let message = message
         .as_deref()
         .unwrap_or("This has not yet been implemented");
@@ -1433,7 +1431,7 @@ fn erlang_error<'a>(
         .append(",")
         .append(line())
         .append("module => ")
-        .append(Document::String(env.module.join("/")).surround("<<\"", "\"/utf8>>"))
+        .append(env.module.to_doc().surround("<<\"", "\"/utf8>>"))
         .append(",")
         .append(line())
         .append("function => ")
@@ -1596,11 +1594,11 @@ fn fun<'a>(args: &'a [TypedArg], body: &'a TypedExpr, env: &mut Env<'a>) -> Docu
 
 fn incrementing_args_list(arity: usize) -> String {
     let arguments = (0..arity).map(|c| format!("Field@{c}"));
-    Itertools::intersperse(arguments, ", ".to_string()).collect()
+    Itertools::intersperse(arguments, ", ".into()).collect()
 }
 
 fn external_fun<'a>(
-    current_module: &'a [String],
+    current_module: &'a str,
     name: &'a str,
     module: &'a str,
     fun: &'a str,
@@ -1656,7 +1654,7 @@ fn id_to_type_var(id: u64) -> Document<'static> {
     }
     name.push(std::char::from_u32((last_char % 26 + 64) as u32).expect("id_to_type_var 2"));
     name.reverse();
-    Document::String(name.into_iter().collect())
+    name.into_iter().collect::<SmolStr>().to_doc()
 }
 
 pub fn is_erlang_reserved_word(name: &str) -> bool {
@@ -1862,12 +1860,12 @@ fn erl_safe_type_name(mut name: String) -> String {
 #[derive(Debug)]
 struct TypePrinter<'a> {
     var_as_any: bool,
-    current_module: &'a [String],
+    current_module: &'a str,
     var_usages: Option<&'a HashMap<u64, u64>>,
 }
 
 impl<'a> TypePrinter<'a> {
-    fn new(current_module: &'a [String]) -> Self {
+    fn new(current_module: &'a str) -> Self {
         Self {
             current_module,
             var_usages: None,
@@ -1940,12 +1938,7 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    fn print_type_app(
-        &self,
-        module: &[String],
-        name: &str,
-        args: &[Arc<Type>],
-    ) -> Document<'static> {
+    fn print_type_app(&self, module: &str, name: &str, args: &[Arc<Type>]) -> Document<'static> {
         let args = concat(Itertools::intersperse(
             args.iter().map(|a| self.print(a)),
             ", ".to_doc(),
@@ -1954,15 +1947,8 @@ impl<'a> TypePrinter<'a> {
         if self.current_module == module {
             docvec![name, "(", args, ")"]
         } else {
-            docvec![self.print_module_name(module), ":", name, "(", args, ")"]
+            docvec![module_name_atom(module), ":", name, "(", args, ")"]
         }
-    }
-
-    fn print_module_name(&self, module: &[String]) -> Document<'static> {
-        concat(Itertools::intersperse(
-            module.iter().map(|m| Document::String(m.to_snake_case())),
-            "@".to_doc(),
-        ))
     }
 
     fn print_fn(&self, args: &[Arc<Type>], retrn: &Type) -> Document<'static> {

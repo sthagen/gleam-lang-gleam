@@ -27,6 +27,7 @@ use crate::{
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 use std::time::SystemTime;
 use std::{
     collections::HashMap, ffi::OsString, fs::DirEntry, iter::Peekable, path::PathBuf, process,
@@ -55,8 +56,8 @@ pub enum Target {
 }
 
 impl Target {
-    pub fn variant_strings() -> Vec<String> {
-        Self::VARIANTS.iter().map(|s| s.to_string()).collect()
+    pub fn variant_strings() -> Vec<SmolStr> {
+        Self::VARIANTS.iter().map(|s| (*s).into()).collect()
     }
 }
 
@@ -152,14 +153,14 @@ impl Package {
 
 #[derive(Debug)]
 pub struct Module {
-    pub name: String,
-    pub code: String,
+    pub name: SmolStr,
+    pub code: SmolStr,
     pub mtime: SystemTime,
     pub input_path: PathBuf,
     pub origin: Origin,
     pub ast: TypedModule,
     pub extra: ModuleExtra,
-    pub dependencies: Vec<(String, SrcSpan)>,
+    pub dependencies: Vec<(SmolStr, SrcSpan)>,
 }
 
 impl Module {
@@ -183,11 +184,7 @@ impl Module {
             .extra
             .module_comments
             .iter()
-            .map(|span| {
-                Comment::from((span, self.code.as_str()))
-                    .content
-                    .to_string()
-            })
+            .map(|span| Comment::from((span, self.code.as_str())).content.into())
             .collect();
 
         // Order statements to avoid dissociating doc comments from them
@@ -200,7 +197,7 @@ impl Module {
             let docs: Vec<&str> =
                 comments_before(&mut doc_comments, statement.location().start, &self.code);
             if !docs.is_empty() {
-                let doc = docs.join("\n");
+                let doc = docs.join("\n").into();
                 statement.put_doc(doc);
             }
 
@@ -209,7 +206,7 @@ impl Module {
                     let docs: Vec<&str> =
                         comments_before(&mut doc_comments, constructor.location.start, &self.code);
                     if !docs.is_empty() {
-                        let doc = docs.join("\n");
+                        let doc = docs.join("\n").into();
                         constructor.put_doc(doc);
                     }
 
@@ -217,7 +214,7 @@ impl Module {
                         let docs: Vec<&str> =
                             comments_before(&mut doc_comments, argument.location.start, &self.code);
                         if !docs.is_empty() {
-                            let doc = docs.join("\n");
+                            let doc = docs.join("\n").into();
                             argument.put_doc(doc);
                         }
                     }
@@ -226,10 +223,10 @@ impl Module {
         }
     }
 
-    pub(crate) fn dependencies_list(&self) -> Vec<String> {
+    pub(crate) fn dependencies_list(&self) -> Vec<SmolStr> {
         self.dependencies
             .iter()
-            .map(|(name, _)| name.to_string())
+            .map(|(name, _)| name.clone())
             .collect()
     }
 }

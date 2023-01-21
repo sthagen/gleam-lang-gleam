@@ -7,6 +7,8 @@ use std::{
     time::SystemTime,
 };
 
+use smol_str::SmolStr;
+
 use super::{
     package_compiler::{module_name, CacheMetadata, CachedModule, Input, UncompiledModule},
     package_loader::CodegenRequired,
@@ -24,7 +26,7 @@ pub(crate) struct ModuleLoader<'a, IO> {
     pub mode: Mode,
     pub target: Target,
     pub codegen: CodegenRequired,
-    pub package_name: &'a str,
+    pub package_name: &'a SmolStr,
     pub source_directory: &'a Path,
     pub artefact_directory: &'a Path,
     pub origin: Origin,
@@ -99,7 +101,7 @@ where
     fn read_source(
         &self,
         path: PathBuf,
-        name: String,
+        name: SmolStr,
         mtime: SystemTime,
     ) -> Result<UncompiledModule, Error> {
         read_source(
@@ -108,12 +110,12 @@ where
             self.origin,
             path,
             name,
-            &self.package_name,
+            self.package_name.clone(),
             mtime,
         )
     }
 
-    fn cached(&self, name: String, meta: CacheMetadata) -> CachedModule {
+    fn cached(&self, name: SmolStr, meta: CacheMetadata) -> CachedModule {
         CachedModule {
             dependencies: meta.dependencies,
             source_path: self.source_directory.join(format!("{}.gleam", name)),
@@ -128,11 +130,11 @@ pub(crate) fn read_source<IO: FileSystemIO + CommandExecutor + Clone>(
     target: Target,
     origin: Origin,
     path: PathBuf,
-    name: String,
-    package_name: &str,
+    name: SmolStr,
+    package_name: SmolStr,
     mtime: SystemTime,
 ) -> Result<UncompiledModule> {
-    let code = io.read(&path)?;
+    let code: SmolStr = io.read(&path)?.into();
 
     let (mut ast, extra) = crate::parse::parse_module(&code).map_err(|error| Error::Parse {
         path: path.clone(),
@@ -142,16 +144,15 @@ pub(crate) fn read_source<IO: FileSystemIO + CommandExecutor + Clone>(
 
     let dependencies = ast.dependencies(target);
 
-    // TODO: store the name on the AST as a string.
-    ast.name = name.split("/").map(String::from).collect();
+    ast.name = name.clone();
     let module = UncompiledModule {
-        package: package_name.to_string(),
+        package: package_name,
         dependencies,
         origin,
         extra,
         mtime,
         path,
-        name: name.clone(),
+        name,
         code,
         ast,
     };

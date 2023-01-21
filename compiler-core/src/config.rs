@@ -6,6 +6,7 @@ use globset::{Glob, GlobSetBuilder};
 use hexpm::version::{Range, Version};
 use http::Uri;
 use serde::Deserialize;
+use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::marker::PhantomData;
@@ -68,13 +69,13 @@ impl AsRef<str> for SpdxLicense {
 #[derive(Deserialize, Debug, PartialEq, Clone)]
 pub struct PackageConfig {
     #[serde(with = "package_name")]
-    pub name: String,
+    pub name: SmolStr,
     #[serde(default = "default_version")]
     pub version: Version,
     #[serde(default, alias = "licenses")]
     pub licences: Vec<SpdxLicense>,
     #[serde(default)]
-    pub description: String,
+    pub description: SmolStr,
     #[serde(default, alias = "docs")]
     pub documentation: Docs,
     #[serde(default)]
@@ -725,19 +726,20 @@ mod package_name {
     use lazy_static::lazy_static;
     use regex::Regex;
     use serde::Deserializer;
+    use smol_str::SmolStr;
 
     lazy_static! {
         static ref PACKAGE_NAME_PATTERN: Regex =
             Regex::new("^[a-z][a-z0-9_]*$").expect("Package name regex");
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<String, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SmolStr, D::Error>
     where
         D: Deserializer<'de>,
     {
         let name: &str = serde::de::Deserialize::deserialize(deserializer)?;
         if PACKAGE_NAME_PATTERN.is_match(name) {
-            Ok(name.to_string())
+            Ok(name.into())
         } else {
             let error =
                 "Package names may only container lowercase letters, numbers, and underscores";
