@@ -2,13 +2,21 @@
 
 ## Unreleased
 
+- The formatter now wraps long `|` patterns in case clauses over multiple lines.
+
+## v0.26.1 - 2023-01-22
+
 - New projects now require `gleeunit` v0.10.
+- Rebar3 dependency projects are now compiled in-place. This fixes an issue
+  where some NIF using projects would fail to boot due to some paths not being
+  copied to the `build` directory.
 - An error is now emitted if a list spread expression is written without a tail
   value.
 - An error is now emitted when a function is defined with multiple arguments
   with the same name.
 - The error message emitted when a `let` does not match all possible values has
   been improved.
+- Fixed a bug where the language server wouldn't analyse test code.
 - Fixed a bug where `assert` expressions can generate invalid Erlang.
 - Fixed a bug where `assert` expressions can generate Erlang that emits a
   warning.
