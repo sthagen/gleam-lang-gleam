@@ -1,8 +1,18 @@
 # Changelog
 
 ## Unreleased
+- Fixed a bug where pattern matches on custom types with mixed labelled and 
+  unlabelled arguments could not be compiled with target=javascript
+
+## v0.26.2 - 2023-02-03
 
 - The formatter now wraps long `|` patterns in case clauses over multiple lines.
+- Fixed a bug where unlabelled function arguments could be declared after
+  labelled ones.
+- A broken link was removed from the error messages.
+- Fixed a bug where using a qualified imported record constructor function as a
+  value would produce invalid Erlang code if the name of the record variant was
+  an Erlang reserved word.
 
 ## v0.26.1 - 2023-01-22
 
