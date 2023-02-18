@@ -56,9 +56,10 @@ mod token;
 
 use crate::ast::{
     Arg, ArgNames, AssignName, AssignmentKind, BinOp, BitStringSegment, BitStringSegmentOption,
-    CallArg, Clause, ClauseGuard, Constant, ExternalFnArg, HasLocation, Module, Pattern,
+    CallArg, Clause, ClauseGuard, Constant, CustomType, ExternalFnArg, ExternalFunction,
+    ExternalType, Function, HasLocation, Import, Module, ModuleConstant, Pattern,
     RecordConstructor, RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement, TargetGroup,
-    TodoKind, TypeAst, UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard,
+    TodoKind, TypeAlias, TypeAst, UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard,
     UntypedConstant, UntypedExpr, UntypedExternalFnArg, UntypedModule, UntypedPattern,
     UntypedRecordUpdateArg, UntypedStatement, Use, CAPTURE_VARIABLE,
 };
@@ -482,13 +483,13 @@ where
             Some((start, Token::Fn, _)) => {
                 let _ = self.next_tok();
                 match self.parse_function(start, false, true)? {
-                    Some(Statement::Fn {
+                    Some(Statement::Function(Function {
                         location,
                         arguments: args,
                         body,
                         return_annotation,
                         ..
-                    }) => UntypedExpr::Fn {
+                    })) => UntypedExpr::Fn {
                         location,
                         is_capture: false,
                         arguments: args,
@@ -541,7 +542,13 @@ where
 
             Some((start, Token::Let, _)) => {
                 let _ = self.next_tok();
-                self.parse_assignment(start, AssignmentKind::Let)?
+                let kind = if let Some((_, Token::Assert, _)) = self.tok0 {
+                    _ = self.next_tok();
+                    AssignmentKind::Assert
+                } else {
+                    AssignmentKind::Let
+                };
+                self.parse_assignment(start, kind)?
             }
 
             Some((start, Token::Assert, _)) => {
@@ -1365,7 +1372,7 @@ where
             },
             Some((body, _)) => body,
         };
-        Ok(Some(Statement::Fn {
+        Ok(Some(Statement::Function(Function {
             doc: None,
             location: SrcSpan { start, end },
             end_position: rbr_e - 1,
@@ -1375,7 +1382,7 @@ where
             body,
             return_type: (),
             return_annotation,
-        }))
+        })))
     }
 
     // Starts after "fn"
@@ -1399,7 +1406,7 @@ where
         let (_, fun, end) = self.expect_string()?;
 
         if let Some(retrn) = return_annotation {
-            Ok(Some(Statement::ExternalFn {
+            Ok(Some(Statement::ExternalFunction(ExternalFunction {
                 doc: None,
                 location: SrcSpan { start, end },
                 public,
@@ -1409,7 +1416,7 @@ where
                 fun,
                 return_: retrn,
                 return_type: (),
-            }))
+            })))
         } else {
             parse_error(
                 ParseErrorType::ExpectedType,
@@ -1616,13 +1623,13 @@ where
         public: bool,
     ) -> Result<Option<UntypedStatement>, ParseError> {
         let (_, name, args, end) = self.expect_type_name()?;
-        Ok(Some(Statement::ExternalType {
+        Ok(Some(Statement::ExternalType(ExternalType {
             location: SrcSpan { start, end },
             public,
             name,
             arguments: args,
             doc: None,
-        }))
+        })))
     }
 
     //
@@ -1666,7 +1673,7 @@ where
             if constructors.is_empty() {
                 parse_error(ParseErrorType::NoConstructors, SrcSpan { start, end })
             } else {
-                Ok(Some(Statement::CustomType {
+                Ok(Some(Statement::CustomType(CustomType {
                     doc: None,
                     location: SrcSpan { start, end },
                     public,
@@ -1675,14 +1682,14 @@ where
                     parameters,
                     constructors,
                     typed_parameters: vec![],
-                }))
+                })))
             }
         } else if let Some((eq_s, eq_e)) = self.maybe_one(&Token::Equal) {
             // Type Alias
             if !opaque {
                 if let Some(t) = self.parse_type(false)? {
                     let type_end = t.location().end;
-                    Ok(Some(Statement::TypeAlias {
+                    Ok(Some(Statement::TypeAlias(TypeAlias {
                         doc: None,
                         location: SrcSpan {
                             start,
@@ -1693,7 +1700,7 @@ where
                         parameters,
                         type_ast: t,
                         type_: (),
-                    }))
+                    })))
                 } else {
                     parse_error(
                         ParseErrorType::ExpectedType,
@@ -1987,13 +1994,13 @@ where
             end = e;
         }
 
-        Ok(Some(Statement::Import {
+        Ok(Some(Statement::Import(Import {
             location: SrcSpan { start, end },
             unqualified,
             module: module.into(),
             as_name,
             package: (),
-        }))
+        })))
     }
 
     // [Name (as Name)? | UpName (as Name)? ](, [Name (as Name)? | UpName (as Name)?])*,?
@@ -2063,7 +2070,7 @@ where
 
         let (eq_s, eq_e) = self.expect_one(&Token::Equal)?;
         if let Some(value) = self.parse_const_value()? {
-            Ok(Some(Statement::ModuleConstant {
+            Ok(Some(Statement::ModuleConstant(ModuleConstant {
                 doc: None,
                 location: SrcSpan { start, end },
                 public,
@@ -2071,7 +2078,7 @@ where
                 annotation,
                 value: Box::new(value),
                 type_: (),
-            }))
+            })))
         } else {
             parse_error(
                 ParseErrorType::NoValueAfterEqual,

@@ -7,7 +7,9 @@ mod pattern;
 mod tests;
 
 use crate::{
-    ast::*,
+    ast::{
+        CustomType, ExternalFunction, ExternalType, Function, Import, ModuleConstant, TypeAlias, *,
+    },
     docvec,
     line_numbers::LineNumbers,
     pretty::*,
@@ -86,11 +88,11 @@ pub fn records(module: &TypedModule) -> Vec<(&str, String)> {
         .statements
         .iter()
         .filter_map(|s| match s {
-            Statement::CustomType {
+            Statement::CustomType(CustomType {
                 public: true,
                 constructors,
                 ..
-            } => Some(constructors),
+            }) => Some(constructors),
             _ => None,
         })
         .flatten()
@@ -237,25 +239,25 @@ fn register_imports(
     module_name: &str,
 ) {
     match s {
-        Statement::Fn {
+        Statement::Function(Function {
             public: true,
             name,
             arguments: args,
             ..
-        } => exports.push(atom(name.to_string()).append("/").append(args.len())),
+        }) => exports.push(atom(name.to_string()).append("/").append(args.len())),
 
-        Statement::ExternalFn {
+        Statement::ExternalFunction(ExternalFunction {
             public: true,
             name,
             arguments: args,
             ..
-        } => exports.push(atom(name.to_string()).append("/").append(args.len())),
+        }) => exports.push(atom(name.to_string()).append("/").append(args.len())),
 
-        Statement::ExternalType {
+        Statement::ExternalType(ExternalType {
             name,
             arguments: args,
             ..
-        } => {
+        }) => {
             // Type Exports
             type_exports.push(
                 Document::String(erl_safe_type_name(name.to_snake_case()))
@@ -289,13 +291,13 @@ fn register_imports(
             type_defs.push(doc);
         }
 
-        Statement::CustomType {
+        Statement::CustomType(CustomType {
             name,
             constructors,
             typed_parameters,
             opaque,
             ..
-        } => {
+        }) => {
             // Erlang doesn't allow phantom type variables in type definitions but gleam does
             // so we check the type declaratinon against its constroctors and generate a phantom
             // value that uses the unused type variables.
@@ -364,11 +366,11 @@ fn register_imports(
             type_defs.push(doc);
         }
 
-        Statement::Fn { .. }
-        | Statement::Import { .. }
-        | Statement::TypeAlias { .. }
-        | Statement::ExternalFn { .. }
-        | Statement::ModuleConstant { .. } => (),
+        Statement::Function(Function { .. })
+        | Statement::Import(Import { .. })
+        | Statement::TypeAlias(TypeAlias { .. })
+        | Statement::ExternalFunction(ExternalFunction { .. })
+        | Statement::ModuleConstant(ModuleConstant { .. }) => (),
     }
 }
 
@@ -379,29 +381,29 @@ fn statement<'a>(
     line_numbers: &'a LineNumbers,
 ) -> Vec<Document<'a>> {
     match statement {
-        Statement::TypeAlias { .. }
-        | Statement::CustomType { .. }
-        | Statement::Import { .. }
-        | Statement::ExternalType { .. }
-        | Statement::ModuleConstant { .. }
-        | Statement::ExternalFn { public: false, .. } => vec![],
+        Statement::TypeAlias(TypeAlias { .. })
+        | Statement::CustomType(CustomType { .. })
+        | Statement::Import(Import { .. })
+        | Statement::ExternalType(ExternalType { .. })
+        | Statement::ModuleConstant(ModuleConstant { .. })
+        | Statement::ExternalFunction(ExternalFunction { public: false, .. }) => vec![],
 
-        Statement::Fn {
+        Statement::Function(Function {
             arguments: args,
             name,
             body,
             return_type,
             ..
-        } => vec![mod_fun(name, args, body, module, return_type, line_numbers)],
+        }) => vec![mod_fun(name, args, body, module, return_type, line_numbers)],
 
-        Statement::ExternalFn {
+        Statement::ExternalFunction(ExternalFunction {
             fun,
             module,
             arguments: args,
             name,
             return_type,
             ..
-        } => vec![external_fun(
+        }) => vec![external_fun(
             current_module,
             name,
             module,

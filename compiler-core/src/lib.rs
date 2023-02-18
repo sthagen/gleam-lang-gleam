@@ -50,6 +50,7 @@
 #[macro_use]
 extern crate pretty_assertions;
 
+pub mod analyse;
 pub mod ast;
 pub mod bit_string;
 pub mod build;
@@ -73,6 +74,9 @@ pub mod type_;
 pub mod uid;
 pub mod version;
 pub mod warning;
+
+mod call_graph;
+pub(crate) mod graph;
 
 pub use error::{Error, Result};
 pub use warning::Warning;

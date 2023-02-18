@@ -3,7 +3,10 @@ mod source_links;
 use std::{path::PathBuf, time::SystemTime};
 
 use crate::{
-    ast::{Statement, TypedStatement},
+    ast::{
+        CustomType, ExternalFunction, ExternalType, Function, ModuleConstant, Statement, TypeAlias,
+        TypedStatement,
+    },
     build::Module,
     config::{DocsPage, PackageConfig},
     docs::source_links::SourceLinker,
@@ -115,7 +118,7 @@ pub fn generate_html(
 
         let page_title = format!("{} - {}", name, config.name);
 
-        let functions: Vec<Function<'_>> = module
+        let functions: Vec<DocsFunction<'_>> = module
             .ast
             .statements
             .iter()
@@ -451,11 +454,11 @@ fn import_synonyms(parent: &str, child: &str) -> String {
 fn function<'a>(
     source_links: &SourceLinker,
     statement: &'a TypedStatement,
-) -> Option<Function<'a>> {
+) -> Option<DocsFunction<'a>> {
     let mut formatter = format::Formatter::new();
 
     match statement {
-        Statement::ExternalFn {
+        Statement::ExternalFunction(ExternalFunction {
             public: true,
             name,
             doc,
@@ -463,7 +466,7 @@ fn function<'a>(
             arguments: args,
             location,
             ..
-        } => Some(Function {
+        }) => Some(DocsFunction {
             name,
             documentation: markdown_documentation(doc),
             text_documentation: text_documentation(doc),
@@ -471,7 +474,7 @@ fn function<'a>(
             source_url: source_links.url(location),
         }),
 
-        Statement::Fn {
+        Statement::Function(Function {
             public: true,
             name,
             doc,
@@ -479,7 +482,7 @@ fn function<'a>(
             return_type: ret,
             location,
             ..
-        } => Some(Function {
+        }) => Some(DocsFunction {
             name,
             documentation: markdown_documentation(doc),
             text_documentation: text_documentation(doc),
@@ -516,14 +519,13 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedStatement) -> Opti
     let mut formatter = format::Formatter::new();
 
     match statement {
-        Statement::ExternalType {
+        Statement::ExternalType(ExternalType {
             public: true,
             name,
             doc,
             arguments: args,
             location,
-            ..
-        } => Some(Type {
+        }) => Some(Type {
             name,
             definition: print(formatter.external_type(true, name, args)),
             documentation: markdown_documentation(doc),
@@ -532,7 +534,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedStatement) -> Opti
             source_url: source_links.url(location),
         }),
 
-        Statement::CustomType {
+        Statement::CustomType(CustomType {
             public: true,
             opaque: false,
             name,
@@ -541,7 +543,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedStatement) -> Opti
             constructors: cs,
             location,
             ..
-        } => Some(Type {
+        }) => Some(Type {
             name,
             // TODO: Don't use the same printer for docs as for the formatter.
             // We are not interested in showing the exact implementation in the
@@ -570,7 +572,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedStatement) -> Opti
             source_url: source_links.url(location),
         }),
 
-        Statement::CustomType {
+        Statement::CustomType(CustomType {
             public: true,
             opaque: true,
             name,
@@ -578,7 +580,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedStatement) -> Opti
             doc,
             location,
             ..
-        } => Some(Type {
+        }) => Some(Type {
             name,
             definition: print(formatter.docs_opaque_custom_type(true, name, parameters, location)),
             documentation: markdown_documentation(doc),
@@ -587,7 +589,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedStatement) -> Opti
             source_url: source_links.url(location),
         }),
 
-        Statement::TypeAlias {
+        Statement::TypeAlias(TypeAlias {
             public: true,
             alias: name,
             type_ast: typ,
@@ -595,7 +597,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedStatement) -> Opti
             parameters: args,
             location,
             ..
-        } => Some(Type {
+        }) => Some(Type {
             name,
             definition: print(formatter.type_alias(true, name, args, typ)),
             documentation: markdown_documentation(doc),
@@ -614,14 +616,14 @@ fn constant<'a>(
 ) -> Option<Constant<'a>> {
     let mut formatter = format::Formatter::new();
     match statement {
-        Statement::ModuleConstant {
+        Statement::ModuleConstant(ModuleConstant {
             public: true,
             doc,
             name,
             value,
             location,
             ..
-        } => Some(Constant {
+        }) => Some(Constant {
             name,
             definition: print(formatter.docs_const_expr(true, name, value)),
             documentation: markdown_documentation(doc),
@@ -644,7 +646,7 @@ struct Link {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-struct Function<'a> {
+struct DocsFunction<'a> {
     name: &'a str,
     signature: String,
     documentation: String,
@@ -712,7 +714,7 @@ struct ModuleTemplate<'a> {
     pages: &'a [Link],
     links: &'a [Link],
     modules: &'a [Link],
-    functions: Vec<Function<'a>>,
+    functions: Vec<DocsFunction<'a>>,
     types: Vec<Type<'a>>,
     constants: Vec<Constant<'a>>,
     documentation: String,

@@ -2,7 +2,10 @@
 mod tests;
 
 use crate::{
-    ast::{Use, *},
+    ast::{
+        CustomType, ExternalFunction, ExternalType, Function, Import, ModuleConstant, TypeAlias,
+        Use, *,
+    },
     docvec,
     io::Utf8Writer,
     parse::extra::Comment,
@@ -124,7 +127,7 @@ impl<'comments> Formatter<'comments> {
         for statement in target_group.statements_ref() {
             let start = statement.location().start;
             match statement {
-                Statement::Import { .. } => {
+                Statement::Import(Import { .. }) => {
                     has_imports = true;
                     let comments = self.pop_comments(start);
                     let statement = self.statement(statement);
@@ -205,7 +208,7 @@ impl<'comments> Formatter<'comments> {
 
     fn statement<'a>(&mut self, statement: &'a UntypedStatement) -> Document<'a> {
         match statement {
-            Statement::Fn {
+            Statement::Function(Function {
                 name,
                 arguments: args,
                 body,
@@ -213,17 +216,17 @@ impl<'comments> Formatter<'comments> {
                 return_annotation,
                 end_position,
                 ..
-            } => self.statement_fn(public, name, args, return_annotation, body, *end_position),
+            }) => self.statement_fn(public, name, args, return_annotation, body, *end_position),
 
-            Statement::TypeAlias {
+            Statement::TypeAlias(TypeAlias {
                 alias,
                 parameters: args,
                 type_ast: resolved_type,
                 public,
                 ..
-            } => self.type_alias(*public, alias, args, resolved_type),
+            }) => self.type_alias(*public, alias, args, resolved_type),
 
-            Statement::CustomType {
+            Statement::CustomType(CustomType {
                 name,
                 parameters,
                 public,
@@ -231,9 +234,9 @@ impl<'comments> Formatter<'comments> {
                 location,
                 opaque,
                 ..
-            } => self.custom_type(*public, *opaque, name, parameters, constructors, location),
+            }) => self.custom_type(*public, *opaque, name, parameters, constructors, location),
 
-            Statement::ExternalFn {
+            Statement::ExternalFunction(ExternalFunction {
                 public,
                 arguments: args,
                 name,
@@ -241,7 +244,7 @@ impl<'comments> Formatter<'comments> {
                 module,
                 fun,
                 ..
-            } => self
+            }) => self
                 .external_fn_signature(*public, name, args, retrn)
                 .append(" =")
                 .append(line())
@@ -251,19 +254,19 @@ impl<'comments> Formatter<'comments> {
                 .append(fun.as_str())
                 .append("\""),
 
-            Statement::ExternalType {
+            Statement::ExternalType(ExternalType {
                 public,
                 name,
                 arguments: args,
                 ..
-            } => self.external_type(*public, name, args),
+            }) => self.external_type(*public, name, args),
 
-            Statement::Import {
+            Statement::Import(Import {
                 module,
                 as_name,
                 unqualified,
                 ..
-            } => "import "
+            }) => "import "
                 .to_doc()
                 .append(module.as_str())
                 .append(if unqualified.is_empty() {
@@ -289,13 +292,13 @@ impl<'comments> Formatter<'comments> {
                     nil()
                 }),
 
-            Statement::ModuleConstant {
+            Statement::ModuleConstant(ModuleConstant {
                 public,
                 name,
                 annotation,
                 value,
                 ..
-            } => {
+            }) => {
                 let head = pub_(*public).append("const ").append(name.as_str());
                 let head = match annotation {
                     None => head,

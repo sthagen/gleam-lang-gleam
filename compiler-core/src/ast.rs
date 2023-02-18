@@ -101,9 +101,9 @@ impl UntypedModule {
     pub fn dependencies(&self, target: Target) -> Vec<(SmolStr, SrcSpan)> {
         self.iter_statements(target)
             .flat_map(|s| match s {
-                Statement::Import {
+                Statement::Import(Import {
                     module, location, ..
-                } => Some((module.clone(), *location)),
+                }) => Some((module.clone(), *location)),
                 _ => None,
             })
             .collect()
@@ -361,154 +361,177 @@ pub type TypedStatement = Statement<Arc<Type>, TypedExpr, SmolStr, SmolStr>;
 pub type UntypedStatement = Statement<(), UntypedExpr, (), ()>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Import a function defined outside of Gleam code.
+/// When compiling to Erlang the function could be implemented in Erlang
+/// or Elixir, when compiling to JavaScript it might be implemented in
+/// JavaScript or TypeScript.
+///
+/// # Example(s)
+///
+/// ```gleam
+/// pub external fn random_float() -> Float = "rand" "uniform"
+/// ```
+pub struct ExternalFunction<T> {
+    pub location: SrcSpan,
+    pub public: bool,
+    pub arguments: Vec<ExternalFnArg<T>>,
+    pub name: SmolStr,
+    pub return_: TypeAst,
+    pub return_type: T,
+    pub module: SmolStr,
+    pub fun: SmolStr,
+    pub doc: Option<SmolStr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A function definition
+///
+/// # Example(s)
+///
+/// ```gleam
+/// // Public function
+/// pub fn bar() -> String { ... }
+/// // Private function
+/// fn foo(x: Int) -> Int { ... }
+/// ```
+pub struct Function<T, Expr> {
+    pub location: SrcSpan,
+    pub end_position: u32,
+    pub name: SmolStr,
+    pub arguments: Vec<Arg<T>>,
+    pub body: Expr,
+    pub public: bool,
+    pub return_annotation: Option<TypeAst>,
+    pub return_type: T,
+    pub doc: Option<SmolStr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Import another Gleam module so the current module can use the types and
+/// values it defines.
+///
+/// # Example(s)
+///
+/// ```gleam
+/// import unix/cat
+/// // Import with alias
+/// import animal/cat as kitty
+/// ```
+pub struct Import<PackageName> {
+    pub location: SrcSpan,
+    pub module: SmolStr,
+    pub as_name: Option<SmolStr>,
+    pub unqualified: Vec<UnqualifiedImport>,
+    pub package: PackageName,
+}
+
+pub type UntypedModuleConstant = ModuleConstant<(), ()>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A certain fixed value that can be used in multiple places
+///
+/// # Example(s)
+///
+/// ```gleam
+/// pub const start_year = 2101
+/// pub const end_year = 2111
+/// ```
+pub struct ModuleConstant<T, ConstantRecordTag> {
+    pub doc: Option<SmolStr>,
+    pub location: SrcSpan,
+    pub public: bool,
+    pub name: SmolStr,
+    pub annotation: Option<TypeAst>,
+    pub value: Box<Constant<T, ConstantRecordTag>>,
+    pub type_: T,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A newly defined type with one or more constructors.
+/// Each variant of the custom type can contain different types, so the type is
+/// the product of the types contained by each variant.
+///
+/// This might be called an algebraic data type (ADT) or tagged union in other
+/// languages and type systems.
+///
+///
+/// # Example(s)
+///
+/// ```gleam
+/// pub type Cat {
+///   Cat(name: String, cuteness: Int)
+/// }
+/// ```
+pub struct CustomType<T> {
+    pub location: SrcSpan,
+    pub name: SmolStr,
+    pub parameters: Vec<SmolStr>,
+    pub public: bool,
+    pub constructors: Vec<RecordConstructor<T>>,
+    pub doc: Option<SmolStr>,
+    pub opaque: bool,
+    pub typed_parameters: Vec<T>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Import a type defined in another language.
+/// Nothing is known about the runtime characteristics of the type, we only
+/// know that it exists and that we have given it this name.
+///
+/// # Example(s)
+///
+/// ```gleam
+/// pub external type Queue(a)
+/// ```
+pub struct ExternalType {
+    pub location: SrcSpan,
+    pub public: bool,
+    pub name: SmolStr,
+    pub arguments: Vec<SmolStr>,
+    pub doc: Option<SmolStr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A new name for an existing type
+///
+/// # Example(s)
+///
+/// ```gleam
+/// pub type Headers =
+///   List(#(String, String))
+/// ```
+pub struct TypeAlias<T> {
+    pub location: SrcSpan,
+    pub alias: SmolStr,
+    pub parameters: Vec<SmolStr>,
+    pub type_ast: TypeAst,
+    pub type_: T,
+    pub public: bool,
+    pub doc: Option<SmolStr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement<T, Expr, ConstantRecordTag, PackageName> {
-    /// A function definition
-    ///
-    /// # Example(s)
-    ///
-    /// ```gleam
-    /// // Public function
-    /// pub fn bar() -> String { ... }
-    /// // Private function
-    /// fn foo(x: Int) -> Int { ... }
-    /// ```
-    Fn {
-        location: SrcSpan,
-        end_position: u32,
-        name: SmolStr,
-        arguments: Vec<Arg<T>>,
-        body: Expr,
-        public: bool,
-        return_annotation: Option<TypeAst>,
-        return_type: T,
-        doc: Option<SmolStr>,
-    },
+    Function(Function<T, Expr>),
 
-    /// A new name for an existing type
-    ///
-    /// # Example(s)
-    ///
-    /// ```gleam
-    /// pub type Headers =
-    ///   List(#(String, String))
-    /// ```
-    TypeAlias {
-        location: SrcSpan,
-        alias: SmolStr,
-        parameters: Vec<SmolStr>,
-        type_ast: TypeAst,
-        type_: T,
-        public: bool,
-        doc: Option<SmolStr>,
-    },
+    TypeAlias(TypeAlias<T>),
 
-    /// A newly defined type with one or more constructors.
-    /// Each variant of the custom type can contain different types, so the type is
-    /// the product of the types contained by each variant.
-    ///
-    /// This might be called an algebraic data type (ADT) or tagged union in other
-    /// languages and type systems.
-    ///
-    ///
-    /// # Example(s)
-    ///
-    /// ```gleam
-    /// pub type Cat {
-    ///   Cat(name: String, cuteness: Int)
-    /// }
-    /// ```
-    CustomType {
-        location: SrcSpan,
-        name: SmolStr,
-        parameters: Vec<SmolStr>,
-        public: bool,
-        constructors: Vec<RecordConstructor<T>>,
-        doc: Option<SmolStr>,
-        opaque: bool,
-        typed_parameters: Vec<T>,
-    },
+    CustomType(CustomType<T>),
 
-    /// Import a function defined outside of Gleam code.
-    /// When compiling to Erlang the function could be implemented in Erlang
-    /// or Elixir, when compiling to JavaScript it might be implemented in
-    /// JavaScript or TypeScript.
-    ///
-    /// # Example(s)
-    ///
-    /// ```gleam
-    /// pub external fn random_float() -> Float = "rand" "uniform"
-    /// ```
-    ExternalFn {
-        location: SrcSpan,
-        public: bool,
-        arguments: Vec<ExternalFnArg<T>>,
-        name: SmolStr,
-        return_: TypeAst,
-        return_type: T,
-        module: SmolStr,
-        fun: SmolStr,
-        doc: Option<SmolStr>,
-    },
+    ExternalFunction(ExternalFunction<T>),
 
-    /// Import a type defined in another language.
-    /// Nothing is known about the runtime characteristics of the type, we only
-    /// know that it exists and that we have given it this name.
-    ///
-    /// # Example(s)
-    ///
-    /// ```gleam
-    /// pub external type Queue(a)
-    /// ```
-    ExternalType {
-        location: SrcSpan,
-        public: bool,
-        name: SmolStr,
-        arguments: Vec<SmolStr>,
-        doc: Option<SmolStr>,
-    },
+    ExternalType(ExternalType),
 
-    /// Import another Gleam module so the current module can use the types and
-    /// values it defines.
-    ///
-    /// # Example(s)
-    ///
-    /// ```gleam
-    /// import unix/cat
-    /// // Import with alias
-    /// import animal/cat as kitty
-    /// ```
-    Import {
-        location: SrcSpan,
-        module: SmolStr,
-        as_name: Option<SmolStr>,
-        unqualified: Vec<UnqualifiedImport>,
-        package: PackageName,
-    },
+    Import(Import<PackageName>),
 
-    /// A certain fixed value that can be used in multiple places
-    ///
-    /// # Example(s)
-    ///
-    /// ```gleam
-    /// pub const start_year = 2101
-    /// pub const end_year = 2111
-    /// ```
-    ModuleConstant {
-        doc: Option<SmolStr>,
-        location: SrcSpan,
-        public: bool,
-        name: SmolStr,
-        annotation: Option<TypeAst>,
-        value: Box<Constant<T, ConstantRecordTag>>,
-        type_: T,
-    },
+    ModuleConstant(ModuleConstant<T, ConstantRecordTag>),
 }
 
 impl TypedStatement {
     pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
         // TODO: test. Note that the fn src-span covers the function head, not
         // the entire statement.
-        if let Statement::Fn { body, .. } = self {
+        if let Statement::Function(Function { body, .. }) = self {
             if let Some(expression) = body.find_node(byte_index) {
                 return Some(Located::Expression(expression));
             }
@@ -526,25 +549,25 @@ impl TypedStatement {
 impl<A, B, C, E> Statement<A, B, C, E> {
     pub fn location(&self) -> SrcSpan {
         match self {
-            Statement::Fn { location, .. }
-            | Statement::Import { location, .. }
-            | Statement::TypeAlias { location, .. }
-            | Statement::CustomType { location, .. }
-            | Statement::ExternalFn { location, .. }
-            | Statement::ExternalType { location, .. }
-            | Statement::ModuleConstant { location, .. } => *location,
+            Statement::Function(Function { location, .. })
+            | Statement::Import(Import { location, .. })
+            | Statement::TypeAlias(TypeAlias { location, .. })
+            | Statement::CustomType(CustomType { location, .. })
+            | Statement::ExternalFunction(ExternalFunction { location, .. })
+            | Statement::ExternalType(ExternalType { location, .. })
+            | Statement::ModuleConstant(ModuleConstant { location, .. }) => *location,
         }
     }
 
     pub fn put_doc(&mut self, new_doc: SmolStr) {
         match self {
-            Statement::Import { .. } => (),
-            Statement::Fn { doc, .. }
-            | Statement::TypeAlias { doc, .. }
-            | Statement::CustomType { doc, .. }
-            | Statement::ExternalFn { doc, .. }
-            | Statement::ExternalType { doc, .. }
-            | Statement::ModuleConstant { doc, .. } => {
+            Statement::Import(Import { .. }) => (),
+            Statement::Function(Function { doc, .. })
+            | Statement::TypeAlias(TypeAlias { doc, .. })
+            | Statement::CustomType(CustomType { doc, .. })
+            | Statement::ExternalFunction(ExternalFunction { doc, .. })
+            | Statement::ExternalType(ExternalType { doc, .. })
+            | Statement::ModuleConstant(ModuleConstant { doc, .. }) => {
                 let _ = std::mem::replace(doc, Some(new_doc));
             }
         }
@@ -993,6 +1016,7 @@ pub enum Pattern<Constructor, Type> {
 
     /// A reference to a variable in a bit string. This is always a variable
     /// being used rather than a new variable being assigned.
+    /// e.g. `assert <<y:size(somevar)>> = x`
     VarUsage {
         location: SrcSpan,
         name: SmolStr,
@@ -1070,6 +1094,13 @@ impl AssignName {
         match self {
             AssignName::Variable(name) => ArgNames::Named { name },
             AssignName::Discard(name) => ArgNames::Discard { name },
+        }
+    }
+
+    pub fn assigned_name(&self) -> Option<&str> {
+        match self {
+            AssignName::Variable(name) => Some(name),
+            AssignName::Discard(_) => None,
         }
     }
 }
@@ -1270,4 +1301,84 @@ pub enum TodoKind {
     Keyword,
     EmptyFunction,
     IncompleteUse,
+}
+
+#[derive(Debug, Default)]
+pub struct GroupedStatements {
+    pub functions: Vec<Function<(), UntypedExpr>>,
+    pub external_functions: Vec<ExternalFunction<()>>,
+    pub constants: Vec<UntypedModuleConstant>,
+    pub custom_types: Vec<CustomType<()>>,
+    pub imports: Vec<Import<()>>,
+    pub external_types: Vec<ExternalType>,
+    pub type_aliases: Vec<TypeAlias<()>>,
+}
+
+impl GroupedStatements {
+    pub fn new(statements: impl IntoIterator<Item = UntypedStatement>) -> Self {
+        let mut this = Self::default();
+
+        for statement in statements {
+            this.add(statement)
+        }
+
+        this
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn len(&self) -> usize {
+        let Self {
+            custom_types,
+            functions,
+            external_functions,
+            constants,
+            imports,
+            external_types,
+            type_aliases,
+        } = self;
+        functions.len()
+            + constants.len()
+            + imports.len()
+            + external_types.len()
+            + custom_types.len()
+            + type_aliases.len()
+            + external_functions.len()
+    }
+
+    fn add(&mut self, statement: UntypedStatement) {
+        match statement {
+            Statement::Import(i) => self.imports.push(i),
+            Statement::Function(f) => self.functions.push(f),
+            Statement::TypeAlias(t) => self.type_aliases.push(t),
+            Statement::CustomType(c) => self.custom_types.push(c),
+            Statement::ExternalType(t) => self.external_types.push(t),
+            Statement::ModuleConstant(c) => self.constants.push(c),
+            Statement::ExternalFunction(f) => self.external_functions.push(f),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ModuleFunction {
+    Internal(Function<(), UntypedExpr>),
+    External(ExternalFunction<()>),
+}
+
+impl ModuleFunction {
+    pub fn name(&self) -> &SmolStr {
+        match self {
+            Self::Internal(f) => &f.name,
+            Self::External(f) => &f.name,
+        }
+    }
+
+    pub fn location(&self) -> SrcSpan {
+        match self {
+            Self::Internal(f) => f.location,
+            Self::External(f) => f.location,
+        }
+    }
 }

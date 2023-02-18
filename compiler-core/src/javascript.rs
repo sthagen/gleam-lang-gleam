@@ -7,7 +7,14 @@ mod typescript;
 
 use std::path::Path;
 
-use crate::{ast::*, docvec, line_numbers::LineNumbers, pretty::*};
+use crate::{
+    ast::{
+        CustomType, ExternalFunction, ExternalType, Function, Import, ModuleConstant, TypeAlias, *,
+    },
+    docvec,
+    line_numbers::LineNumbers,
+    pretty::*,
+};
 use itertools::Itertools;
 use smol_str::SmolStr;
 
@@ -150,41 +157,42 @@ impl<'a> Generator<'a> {
 
     pub fn statement(&mut self, statement: &'a TypedStatement) -> Vec<Output<'a>> {
         match statement {
-            Statement::TypeAlias { .. } | Statement::ExternalType { .. } => vec![],
+            Statement::TypeAlias(TypeAlias { .. })
+            | Statement::ExternalType(ExternalType { .. }) => vec![],
 
             // Handled in collect_imports
-            Statement::Import { .. } => vec![],
+            Statement::Import(Import { .. }) => vec![],
 
             // Handled in collect_definitions
-            Statement::CustomType { .. } => vec![],
+            Statement::CustomType(CustomType { .. }) => vec![],
 
-            Statement::ModuleConstant {
+            Statement::ModuleConstant(ModuleConstant {
                 public,
                 name,
                 value,
                 ..
-            } => vec![self.module_constant(*public, name, value)],
+            }) => vec![self.module_constant(*public, name, value)],
 
-            Statement::Fn {
+            Statement::Function(Function {
                 arguments,
                 name,
                 body,
                 public,
                 ..
-            } => vec![self.module_function(*public, name, arguments, body)],
+            }) => vec![self.module_function(*public, name, arguments, body)],
 
-            Statement::ExternalFn {
+            Statement::ExternalFunction(ExternalFunction {
                 public,
                 name,
                 arguments,
                 module,
                 fun,
                 ..
-            } if module.is_empty() => vec![Ok(
+            }) if module.is_empty() => vec![Ok(
                 self.global_external_function(*public, name, arguments, fun)
             )],
 
-            Statement::ExternalFn { .. } => vec![],
+            Statement::ExternalFunction(ExternalFunction { .. }) => vec![],
         }
     }
 
@@ -260,19 +268,19 @@ impl<'a> Generator<'a> {
             .statements
             .iter()
             .flat_map(|statement| match statement {
-                Statement::CustomType {
+                Statement::CustomType(CustomType {
                     public,
                     constructors,
                     opaque,
                     ..
-                } => self.custom_type_definition(constructors, *public, *opaque),
+                }) => self.custom_type_definition(constructors, *public, *opaque),
 
-                Statement::Fn { .. }
-                | Statement::TypeAlias { .. }
-                | Statement::ExternalFn { .. }
-                | Statement::ExternalType { .. }
-                | Statement::Import { .. }
-                | Statement::ModuleConstant { .. } => vec![],
+                Statement::Function(Function { .. })
+                | Statement::TypeAlias(TypeAlias { .. })
+                | Statement::ExternalFunction(ExternalFunction { .. })
+                | Statement::ExternalType(ExternalType { .. })
+                | Statement::Import(Import { .. })
+                | Statement::ModuleConstant(ModuleConstant { .. }) => vec![],
             })
             .collect()
     }
@@ -282,28 +290,29 @@ impl<'a> Generator<'a> {
 
         for statement in &self.module.statements {
             match statement {
-                Statement::Fn { .. }
-                | Statement::TypeAlias { .. }
-                | Statement::CustomType { .. }
-                | Statement::ExternalType { .. }
-                | Statement::ModuleConstant { .. } => (),
-                Statement::ExternalFn { module, .. } if module.is_empty() => (),
+                Statement::Function(Function { .. })
+                | Statement::TypeAlias(TypeAlias { .. })
+                | Statement::CustomType(CustomType { .. })
+                | Statement::ExternalType(ExternalType { .. })
+                | Statement::ModuleConstant(ModuleConstant { .. }) => (),
+                Statement::ExternalFunction(ExternalFunction { module, .. })
+                    if module.is_empty() => {}
 
-                Statement::ExternalFn {
+                Statement::ExternalFunction(ExternalFunction {
                     public,
                     name,
                     module,
                     fun,
                     ..
-                } => self.register_external_function(&mut imports, *public, name, module, fun),
+                }) => self.register_external_function(&mut imports, *public, name, module, fun),
 
-                Statement::Import {
+                Statement::Import(Import {
                     module,
                     as_name,
                     unqualified,
                     package,
                     ..
-                } => {
+                }) => {
                     self.register_import(&mut imports, package, module, as_name, unqualified);
                 }
             }
@@ -470,17 +479,17 @@ impl<'a> Generator<'a> {
     fn register_module_definitions_in_scope(&mut self) {
         for statement in self.module.statements.iter() {
             match statement {
-                Statement::ExternalFn { name, .. }
-                | Statement::ModuleConstant { name, .. }
-                | Statement::Fn { name, .. } => self.register_in_scope(name),
+                Statement::ExternalFunction(ExternalFunction { name, .. })
+                | Statement::ModuleConstant(ModuleConstant { name, .. })
+                | Statement::Function(Function { name, .. }) => self.register_in_scope(name),
 
-                Statement::Import { unqualified, .. } => unqualified
+                Statement::Import(Import { unqualified, .. }) => unqualified
                     .iter()
                     .for_each(|unq_import| self.register_in_scope(unq_import.variable_name())),
 
-                Statement::TypeAlias { .. }
-                | Statement::CustomType { .. }
-                | Statement::ExternalType { .. } => (),
+                Statement::TypeAlias(TypeAlias { .. })
+                | Statement::CustomType(CustomType { .. })
+                | Statement::ExternalType(ExternalType { .. }) => (),
             }
         }
     }

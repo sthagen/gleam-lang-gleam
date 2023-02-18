@@ -171,12 +171,12 @@ expression.",
                     let title = if *imported {
                         "Unused imported item".into()
                     } else {
-                        "Unused private type constructor".into()
+                        "Unused private constructor".into()
                     };
                     let label = if *imported {
-                        "This imported type constructor is never used.".into()
+                        "This imported constructor is never used.".into()
                     } else {
-                        "This private type constructor is never used.".into()
+                        "This private constructor is never used.".into()
                     };
                     Diagnostic {
                         title,
@@ -283,5 +283,11 @@ expression.",
             .write_all(b"\n")
             .expect("error pretty buffer write space before");
         self.to_diagnostic().write(buffer);
+    }
+
+    pub fn to_pretty_string(&self) -> String {
+        let mut nocolor = Buffer::no_color();
+        self.pretty(&mut nocolor);
+        String::from_utf8(nocolor.into_inner()).expect("Warning printing produced invalid utf8")
     }
 }

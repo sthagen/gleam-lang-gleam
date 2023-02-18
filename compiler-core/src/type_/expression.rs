@@ -2,13 +2,16 @@ use itertools::Itertools;
 use vec1::Vec1;
 
 use super::{pipe::PipeTyper, *};
-use crate::ast::{
-    Arg, AssignName, AssignmentKind, BinOp, BitStringSegment, BitStringSegmentOption, CallArg,
-    Clause, ClauseGuard, Constant, HasLocation, RecordUpdateSpread, SrcSpan, TodoKind, TypeAst,
-    TypedArg, TypedClause, TypedClauseGuard, TypedConstant, TypedExpr, TypedMultiPattern,
-    UntypedArg, UntypedClause, UntypedClauseGuard, UntypedConstant,
-    UntypedConstantBitStringSegment, UntypedExpr, UntypedExprBitStringSegment, UntypedMultiPattern,
-    UntypedPattern, Use,
+use crate::{
+    analyse::infer_bit_string_segment_option,
+    ast::{
+        Arg, AssignName, AssignmentKind, BinOp, BitStringSegment, BitStringSegmentOption, CallArg,
+        Clause, ClauseGuard, Constant, HasLocation, RecordUpdateSpread, SrcSpan, TodoKind, TypeAst,
+        TypedArg, TypedClause, TypedClauseGuard, TypedConstant, TypedExpr, TypedMultiPattern,
+        UntypedArg, UntypedClause, UntypedClauseGuard, UntypedConstant,
+        UntypedConstantBitStringSegment, UntypedExpr, UntypedExprBitStringSegment,
+        UntypedMultiPattern, UntypedPattern, Use,
+    },
 };
 
 use im::hashmap;
@@ -1581,7 +1584,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
-    // TODO: extract the type annotation checking into a infer_module_const
+    // TODO: extract the type annotation checking into a crate::analyse::infer_module_const
     // function that uses this function internally
     pub fn infer_const(
         &mut self,
@@ -1794,18 +1797,17 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 let constructor = self.infer_value_constructor(&module, &name, &location)?;
                 match constructor.variant {
                     ValueConstructorVariant::ModuleConstant { .. }
-                    | ValueConstructorVariant::ModuleFn { .. } => Ok(Constant::Var {
+                    | ValueConstructorVariant::ModuleFn { .. }
+                    | ValueConstructorVariant::LocalVariable { .. } => Ok(Constant::Var {
                         location,
                         module,
                         name,
                         typ: Arc::clone(&constructor.type_),
                         constructor: Some(Box::from(constructor)),
                     }),
-                    // constructor.variant cannot be a LocalVariable because module constants can
-                    // only be defined at module scope. It also cannot be a Record because then
-                    // this constant would have been parsed as a Constant::Record. Therefore this
-                    // code is unreachable.
-                    _ => unreachable!(),
+                    // It cannot be a Record because then this constant would have been
+                    // parsed as a Constant::Record. Therefore this code is unreachable.
+                    ValueConstructorVariant::Record { .. } => unreachable!(),
                 }
             }
         }?;
