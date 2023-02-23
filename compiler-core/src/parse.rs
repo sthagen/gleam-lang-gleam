@@ -713,7 +713,7 @@ where
         let assignments = if let Some((_, Token::LArrow, _)) = self.tok0 {
             vec![]
         } else {
-            Parser::series_of(self, &Parser::parse_use_assignment, Some(&Token::Comma))?
+            Parser::series_of(self, &Parser::parse_pattern, Some(&Token::Comma))?
         };
 
         _ = self.expect_one(&Token::LArrow)?;
@@ -724,11 +724,6 @@ where
             assignments,
             call: Box::new(call),
         }))
-    }
-
-    fn parse_use_assignment(&mut self) -> Result<Option<(AssignName, SrcSpan)>, ParseError> {
-        let (start, name, end) = self.expect_assign_name()?;
-        Ok(Some((name, SrcSpan::new(start, end))))
     }
 
     // An assignment, with `Let` or `Assert` already consumed
@@ -1362,9 +1357,6 @@ where
             .map(|l| l.location().end)
             .unwrap_or_else(|| if is_anon { rbr_e } else { rpar_e });
         let body = match some_body {
-            None if is_anon => {
-                return self.next_tok_unexpected(vec!["The body of a function".into()]);
-            }
             None => UntypedExpr::Todo {
                 kind: TodoKind::EmptyFunction,
                 location: SrcSpan { start, end },

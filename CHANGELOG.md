@@ -6,8 +6,11 @@
 - The unused private type and constructor detection has been improved.
 - The argument `--runtime` now accepts `nodejs` as the name for that runtime.
   The previous name `node` is still accepted.
+- Patterns can now be used in `use` expressions.
 - Fixed a bug where string concatenation patterns could generate javascript
   code with wrong slice index due to ut8/ut16 length mismatch.
+- The Erlang compiler will no longer emit a duplicate warning for unused
+  variables.
 - Fixed a bug where typescript type definitions for types with unlabelled
   arguments where generated with an invalid identifier and unlabelled fields
   were generated with a name that didn't match the javascript implementation.
@@ -18,6 +21,10 @@
   unlabelled arguments could not be compiled when targeting JavaScript.
 - Fixed a bug where local variables in case guard constant expressions caused
   the compiler to panic.
+- The formatter now truncates meaningless zeroes of floats' fractional parts.
+- Anonymous functions may now have an empty body. The compiler will emit a
+  warning for functions without a body, and these functions will crash at
+  runtime if executed.
 
 ## v0.26.2 - 2023-02-03
 
