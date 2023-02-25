@@ -425,6 +425,15 @@ pub struct Import<PackageName> {
     pub unqualified: Vec<UnqualifiedImport>,
     pub package: PackageName,
 }
+impl<T> Import<T> {
+    pub(crate) fn variable_name(&self) -> SmolStr {
+        self.as_name
+            .as_ref()
+            .cloned()
+            .or_else(|| self.module.split('/').last().map(|s| s.into()))
+            .expect("Import could not identify variable name.")
+    }
+}
 
 pub type UntypedModuleConstant = ModuleConstant<(), ()>;
 
@@ -1139,8 +1148,21 @@ impl<A, B> HasLocation for Pattern<A, B> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssignmentKind {
+    // let x = ...
     Let,
+    // let assert x = ...
     Assert,
+    // assert x = ...
+    DeprecatedAssert,
+}
+
+impl AssignmentKind {
+    pub(crate) fn performs_exhaustiveness_check(&self) -> bool {
+        match self {
+            AssignmentKind::Let => true,
+            AssignmentKind::Assert | AssignmentKind::DeprecatedAssert => false,
+        }
+    }
 }
 
 // BitStrings

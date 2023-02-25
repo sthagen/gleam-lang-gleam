@@ -407,6 +407,13 @@ where
                 }
             }
 
+            Some((start, Token::Panic, end)) => {
+                let _ = self.next_tok();
+                UntypedExpr::Panic {
+                    location: SrcSpan { start, end },
+                }
+            }
+
             Some((start, Token::Hash, _)) => {
                 let _ = self.next_tok();
                 let _ = self.expect_one(&Token::LeftParen)?;
@@ -553,7 +560,7 @@ where
 
             Some((start, Token::Assert, _)) => {
                 let _ = self.next_tok();
-                self.parse_assignment(start, AssignmentKind::Assert)?
+                self.parse_assignment(start, AssignmentKind::DeprecatedAssert)?
             }
 
             Some((start, Token::Use, _)) => {

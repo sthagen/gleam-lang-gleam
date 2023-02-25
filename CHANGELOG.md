@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-- `let assert ... = ...` is now an accepted syntax for assertion assignments.
+- The new `panic` keyword can be used to crash the program. This may be useful
+  for situations in which a program has got into an unrecoverable invalid state.
+- `try` expressions are now deprecated and will be removed in a future version.
+- The new `gleam fix` command can be used to automatically convert `try`
+  expressions to `use` expressions.
+- `let assert ... = ...` is now the syntax for assertion assignments. The
+  `assert ... = ...` syntax is deprecated and will be removed in a future
+  version. Run `gleam format` to automatically update your code.
 - The unused private type and constructor detection has been improved.
 - The argument `--runtime` now accepts `nodejs` as the name for that runtime.
   The previous name `node` is still accepted.
@@ -50,7 +57,6 @@
   been improved.
 - Fixed a bug where the language server wouldn't analyse test code.
 - Fixed a bug where `assert` expressions can generate invalid Erlang.
-- Fixed a bug where `assert` expressions can generate Erlang that emits a
   warning.
 - Fixed a bug where arguments would be passed incorrectly to Deno.
 - Fixed a bug where defining variables that shadow external functions could
