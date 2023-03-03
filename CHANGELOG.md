@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Semicolons are no longer whitespace. An error will be emitted if one is
+  encountered.
+- Fixed a bug where the compiler used VSCode specific behaviour in the language
+  server which was incompatible with Helix.
+- Fixed a bug where string concatenation patterns on strings with escape
+  characters would generate javascript code with wrong slice index.
+
+## v0.27.0 - 2023-03-01
+
+- Fixed a bug where `panic` could generate incorrect JavaScript code.
+- New projects now require `gleam_stdlib` v0.27.
+
+## v0.27.0-rc1 - 2023-02-26
+
 - The new `panic` keyword can be used to crash the program. This may be useful
   for situations in which a program has got into an unrecoverable invalid state.
 - `try` expressions are now deprecated and will be removed in a future version.
@@ -10,6 +24,8 @@
 - `let assert ... = ...` is now the syntax for assertion assignments. The
   `assert ... = ...` syntax is deprecated and will be removed in a future
   version. Run `gleam format` to automatically update your code.
+- `gleam export hex-tarball` can be used to create a tarball suitable for
+  uploading to a Hex compatible package repository.
 - The unused private type and constructor detection has been improved.
 - The argument `--runtime` now accepts `nodejs` as the name for that runtime.
   The previous name `node` is still accepted.
@@ -22,8 +38,16 @@
   arguments where generated with an invalid identifier and unlabelled fields
   were generated with a name that didn't match the javascript implementation.
 - Fixed a bug in the type inferrer were unannotated functions that were
-  used before they were defined in a module could in rare cased be inferred with
-  a more general type than is correct.
+  used before they were defined in a module could in rare cased be inferred
+  with a more general type than is correct.
+- Fixed a bug where the LSP would fail to show type information on hover for
+  expressions after a use expression.
+- Fixed a bug where imported constants could generated incorrect JavaScript
+  code.
+- Fixed a bug where the LSP would perform codegen for dependencies.
+- Fixed a bug where the LSP would compile native dependencies needlessly.
+- Fixed a bug where integer division with large numbers on JavaScript could
+  produce incorrect results.
 - Fixed a bug where pattern matches on custom types with mixed labelled and
   unlabelled arguments could not be compiled when targeting JavaScript.
 - Fixed a bug where local variables in case guard constant expressions caused
@@ -32,6 +56,8 @@
 - Anonymous functions may now have an empty body. The compiler will emit a
   warning for functions without a body, and these functions will crash at
   runtime if executed.
+- Fixed bug where raised errors on JS would have an extra stack frame recorded
+  in them.
 
 ## v0.26.2 - 2023-02-03
 

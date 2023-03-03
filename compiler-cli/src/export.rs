@@ -1,5 +1,5 @@
 use gleam_core::{
-    build::{Mode, Options, Target},
+    build::{Codegen, Mode, Options, Target},
     paths, Result,
 };
 
@@ -28,7 +28,7 @@ pub(crate) fn erlang_shipment() -> Result<()> {
 
     // Build project in production mode
     let package = crate::build::main(Options {
-        perform_codegen: true,
+        codegen: Codegen::All,
         mode,
         target: Some(target),
     })?;
@@ -81,5 +81,20 @@ the entrypoint.sh script.
         entrypoint = entrypoint.to_string_lossy(),
     );
 
+    Ok(())
+}
+
+pub fn hex_tarball() -> Result<()> {
+    let config = crate::config::root_config()?;
+    let data: Vec<u8> = crate::publish::build_hex_tarball(&config)?;
+
+    let path = paths::build_tarball(&config.name, &config.version.to_string());
+    crate::fs::write_bytes(&path, &data)?;
+    println!(
+        "
+Your hex tarball has been generated in {}.
+",
+        &path.display()
+    );
     Ok(())
 }

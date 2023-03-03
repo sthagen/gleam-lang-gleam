@@ -70,7 +70,7 @@ macro_rules! assert_infer_with_module {
         let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
         ast.name = "my_module".into();
         let ast = $crate::analyse::infer_module(
-            crate::build::Target::Erlang,
+            $crate::build::Target::Erlang,
             &ids,
             ast,
             Origin::Src,
@@ -282,7 +282,7 @@ macro_rules! assert_with_module_error {
         let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
         ast.name = "my_module".into();
         let error = $crate::analyse::infer_module(
-            crate::build::Target::Erlang,
+            $crate::build::Target::Erlang,
             &ids,
             ast,
             Origin::Src,
@@ -312,7 +312,7 @@ macro_rules! assert_with_module_error {
         // Repeatedly create importable modules for each one given
         let (mut ast, _) = $crate::parse::parse_module($module_src).expect("syntax error");
         ast.name = $name.into();
-        let module = crate::analyse::infer_module(
+        let module = $crate::analyse::infer_module(
             crate::build::Target::Erlang,
             &ids,
             ast,
@@ -434,7 +434,7 @@ macro_rules! assert_warning {
         let (mut ast, _) = $crate::parse::parse_module($module_src).expect("syntax error");
         ast.name = $name.into();
         let module = $crate::analyse::infer_module(
-            crate::build::Target::Erlang,
+            $crate::build::Target::Erlang,
             &ids,
             ast,
             Origin::Src,
@@ -448,7 +448,7 @@ macro_rules! assert_warning {
 
         let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
         ast.name = "my_module".into();
-        let _ = crate::analyse::infer_module(
+        let _ = $crate::analyse::infer_module(
             crate::build::Target::Erlang,
             &ids,
             ast,
@@ -506,7 +506,7 @@ macro_rules! assert_no_warnings {
         let (mut ast, _) = $crate::parse::parse_module($module_src).expect("syntax error");
         ast.name = $name.into();
         let module = $crate::analyse::infer_module(
-            crate::build::Target::Erlang,
+            $crate::build::Target::Erlang,
             &ids,
             ast,
             Origin::Src,
@@ -520,7 +520,7 @@ macro_rules! assert_no_warnings {
 
         let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
         ast.name = "my_module".into();
-        let _ = crate::analyse::infer_module(
+        let _ = $crate::analyse::infer_module(
             crate::build::Target::Erlang,
             &ids,
             ast,
@@ -1369,7 +1369,7 @@ fn fn_annotation_reused() {
         "
         pub type Box(a) {
             Box(value: a)
-        };
+        }
         pub fn go(box1: Box(a)) {
             fn(box2: Box(a)) { box1.value == box2.value }
         }",
@@ -1384,7 +1384,7 @@ fn fn_annotation_reused() {
         "
         pub type Box(a) {
             Box(value: a)
-        };
+        }
         pub fn go(box1: Box(a)) {
             let x: Box(a) = box1
             fn(box2: Box(a)) { x.value == box2.value }
@@ -1481,7 +1481,7 @@ fn record_update_no_fields() {
         "
         pub type Person {
             Person(name: String, age: Int)
-        };
+        }
         pub fn identity(person: Person) {
             Person(..person)
         }",
@@ -1499,7 +1499,7 @@ fn record_update() {
         "
         pub type Person {
             Person(name: String, age: Int)
-        };
+        }
         pub fn update_name(person: Person, name: String) {
             Person(..person, name: name)
         }",
@@ -1517,7 +1517,7 @@ fn record_update_all_fields() {
         "
         pub type Person {
             Person(name: String, age: Int)
-        };
+        }
         pub fn update_person(person: Person, name: String, age: Int) {
             Person(..person, name: name, age: age, )
         }",
@@ -1535,7 +1535,7 @@ fn record_update_out_of_order() {
         "
         pub type Person {
             Person(name: String, age: Int)
-        };
+        }
         pub fn update_person(person: Person, name: String, age: Int) {
             Person(..person, age: age, name: name)
         }",
@@ -1553,7 +1553,7 @@ fn record_update_generic() {
         "
         pub type Box(a, b) {
             Box(left: a, right: b)
-        };
+        }
 
         pub fn combine_boxes(a: Box(Int, Bool), b: Box(Bool, Int)) {
             Box(..a, left: a.left + b.right, right: b.left)
@@ -1575,7 +1575,7 @@ fn record_update_generic_unannotated() {
         "
         pub type Box(a, b) {
             Box(left: a, right: b)
-        };
+        }
 
         pub fn combine_boxes(a: Box(t1, t2), b: Box(t2, t1)) {
             Box(..a, left: b.right, right: b.left)

@@ -224,7 +224,7 @@ fn assert_tests() -> List(Test) {
       assert_equal(
         Ok(1),
         {
-          assert Ok(_) = Ok(1)
+          let assert Ok(_) = Ok(1)
         },
       )
     }),
@@ -233,7 +233,7 @@ fn assert_tests() -> List(Test) {
       assert_equal(
         1,
         {
-          assert Ok(x) = Ok(1)
+          let assert Ok(x) = Ok(1)
           x
         },
       )
@@ -299,12 +299,12 @@ fn imported_custom_types_test() -> List(Test) {
     ),
     lazy_equality_test(
       "No fields assert assignment",
-      fn() { assert importable.NoFields = importable.NoFields },
+      fn() { let assert importable.NoFields = importable.NoFields },
       importable.NoFields,
     ),
     lazy_equality_test(
       "No fields unqualified assert assignment",
-      fn() { assert NoFields = importable.NoFields },
+      fn() { let assert NoFields = importable.NoFields },
       importable.NoFields,
     ),
     lazy_equality_test(
@@ -329,7 +329,7 @@ fn lazy_equality_test(name: String, left: fn() -> a, right: a) {
 }
 
 fn try_fn(result) {
-  try x = result
+  use x <- try_(result)
   Ok(x + 1)
 }
 
@@ -344,7 +344,7 @@ fn try_tests() -> List(Test) {
       assert_equal(
         Ok(2),
         {
-          try x = Ok(1)
+          use x <- try_(Ok(1))
           Ok(x + 1)
         },
       )
@@ -354,7 +354,7 @@ fn try_tests() -> List(Test) {
       assert_equal(
         Error(Nil),
         {
-          try x = Error(Nil)
+          use x <- try_(Error(Nil))
           Ok(x + 1)
         },
       )
@@ -1348,9 +1348,9 @@ fn negation_tests() {
     |> example(fn() { assert_equal(True, !!True) }),
     // This would crash if the right hand side evaluated
     "!True && assert False = True"
-    |> example(fn() { assert_equal(False, !True && assert False = True) }),
+    |> example(fn() { assert_equal(False, !True && let assert False = True) }),
     "!False || assert False = True"
-    |> example(fn() { assert_equal(True, !False || assert False = True) }),
+    |> example(fn() { assert_equal(True, !False || let assert False = True) }),
   ]
 }
 
@@ -1488,30 +1488,52 @@ fn string_pattern_matching_tests() {
         },
       )
     }),
+    "match backslash test"
+    |> example(fn() {
+      assert_equal(
+        " is a backslash",
+        case "\" is a backslash" {
+          "\"" <> rest -> rest
+        },
+      )
+    }),
+    "match newline test"
+    |> example(fn() {
+      assert_equal(
+        " is a newline",
+        case "\n is a newline" {
+          "\n" <> rest -> rest
+        },
+      )
+    }),
+    "match newline test"
+    |> example(fn() {
+      assert_equal(
+        " is a newline that escaped",
+        case "\\n is a newline that escaped" {
+          "\\n" <> rest -> rest
+        },
+      )
+    }),
   ]
 }
 
 if javascript {
   fn typescript_file_included_tests() {
+    let path = "./build/dev/javascript/language/ffi_typescript.ts"
     [
-      "./target-javascript/ffi_typescript.ts"
-      |> example(fn() {
-        assert_equal(file_exists("./target-javascript/ffi_typescript.ts"), True)
-      }),
+      path
+      |> example(fn() { assert_equal(file_exists(path), True) }),
     ]
   }
 }
 
 if erlang {
   fn typescript_file_included_tests() {
+    let path = "./build/dev/erlang/language/_gleam_artefacts/ffi_typescript.ts"
     [
-      "./target-erlang/_gleam_artefacts/ffi_typescript.ts"
-      |> example(fn() {
-        assert_equal(
-          file_exists("./target-erlang/_gleam_artefacts/ffi_typescript.ts"),
-          True,
-        )
-      }),
+      path
+      |> example(fn() { assert_equal(file_exists(path), True) }),
     ]
   }
 }
@@ -1562,4 +1584,11 @@ fn mixed_arg_match_tests() {
       assert_equal(#(x, y), #("fluffy", 10))
     }),
   ]
+}
+
+fn try_(result: Result(a, e), next: fn(a) -> Result(b, e)) -> Result(b, e) {
+  case result {
+    Ok(x) -> next(x)
+    Error(e) -> Error(e)
+  }
 }

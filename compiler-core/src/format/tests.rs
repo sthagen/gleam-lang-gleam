@@ -3093,6 +3093,59 @@ pub fn main() {
 }
 
 #[test]
+fn expr_case_clause_comments() {
+    assert_format!(
+        r#"fn main() {
+  case 1 {
+    // Hello Louis!
+    1 | 2 | 3 -> Nil
+  }
+}
+"#
+    );
+
+    assert_format!(
+        r#"fn main() {
+  case 1 {
+    // Hello José!
+    1 | 2 -> Nil
+    // Hello Louis!
+    n -> Nil
+  }
+}
+"#
+    );
+
+    assert_format!(
+        r#"fn main() {
+  case 1 {
+    // Hello Joe!
+    1 | 2 -> Nil
+
+    // Hello Louis!
+    n -> Nil
+  }
+}
+"#
+    );
+
+    assert_format!(
+        r#"fn main() {
+  case pat {
+    // Hello Ada
+    pat.Typeof("Boolean", pat) | pat.Typeof("Number", pat) -> True
+
+    // Hello Alan
+    pat.Typeof("Boolean", pat)
+    | pat.Typeof("Number", pat)
+    | pat.Typeof("String", pat) -> False
+  }
+}
+"#
+    );
+}
+
+#[test]
 fn field_access() {
     assert_format!(
         r#"fn main() {

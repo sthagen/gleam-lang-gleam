@@ -390,12 +390,12 @@ export function remainderInt(a, b) {
   if (b === 0) {
     return 0;
   } else {
-    return a % b | 0;
+    return a % b;
   }
 }
 
 export function divideInt(a, b) {
-  return divideFloat(a, b) | 0;
+  return Math.trunc(divideFloat(a, b))
 }
 
 export function divideFloat(a, b) {
@@ -406,12 +406,12 @@ export function divideFloat(a, b) {
   }
 }
 
-export function throwError(variant, module, line, fn, message, extra) {
+export function makeError(variant, module, line, fn, message, extra) {
   let error = new globalThis.Error(message);
   error.gleam_error = variant;
   error.module = module;
   error.line = line;
   error.fn = fn;
   for (let k in extra) error[k] = extra[k];
-  throw error;
+  return error;
 }

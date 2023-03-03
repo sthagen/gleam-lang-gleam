@@ -1276,6 +1276,7 @@ impl<'comments> Formatter<'comments> {
 
     fn clause<'a>(&mut self, clause: &'a UntypedClause, index: u32) -> Document<'a> {
         let space_before = self.pop_empty_lines(clause.location.start);
+        let comments = self.pop_comments(clause.location.start);
         let clause_doc = join(
             std::iter::once(&clause.pattern)
                 .chain(&clause.alternative_patterns)
@@ -1288,6 +1289,8 @@ impl<'comments> Formatter<'comments> {
             None => clause_doc,
             Some(guard) => clause_doc.append(" if ").append(self.clause_guard(guard)),
         };
+
+        let clause_doc = commented(clause_doc, comments);
 
         if index == 0 {
             clause_doc

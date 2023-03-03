@@ -80,7 +80,7 @@ pub use gleam_core::{
 };
 
 use gleam_core::{
-    build::{Mode, Options, Runtime, Target},
+    build::{Codegen, Mode, Options, Runtime, Target},
     hex::RetirementReason,
 };
 use hex::ApiKeyCommand as _;
@@ -156,7 +156,7 @@ enum Command {
         check: bool,
     },
 
-    /// Fix source code
+    /// Rewrite deprecated Gleam code
     Fix {
         /// Files to fix
         #[clap(default_value = ".")]
@@ -227,6 +227,7 @@ enum Command {
 pub enum ExportTarget {
     /// Precompiled Erlang, suitable for deployment.
     ErlangShipment,
+    HexTarball,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -433,6 +434,7 @@ fn main() {
         Command::LanguageServer => lsp::main(),
 
         Command::Export(ExportTarget::ErlangShipment) => export::erlang_shipment(),
+        Command::Export(ExportTarget::HexTarball) => export::hex_tarball(),
     };
 
     match result {
@@ -451,7 +453,7 @@ fn main() {
 
 fn command_check() -> Result<(), Error> {
     let _ = build::main(Options {
-        perform_codegen: false,
+        codegen: Codegen::DepsOnly,
         mode: Mode::Dev,
         target: None,
     })?;
@@ -460,7 +462,7 @@ fn command_check() -> Result<(), Error> {
 
 fn command_build(target: Option<Target>) -> Result<(), Error> {
     let _ = build::main(Options {
-        perform_codegen: true,
+        codegen: Codegen::All,
         mode: Mode::Dev,
         target,
     })?;

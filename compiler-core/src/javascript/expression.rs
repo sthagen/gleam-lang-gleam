@@ -987,7 +987,7 @@ impl<'module> Generator<'module> {
     where
         Fields: IntoIterator<Item = (&'a str, Document<'a>)>,
     {
-        self.tracker.throw_error_used = true;
+        self.tracker.make_error_used = true;
         let module = self.module_name.clone().to_doc().surround('"', '"');
         let function = self
             .function_name
@@ -998,7 +998,7 @@ impl<'module> Generator<'module> {
         let line = self.line_numbers.line_number(location.start).to_doc();
         let fields = wrap_object(fields.into_iter().map(|(k, v)| (k.to_doc(), Some(v))));
         docvec![
-            "throwError",
+            "throw makeError",
             wrap_args([
                 string(error_name),
                 module,
@@ -1232,7 +1232,13 @@ pub(crate) fn constant_expression<'a>(
             feature: "Bit string syntax".into(),
             location: *location,
         }),
-        Constant::Var { name, .. } => Ok(name.to_doc()),
+
+        Constant::Var { name, module, .. } => Ok({
+            match module {
+                None => name.to_doc(),
+                Some(module) => docvec!["$", module, ".", name],
+            }
+        }),
     }
 }
 
@@ -1320,6 +1326,7 @@ impl TypedExpr {
                 | TypedExpr::Todo { .. }
                 | TypedExpr::Call { .. }
                 | TypedExpr::Case { .. }
+                | TypedExpr::Panic { .. }
                 | TypedExpr::Sequence { .. }
                 | TypedExpr::Pipeline { .. }
                 | TypedExpr::Assignment { .. }
