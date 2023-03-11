@@ -2,6 +2,7 @@ use crate::{
     ast::{SrcSpan, TypedModule, UntypedModule},
     build::{
         dep_tree,
+        module_loader::SourceFingerprint,
         native_file_copier::NativeFileCopier,
         package_loader::{CodegenRequired, PackageLoader},
         Mode, Module, Origin, Package, Target,
@@ -14,6 +15,7 @@ use crate::{
     parse::extra::ModuleExtra,
     paths, type_,
     uid::UniqueIdGenerator,
+    warning::{TypeWarningEmitter, WarningEmitter},
     Error, Result, Warning,
 };
 use askama::Template;
@@ -87,7 +89,7 @@ where
     // TODO: return the cached modules.
     pub fn compile(
         mut self,
-        warnings: &mut Vec<Warning>,
+        warnings: &WarningEmitter,
         existing_modules: &mut im::HashMap<SmolStr, type_::Module>,
         already_defined_modules: &mut im::HashMap<SmolStr, PathBuf>,
     ) -> Result<Vec<Module>, Error> {
@@ -239,6 +241,7 @@ where
                 mtime: module.mtime,
                 codegen_performed: self.perform_codegen,
                 dependencies: module.dependencies_list(),
+                fingerprint: SourceFingerprint::new(&module.code),
             };
             self.io.write_bytes(&path, &info.to_binary())?;
         }
@@ -363,7 +366,7 @@ fn type_check(
     ids: &UniqueIdGenerator,
     mut parsed_modules: Vec<UncompiledModule>,
     module_types: &mut im::HashMap<SmolStr, type_::Module>,
-    warnings: &mut Vec<Warning>,
+    warnings: &WarningEmitter,
 ) -> Result<Vec<Module>, Error> {
     let mut modules = Vec::with_capacity(parsed_modules.len() + 1);
 
@@ -387,7 +390,7 @@ fn type_check(
     } in parsed_modules
     {
         tracing::debug!(module = ?name, "Type checking");
-        let mut type_warnings = Vec::new();
+
         let ast = crate::analyse::infer_module(
             target,
             ids,
@@ -395,19 +398,13 @@ fn type_check(
             origin,
             package_name,
             module_types,
-            &mut type_warnings,
+            &TypeWarningEmitter::new(path.clone(), code.clone(), warnings.clone()),
         )
         .map_err(|error| Error::Type {
             path: path.clone(),
             src: code.clone(),
             error,
         })?;
-
-        // Register any warnings emitted as type warnings
-        let type_warnings = type_warnings
-            .into_iter()
-            .map(|w| w.into_warning(path.clone(), code.clone()));
-        warnings.extend(type_warnings);
 
         // Register the types from this module so they can be imported into
         // other modules.
@@ -591,6 +588,7 @@ pub(crate) struct CacheMetadata {
     pub mtime: SystemTime,
     pub codegen_performed: bool,
     pub dependencies: Vec<SmolStr>,
+    pub fingerprint: SourceFingerprint,
 }
 
 impl CacheMetadata {

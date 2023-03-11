@@ -22,7 +22,7 @@ pub enum LexicalErrorType {
     BadUpname { name: String },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     pub error: ParseErrorType,
     pub location: SrcSpan,
@@ -48,10 +48,6 @@ impl ParseError {
             ParseErrorType::ExprLparStart => (
                 "This parenthesis cannot be understood here.",
                 vec!["Hint: To group expressions in gleam use \"{\" and \"}\"".into()],
-            ),
-            ParseErrorType::ExprThenlessTry => (
-                "A `try` cannot be the last expression.",
-                vec!["Hint: Try using the value?".into()],
             ),
             ParseErrorType::IncorrectName => (
                 "I'm expecting a lowercase name here.",
@@ -208,7 +204,7 @@ utf16_codepoint, utf32_codepoint, signed, unsigned, big, little, native, size, u
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseErrorType {
     ExpectedEqual,           // expect "="
     ExpectedExpr,            // after "->" in a case clause
@@ -218,7 +214,6 @@ pub enum ParseErrorType {
     ExpectedUpName,          // any token used when a UpName was expected
     ExpectedValue,           // no value after "="
     ExprLparStart,           // it seems "(" was used to start an expression
-    ExprThenlessTry,         // a try in the tail position of an expression sequence
     ExtraSeparator,          // #(1,,) <- the 2nd comma is an extra separator
     IncorrectName,           // UpName or DiscardName used when Name was expected
     IncorrectUpName,         // Name or DiscardName used when UpName was expected

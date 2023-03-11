@@ -59,7 +59,6 @@ mod config;
 mod dependencies;
 mod docs;
 mod export;
-mod fix;
 mod format;
 mod fs;
 mod hex;
@@ -154,13 +153,6 @@ enum Command {
         /// Check if inputs are formatted without changing them
         #[clap(long)]
         check: bool,
-    },
-
-    /// Rewrite deprecated Gleam code
-    Fix {
-        /// Files to fix
-        #[clap(default_value = ".")]
-        files: Vec<String>,
     },
 
     /// Start an Erlang shell
@@ -365,8 +357,8 @@ fn main() {
     let result = match Command::parse() {
         Command::Build {
             target,
-            warnings_as_errors: _,
-        } => command_build(target),
+            warnings_as_errors,
+        } => command_build(target, warnings_as_errors),
 
         Command::Check => command_check(),
 
@@ -381,8 +373,6 @@ fn main() {
             files,
             check,
         } => format::run(stdin, check, files),
-
-        Command::Fix { files } => fix::run(files),
 
         Command::Deps(Dependencies::List) => dependencies::list(),
 
@@ -453,6 +443,7 @@ fn main() {
 
 fn command_check() -> Result<(), Error> {
     let _ = build::main(Options {
+        warnings_as_errors: false,
         codegen: Codegen::DepsOnly,
         mode: Mode::Dev,
         target: None,
@@ -460,8 +451,9 @@ fn command_check() -> Result<(), Error> {
     Ok(())
 }
 
-fn command_build(target: Option<Target>) -> Result<(), Error> {
+fn command_build(target: Option<Target>, warnings_as_errors: bool) -> Result<(), Error> {
     let _ = build::main(Options {
+        warnings_as_errors,
         codegen: Codegen::All,
         mode: Mode::Dev,
         target,
@@ -488,12 +480,4 @@ fn initialise_logger() {
         .with_ansi(enable_colours)
         .without_time()
         .init();
-}
-
-fn print_warning(w: &Warning) {
-    let buffer_writer = cli::stderr_buffer_writer();
-    let mut buffer = buffer_writer.buffer();
-    w.pretty(&mut buffer);
-    #[allow(clippy::unwrap_used)]
-    buffer_writer.print(&buffer).unwrap();
 }

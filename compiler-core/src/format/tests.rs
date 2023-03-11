@@ -2,6 +2,7 @@ use super::*;
 
 use pretty_assertions::assert_eq;
 
+mod bit_string;
 mod record_update;
 mod use_;
 
@@ -3960,45 +3961,6 @@ fn precedence_rhs() {
 }
 
 #[test]
-fn expr_bit_string() {
-    // BitString construction
-
-    assert_format!(
-        "fn main() {
-  let a = 1
-  let x = <<1, a, 2:binary>>
-  let size = <<3:2, 4:size(3), 5:binary-size(4), 6:size(a)>>
-  let unit = <<7:unit(1), 8:binary-unit(2)>>
-  x
-}
-",
-    );
-
-    // BitString
-
-    assert_format!(
-        "fn main() {
-  let a = 1
-  let <<b, c, d:binary>> = <<1, a, 2:binary>>
-  b
-}
-",
-    );
-
-    assert_format!(
-        "fn main() {
-  let some_really_long_variable_name_to_force_wrapping = 1
-  let bits = <<
-    some_really_long_variable_name_to_force_wrapping,
-    some_really_long_variable_name_to_force_wrapping,
-  >>
-  bits
-}
-",
-    );
-}
-
-#[test]
 fn module_constants() {
     assert_format!(
         "pub const str = \"a string\"
@@ -4065,63 +4027,6 @@ fn concise_wrapping_of_simple_lists() {
   "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
   "eleven", "twelve",
 ]
-"#
-    );
-}
-
-#[test]
-fn concise_wrapping_of_simple_bit_strings() {
-    assert_format!(
-        "pub fn main() {
-  <<
-    100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400,
-    1500, 1600, 1700, 1800, 1900, 2000,
-  >>
-}
-"
-    );
-
-    assert_format!(
-        "pub fn main() {
-  <<
-    1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 1.0, 11.0, 12.0, 13.0, 14.0,
-    15.0, 16.0, 17.0, 18.0, 19.0, 2.0,
-  >>
-}
-"
-    );
-
-    assert_format!(
-        r#"pub fn main() {
-  <<
-    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-    "ten", "eleven", "twelve",
-  >>
-}
-"#
-    );
-
-    assert_format!(
-        "const values = <<
-  100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400,
-  1500, 1600, 1700, 1800, 1900, 2000,
->>
-"
-    );
-
-    assert_format!(
-        "const values = <<
-  1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 1.0, 11.0, 12.0, 13.0, 14.0, 15.0,
-  16.0, 17.0, 18.0, 19.0, 2.0,
->>
-"
-    );
-
-    assert_format!(
-        r#"const values = <<
-  "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-  "eleven", "twelve",
->>
 "#
     );
 }
@@ -4378,31 +4283,6 @@ fn assert_as_expression() {
 }
 
 #[test]
-fn block_containing_try() {
-    assert_format!(
-        "pub fn main() {
-  let _ = {
-    try _ = 1
-    2
-  }
-}
-"
-    );
-
-    assert_format!(
-        "pub fn main() {
-  #(
-    {
-      try _ = 1
-      2
-    },
-  )
-}
-"
-    );
-}
-
-#[test]
 fn case_in_call() {
     assert_format!(
         "fn clause_guard_tests(_fns) -> List(Test) {
@@ -4451,21 +4331,6 @@ if erlang {
   type Z {
     Z
   }
-}
-"
-    );
-}
-
-// https://github.com/gleam-lang/gleam/issues/1184
-#[test]
-fn try_empty_line() {
-    assert_format!(
-        "pub fn main(x) {
-  try _ = x
-  try _ = x
-  try _ = x
-
-  let x = x
 }
 "
     );
@@ -4973,11 +4838,225 @@ fn not_add() {
 fn deprecated_assert() {
     assert_format_rewrite!(
         r#"fn main(x) {
-  assert True = x
+  let assert True = x
 }
 "#,
         r#"fn main(x) {
   let assert True = x
+}
+"#
+    );
+}
+
+#[test]
+fn negate() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = 3
+  let b = -        a
+}
+"#,
+        r#"pub fn main() {
+  let a = 3
+  let b = -a
+}
+"#
+    );
+}
+
+#[test]
+fn double_negate() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = 3
+  let b = --a
+}
+"#,
+        r#"pub fn main() {
+  let a = 3
+  let b = - { -a }
+}
+"#
+    );
+}
+
+#[test]
+fn triple_negate() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = 3
+  let b = -  -   - a
+}
+"#,
+        r#"pub fn main() {
+  let a = 3
+  let b = - { - { -a } }
+}
+"#
+    );
+}
+
+#[test]
+fn binary_negate() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = 3
+  let b = -{a+3}
+}
+"#,
+        r#"pub fn main() {
+  let a = 3
+  let b = - { a + 3 }
+}
+"#
+    );
+}
+
+#[test]
+fn binary_double_negate() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = 3
+  let b = --{a + 3}
+}
+"#,
+        r#"pub fn main() {
+  let a = 3
+  let b = - { - { a + 3 } }
+}
+"#
+    );
+}
+
+#[test]
+fn repeated_negate_after_subtract() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = 3
+  let b = 4
+  let c = a--------b
+}
+"#,
+        r#"pub fn main() {
+  let a = 3
+  let b = 4
+  let c = a - - { - { - { - { - { - { -b } } } } } }
+}
+"#
+    );
+}
+
+#[test]
+fn wrap_long_line_with_int_negation() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = 3
+  let b = a * a * a * a * a * a * a * a * a * a * a * a * a *   { a * a * a * a * a * a * a * a * a * a }
+  let c = c * c * c * c * c * c * c * c * c * c * c * c * c * - { c * c * c * c * c * c * c * c * c * c }
+}
+"#,
+        r#"pub fn main() {
+  let a = 3
+  let b =
+    a * a * a * a * a * a * a * a * a * a * a * a * a * {
+      a * a * a * a * a * a * a * a * a * a
+    }
+  let c =
+    c * c * c * c * c * c * c * c * c * c * c * c * c * - {
+      c * c * c * c * c * c * c * c * c * c
+    }
+}
+"#
+    );
+}
+
+#[test]
+fn wrap_long_line_with_bool_negation() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = True
+  let b = a || a || a || a || a || a || a || a || a || a || a || a || a ||   { a || a || a || a || a || a || a || a || a || a }
+  let c = c || c || c || c || c || c || c || c || c || c || c || c || c || ! { c || c || c || c || c || c || c || c || c || c }
+}
+"#,
+        r#"pub fn main() {
+  let a = True
+  let b =
+    a || a || a || a || a || a || a || a || a || a || a || a || a || {
+      a || a || a || a || a || a || a || a || a || a
+    }
+  let c =
+    c || c || c || c || c || c || c || c || c || c || c || c || c || !{
+      c || c || c || c || c || c || c || c || c || c
+    }
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/1977
+#[test]
+fn preserve_single_expression_blocks() {
+    assert_format!(
+        r#"pub fn main(x) {
+  case x {
+    1 -> {
+      1
+    }
+    _ -> 2
+  }
+}
+"#
+    );
+}
+
+#[test]
+fn calling_pipeline0() {
+    assert_format!(
+        r#"pub fn main() {
+  {
+    one
+    |> two
+  }()
+}
+"#
+    );
+}
+
+#[test]
+fn calling_pipeline1() {
+    assert_format!(
+        r#"pub fn main() {
+  {
+    one
+    |> two
+  }(1)
+}
+"#
+    );
+}
+
+#[test]
+fn calling_pipeline2() {
+    assert_format!(
+        r#"pub fn main() {
+  {
+    one
+    |> two
+  }(1, 2)
+}
+"#
+    );
+}
+
+#[test]
+fn calling_pipeline_1_list() {
+    assert_format!(
+        r#"pub fn main() {
+  {
+    one
+    |> two
+  }([1, 2, 3])
 }
 "#
     );

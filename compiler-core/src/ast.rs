@@ -602,16 +602,11 @@ impl UnqualifiedImport {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Default)]
 pub enum Layer {
+    #[default]
     Value,
     Type,
-}
-
-impl Default for Layer {
-    fn default() -> Self {
-        Layer::Value
-    }
 }
 
 impl Layer {
@@ -1152,15 +1147,13 @@ pub enum AssignmentKind {
     Let,
     // let assert x = ...
     Assert,
-    // assert x = ...
-    DeprecatedAssert,
 }
 
 impl AssignmentKind {
     pub(crate) fn performs_exhaustiveness_check(&self) -> bool {
         match self {
             AssignmentKind::Let => true,
-            AssignmentKind::Assert | AssignmentKind::DeprecatedAssert => false,
+            AssignmentKind::Assert => false,
         }
     }
 }

@@ -29,7 +29,7 @@ macro_rules! wrap_format {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UnknownImportDetails {
     pub module: Name,
     pub location: crate::ast::SrcSpan,
@@ -38,7 +38,7 @@ pub struct UnknownImportDetails {
     pub modules: Vec<SmolStr>,
 }
 
-#[derive(Debug, PartialEq, Error)]
+#[derive(Debug, PartialEq, Error, Clone)]
 pub enum Error {
     #[error("failed to parse Gleam source code")]
     Parse {
@@ -353,9 +353,7 @@ fn did_you_mean(name: &str, options: &[SmolStr]) -> Option<String> {
 
 impl Error {
     pub fn pretty_string(&self) -> String {
-        let mut nocolor = Buffer::no_color();
-        self.pretty(&mut nocolor);
-        String::from_utf8(nocolor.into_inner()).expect("Error printing produced invalid utf8")
+        self.to_diagnostic().pretty_string()
     }
 
     pub fn pretty(&self, buffer: &mut Buffer) {
@@ -2258,16 +2256,16 @@ package to Hex.\n"
                         .to_string();
                 text.push_str(if *description_missing && *licence_missing {
                     r#"Add the licences and description fields to your gleam.toml file.
-                
+
 description = "A Gleam library"
 licences = ["Apache-2.0"]"#
                 } else if *description_missing {
                     r#"Add the description field to your gleam.toml file.
-                
+
 description = "A Gleam library""#
                 } else {
                     r#"Add the licences field to your gleam.toml file.
-                
+
 licences = ["Apache-2.0"]"#
                 });
                 Diagnostic {
@@ -2405,7 +2403,7 @@ fn hint_string_message() -> String {
     wrap("Strings can be joined using the `append` or `concat` functions from the `gleam/string` module")
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unformatted {
     pub source: PathBuf,
     pub destination: PathBuf,

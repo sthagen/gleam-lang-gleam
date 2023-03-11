@@ -595,15 +595,7 @@ impl<'comments> Formatter<'comments> {
             Some(t) => header.append(" -> ").append(self.type_ast(t)),
         };
 
-        header
-            .append(
-                break_(" {", " { ")
-                    .append(body)
-                    .nest(INDENT)
-                    .append(break_("", " "))
-                    .append("}"),
-            )
-            .group()
+        header.append(" ").append(wrap_block(body)).group()
     }
 
     fn sequence<'a>(&mut self, expressions: &'a [UntypedExpr]) -> Document<'a> {
@@ -625,18 +617,14 @@ impl<'comments> Formatter<'comments> {
         &mut self,
         pattern: &'a UntypedPattern,
         value: &'a UntypedExpr,
-        then: Option<&'a UntypedExpr>,
-        kind: Option<AssignmentKind>,
+        kind: AssignmentKind,
         annotation: &'a Option<TypeAst>,
     ) -> Document<'a> {
         let _ = self.pop_empty_lines(pattern.location().end);
 
         let keyword = match kind {
-            Some(AssignmentKind::Let) => "let ",
-            Some(AssignmentKind::Assert) => "let assert ",
-            Some(AssignmentKind::DeprecatedAssert) => "let assert ",
-            // TODO: remove when Try has been removed.
-            None => "try ",
+            AssignmentKind::Let => "let ",
+            AssignmentKind::Assert => "let assert ",
         };
 
         let pattern = self.pattern(pattern);
@@ -645,25 +633,11 @@ impl<'comments> Formatter<'comments> {
             .as_ref()
             .map(|a| ": ".to_doc().append(self.type_ast(a)));
 
-        let doc = if then.is_some() {
-            keyword.to_doc().force_break()
-        } else {
-            keyword.to_doc()
-        }
-        .append(pattern.append(annotation).group())
-        .append(" =")
-        .append(self.assigned_value(value));
-
-        if let Some(then) = then {
-            doc.append(if self.pop_empty_lines(then.start_byte_index()) {
-                lines(2)
-            } else {
-                line()
-            })
-            .append(self.expr(then))
-        } else {
-            doc
-        }
+        keyword
+            .to_doc()
+            .append(pattern.append(annotation).group())
+            .append(" =")
+            .append(self.assigned_value(value))
     }
 
     fn expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
@@ -684,7 +658,7 @@ impl<'comments> Formatter<'comments> {
 
             UntypedExpr::String { value, .. } => self.string(value),
 
-            UntypedExpr::Sequence { expressions, .. } => self.sequence(expressions),
+            UntypedExpr::Block { expressions, .. } => self.sequence(expressions),
 
             UntypedExpr::Var { name, .. } if name == CAPTURE_VARIABLE => "_".to_doc(),
 
@@ -692,7 +666,9 @@ impl<'comments> Formatter<'comments> {
 
             UntypedExpr::TupleIndex { tuple, index, .. } => self.tuple_index(tuple, *index),
 
-            UntypedExpr::Negate { value, .. } => self.negate(value),
+            UntypedExpr::NegateInt { value, .. } => self.negate_int(value),
+
+            UntypedExpr::NegateBool { value, .. } => self.negate_bool(value),
 
             UntypedExpr::Fn {
                 is_capture: true,
@@ -725,17 +701,9 @@ impl<'comments> Formatter<'comments> {
                 annotation,
                 kind,
                 ..
-            } => self.assignment(pattern, value, None, Some(*kind), annotation),
+            } => self.assignment(pattern, value, *kind, annotation),
 
             UntypedExpr::Use(use_) => self.use_(use_),
-
-            UntypedExpr::Try {
-                value,
-                pattern,
-                annotation,
-                then,
-                ..
-            } => self.assignment(pattern, value, Some(then), None, annotation),
 
             UntypedExpr::Case {
                 subjects, clauses, ..
@@ -759,7 +727,7 @@ impl<'comments> Formatter<'comments> {
             UntypedExpr::BitString { segments, .. } => bit_string(
                 segments
                     .iter()
-                    .map(|s| bit_string_segment(s, |e| self.expr(e))),
+                    .map(|s| bit_string_segment(s, |e| self.bit_string_segment_expr(e))),
                 segments.iter().all(|s| s.value.is_simple_constant()),
             ),
             UntypedExpr::RecordUpdate {
@@ -893,17 +861,41 @@ impl<'comments> Formatter<'comments> {
     }
 
     fn call<'a>(&mut self, fun: &'a UntypedExpr, args: &'a [CallArg<UntypedExpr>]) -> Document<'a> {
+        let expr = match fun {
+            UntypedExpr::PipeLine { .. } => break_block(self.expr(fun)),
+
+            UntypedExpr::BinOp { .. }
+            | UntypedExpr::Int { .. }
+            | UntypedExpr::Float { .. }
+            | UntypedExpr::String { .. }
+            | UntypedExpr::Block { .. }
+            | UntypedExpr::Var { .. }
+            | UntypedExpr::Fn { .. }
+            | UntypedExpr::List { .. }
+            | UntypedExpr::Call { .. }
+            | UntypedExpr::Assignment { .. }
+            | UntypedExpr::Use(_)
+            | UntypedExpr::Case { .. }
+            | UntypedExpr::FieldAccess { .. }
+            | UntypedExpr::Tuple { .. }
+            | UntypedExpr::TupleIndex { .. }
+            | UntypedExpr::Todo { .. }
+            | UntypedExpr::Panic { .. }
+            | UntypedExpr::BitString { .. }
+            | UntypedExpr::RecordUpdate { .. }
+            | UntypedExpr::NegateBool { .. }
+            | UntypedExpr::NegateInt { .. } => self.wrap_expr(fun),
+        };
+
         match args {
-            [arg] if is_breakable_expr(&arg.value) => self
-                .expr(fun)
+            [arg] if is_breakable_expr(&arg.value) => expr
                 .append("(")
                 .append(self.call_arg(arg))
                 .append(")")
                 .group(),
 
-            _ => self
-                .expr(fun)
-                .append(wrap_args(args.iter().map(|a| self.call_arg(a))))
+            _ => expr
+                .append(wrap_args(args.iter().map(|a| self.call_arg(a))).group())
                 .group(),
         }
     }
@@ -970,12 +962,7 @@ impl<'comments> Formatter<'comments> {
 
     pub fn operator_side<'a>(&mut self, doc: Document<'a>, op: u8, side: u8) -> Document<'a> {
         if op > side {
-            break_("{", "{ ")
-                .append(doc)
-                .nest(INDENT)
-                .append(break_("", " "))
-                .append("}")
-                .group()
+            wrap_block(doc).group()
         } else {
             doc
         }
@@ -1200,15 +1187,9 @@ impl<'comments> Formatter<'comments> {
 
     fn wrap_expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
         match expr {
-            UntypedExpr::Use(_)
-            | UntypedExpr::Sequence { .. }
-            | UntypedExpr::Assignment { .. }
-            | UntypedExpr::Try { .. } => "{"
-                .to_doc()
-                .append(line().append(self.expr(expr)).nest(INDENT))
-                .append(line())
-                .append("}")
-                .force_break(),
+            UntypedExpr::Use(_) | UntypedExpr::Block { .. } | UntypedExpr::Assignment { .. } => {
+                break_block(self.expr(expr))
+            }
 
             _ => self.expr(expr),
         }
@@ -1247,14 +1228,9 @@ impl<'comments> Formatter<'comments> {
 
     fn case_clause_value<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
         match expr {
-            UntypedExpr::Try { .. }
-            | UntypedExpr::Sequence { .. }
-            | UntypedExpr::Assignment { .. } => " {"
-                .to_doc()
-                .append(line().append(self.expr(expr)).nest(INDENT).group())
-                .append(line())
-                .append("}")
-                .force_break(),
+            UntypedExpr::Block { .. } | UntypedExpr::Assignment { .. } => {
+                " ".to_doc().append(break_block(self.expr(expr)))
+            }
 
             UntypedExpr::Fn { .. }
             | UntypedExpr::List { .. }
@@ -1529,10 +1505,22 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    fn negate<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
+    fn negate_bool<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
         match expr {
-            UntypedExpr::BinOp { .. } => docvec!["!{ ", self.expr(expr), " }"],
+            UntypedExpr::BinOp { .. } => "!".to_doc().append(wrap_block(self.expr(expr))),
             _ => docvec!["!", self.wrap_expr(expr)],
+        }
+    }
+
+    fn negate_int<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
+        match expr {
+            // Always nest repeated negation in a block to avoid confusion with
+            // the pre-decrement operator (which does not exist)
+            UntypedExpr::BinOp { .. } | UntypedExpr::NegateInt { .. } => {
+                "- ".to_doc().append(wrap_block(self.expr(expr)))
+            }
+
+            _ => docvec!["-", self.wrap_expr(expr)],
         }
     }
 
@@ -1554,6 +1542,34 @@ impl<'comments> Formatter<'comments> {
                 .chain(assignments);
             let left = concat(left).nest(INDENT).append(break_("", " ")).group();
             docvec![left, "<-", call].group()
+        }
+    }
+
+    fn bit_string_segment_expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
+        match expr {
+            UntypedExpr::BinOp { .. } => wrap_block(self.expr(expr)),
+
+            UntypedExpr::Int { .. }
+            | UntypedExpr::Float { .. }
+            | UntypedExpr::String { .. }
+            | UntypedExpr::Var { .. }
+            | UntypedExpr::Fn { .. }
+            | UntypedExpr::List { .. }
+            | UntypedExpr::Call { .. }
+            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Assignment { .. }
+            | UntypedExpr::Case { .. }
+            | UntypedExpr::FieldAccess { .. }
+            | UntypedExpr::Tuple { .. }
+            | UntypedExpr::TupleIndex { .. }
+            | UntypedExpr::Todo { .. }
+            | UntypedExpr::Panic { .. }
+            | UntypedExpr::BitString { .. }
+            | UntypedExpr::RecordUpdate { .. }
+            | UntypedExpr::NegateBool { .. }
+            | UntypedExpr::NegateInt { .. }
+            | UntypedExpr::Use(_)
+            | UntypedExpr::Block { .. } => self.wrap_expr(expr),
         }
     }
 }
@@ -1621,6 +1637,22 @@ impl<'a> Documentable<'a> for &'a BinOp {
         }
         .to_doc()
     }
+}
+
+pub fn break_block(doc: Document<'_>) -> Document<'_> {
+    "{".to_doc()
+        .append(line().append(doc).nest(INDENT))
+        .append(line())
+        .append("}")
+        .force_break()
+}
+
+pub fn wrap_block(doc: Document<'_>) -> Document<'_> {
+    break_("{", "{ ")
+        .append(doc)
+        .nest(INDENT)
+        .append(break_("", " "))
+        .append("}")
 }
 
 pub fn wrap_args<'a, I>(args: I) -> Document<'a>
@@ -1845,7 +1877,7 @@ fn is_breakable_expr(expr: &UntypedExpr) -> bool {
     matches!(
         expr,
         UntypedExpr::Fn { .. }
-            | UntypedExpr::Sequence { .. }
+            | UntypedExpr::Block { .. }
             | UntypedExpr::Assignment { .. }
             | UntypedExpr::Call { .. }
             | UntypedExpr::Case { .. }

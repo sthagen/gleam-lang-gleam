@@ -9,12 +9,12 @@ import shadowed_module.{ShadowPerson}
 import ffi.{file_exists}
 import gleam
 
-pub fn main() -> Int {
+pub fn main() {
   let stats =
     test.run([
-      suite("try", try_tests()),
       suite("ints", int_tests()),
       suite("pipes", pipes_tests()),
+      suite("blocks", block_tests()),
       suite("assert", assert_tests()),
       suite("floats", float_tests()),
       suite("prelude", prelude_tests()),
@@ -40,7 +40,8 @@ pub fn main() -> Int {
       suite("record access", record_access_tests()),
       suite("shadowed module", shadowed_module_tests()),
       suite("unicode overflow", unicode_overflow_tests()),
-      suite("negation", negation_tests()),
+      suite("bool negation", bool_negation_tests()),
+      suite("number negation", int_negation_tests()),
       suite("bit string match", bit_string_match_tests()),
       suite("anonymous functions", anonymous_function_tests()),
       suite("string pattern matching", string_pattern_matching_tests()),
@@ -48,10 +49,10 @@ pub fn main() -> Int {
       suite("custom types mixed args match", mixed_arg_match_tests()),
     ])
 
-  case stats.failures {
+  ffi.halt(case stats.failures {
     0 -> 0
     _ -> 1
-  }
+  })
 }
 
 fn int_tests() -> List(Test) {
@@ -219,7 +220,7 @@ fn pipes_tests() -> List(Test) {
 
 fn assert_tests() -> List(Test) {
   [
-    "assert Ok(_)"
+    "let assert Ok(_)"
     |> example(fn() {
       assert_equal(
         Ok(1),
@@ -228,7 +229,7 @@ fn assert_tests() -> List(Test) {
         },
       )
     }),
-    "assert Ok(x)"
+    "let assert Ok(x)"
     |> example(fn() {
       assert_equal(
         1,
@@ -326,40 +327,6 @@ fn equality_test(name: String, left: a, right: a) {
 
 fn lazy_equality_test(name: String, left: fn() -> a, right: a) {
   example(name, fn() { assert_equal(left(), right) })
-}
-
-fn try_fn(result) {
-  use x <- try_(result)
-  Ok(x + 1)
-}
-
-fn try_tests() -> List(Test) {
-  [
-    "ok"
-    |> example(fn() { assert_equal(Ok(2), try_fn(Ok(1))) }),
-    "error"
-    |> example(fn() { assert_equal(Error("error"), try_fn(Error("error"))) }),
-    "ok in block"
-    |> example(fn() {
-      assert_equal(
-        Ok(2),
-        {
-          use x <- try_(Ok(1))
-          Ok(x + 1)
-        },
-      )
-    }),
-    "error in block"
-    |> example(fn() {
-      assert_equal(
-        Error(Nil),
-        {
-          use x <- try_(Error(Nil))
-          Ok(x + 1)
-        },
-      )
-    }),
-  ]
 }
 
 fn true() {
@@ -1029,7 +996,7 @@ fn equality_tests() -> List(Test) {
     |> example(fn() { assert_equal(True, <<>> == <<>>) }),
     "<<>> != <<>>"
     |> example(fn() { assert_equal(False, <<>> != <<>>) }),
-    // Bit strings
+    // BitStrings
     "<<1, 2>> == <<1, 2>>"
     |> example(fn() { assert_equal(True, <<1, 2>> == <<1, 2>>) }),
     "<<1, 2>> != <<1, 2>>"
@@ -1161,6 +1128,28 @@ fn precedence_tests() -> List(Test) {
     |> example(fn() { assert_equal(4, 2 * { 3 + 1 } / 2) }),
     "5 + 3 / 3 * 2 - 6 * 4"
     |> example(fn() { assert_equal(-17, 5 + 3 / 3 * 2 - 6 * 4) }),
+    "-5 + -3 / -3 * -2 - -6 * -4"
+    |> example(fn() { assert_equal(-31, -5 + -3 / -3 * -2 - -6 * -4) }),
+    "a + b / c * d - e * f"
+    |> example(fn() {
+      let a = 5
+      let b = 3
+      let c = 3
+      let d = 2
+      let e = 6
+      let f = 4
+      assert_equal(-17, a + b / c * d - e * f)
+    }),
+    "-a + -b / -c * -d - -e * -f"
+    |> example(fn() {
+      let a = 5
+      let b = 3
+      let c = 3
+      let d = 2
+      let e = 6
+      let f = 4
+      assert_equal(-31, -a + -b / -c * -d - -e * -f)
+    }),
   ]
 }
 
@@ -1336,7 +1325,7 @@ fn tail_recursive_accumulate_down(x, y) {
   }
 }
 
-fn negation_tests() {
+fn bool_negation_tests() {
   [
     "!True"
     |> example(fn() { assert_equal(False, !True) }),
@@ -1351,6 +1340,60 @@ fn negation_tests() {
     |> example(fn() { assert_equal(False, !True && let assert False = True) }),
     "!False || assert False = True"
     |> example(fn() { assert_equal(True, !False || let assert False = True) }),
+  ]
+}
+
+fn int_negation_tests() {
+  [
+    "-a"
+    |> example(fn() {
+      let a = 3
+      let b = -a
+      assert_equal(-3, b)
+    }),
+    "-{-a}"
+    |> example(fn() {
+      let a = 3
+      let b = - { -a }
+      assert_equal(3, b)
+    }),
+    "-{-{-a}}"
+    |> example(fn() {
+      let a = 3
+      let b = - { - { -a } }
+      assert_equal(-3, b)
+    }),
+    "a - - b"
+    |> example(fn() {
+      let a = 3
+      let b = -a
+      let c = a - -b
+      assert_equal(0, c)
+    }),
+    "a - - - - - - b"
+    |> example(fn() {
+      let a = 3
+      let b = -a
+      let c = a - - { - { - { - { -b } } } }
+      assert_equal(0, c)
+    }),
+    "- a - {- {b}}"
+    |> example(fn() {
+      let a = 3
+      let b = -a
+      let c = -a - -b
+      assert_equal(-6, c)
+    }),
+    "-abs(-6)"
+    |> example(fn() {
+      let abs = fn(value) {
+        case value {
+          value if value > 0 -> value
+          _ -> -value
+        }
+      }
+      assert_equal(-6, -abs(-6))
+    }),
   ]
 }
 
@@ -1586,9 +1629,22 @@ fn mixed_arg_match_tests() {
   ]
 }
 
-fn try_(result: Result(a, e), next: fn(a) -> Result(b, e)) -> Result(b, e) {
-  case result {
-    Ok(x) -> next(x)
-    Error(e) -> Error(e)
-  }
+fn block_tests() {
+  [
+    // https://github.com/gleam-lang/gleam/issues/1991
+    "let x = 1 let _ = { let x = 2 x } x"
+    |> example(fn() {
+      assert_equal(
+        {
+          let x = 1
+          let _ = {
+            let x = 2
+            x
+          }
+          x
+        },
+        1,
+      )
+    }),
+  ]
 }

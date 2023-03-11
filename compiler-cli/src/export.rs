@@ -28,15 +28,13 @@ pub(crate) fn erlang_shipment() -> Result<()> {
 
     // Build project in production mode
     let package = crate::build::main(Options {
+        warnings_as_errors: false,
         codegen: Codegen::All,
         mode,
         target: Some(target),
     })?;
 
-    for entry in crate::fs::read_dir(&build)?
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in crate::fs::read_dir(&build)?.filter_map(Result::ok) {
         let path = entry.path();
 
         // We are only interested in package directories

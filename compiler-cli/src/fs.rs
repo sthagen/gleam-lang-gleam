@@ -4,7 +4,8 @@ use gleam_core::{
         CommandExecutor, Content, DirEntry, FileSystemIO, FileSystemWriter, OutputFile, ReadDir,
         Stdio, WrappedReader,
     },
-    Result,
+    warning::WarningEmitterIO,
+    Result, Warning,
 };
 use lazy_static::lazy_static;
 use std::{
@@ -319,7 +320,6 @@ pub fn gleam_files_excluding_gitignore(dir: &Path) -> impl Iterator<Item = PathB
         .follow_links(true)
         .require_git(false)
         .build()
-        .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .map(ignore::DirEntry::into_path)
@@ -345,7 +345,6 @@ pub fn private_files_excluding_gitignore(dir: &Path) -> impl Iterator<Item = Pat
         .follow_links(true)
         .require_git(false)
         .build()
-        .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .map(ignore::DirEntry::into_path)
@@ -424,7 +423,6 @@ pub fn module_caches_paths(
     path: impl AsRef<Path> + Debug,
 ) -> Result<impl Iterator<Item = PathBuf>, Error> {
     Ok(read_dir(path)?
-        .into_iter()
         .filter_map(Result::ok)
         .map(|f| f.path())
         .filter(|p| p.extension().and_then(OsStr::to_str) == Some("cache")))
@@ -610,4 +608,18 @@ pub fn canonicalise(path: &Path) -> Result<PathBuf, Error> {
         path: PathBuf::from(path),
         err: Some(err.to_string()),
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConsoleWarningEmitter;
+
+impl WarningEmitterIO for ConsoleWarningEmitter {
+    fn emit_warning(&self, warning: Warning) {
+        let buffer_writer = crate::cli::stderr_buffer_writer();
+        let mut buffer = buffer_writer.buffer();
+        warning.pretty(&mut buffer);
+        buffer_writer
+            .print(&buffer)
+            .expect("Writing warning to stderr");
+    }
 }

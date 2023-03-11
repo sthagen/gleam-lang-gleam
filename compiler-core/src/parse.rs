@@ -9,7 +9,7 @@
 //     One or more Expression Units separated by an operator
 //
 //   Binding:
-//     (let|assert|try) name (:TypeAnnotation)? = Expression
+//     (let|let assert|use) name (:TypeAnnotation)? = Expression
 //
 //   Expression Sequence:
 //     * One or more Expressions
@@ -305,18 +305,18 @@ where
         let mut last_op_start = 0;
         let mut last_op_end = 0;
         loop {
-            if let Some(unit) = self.parse_expression_unit()? {
-                estack.push(unit)
-            } else if estack.is_empty() {
-                return Ok(None);
-            } else {
-                return parse_error(
-                    ParseErrorType::OpNakedRight,
-                    SrcSpan {
-                        start: last_op_start,
-                        end: last_op_end,
-                    },
-                );
+            match self.parse_expression_unit()? {
+                Some(unit) => estack.push(unit),
+                _ if estack.is_empty() => return Ok(None),
+                _ => {
+                    return parse_error(
+                        ParseErrorType::OpNakedRight,
+                        SrcSpan {
+                            start: last_op_start,
+                            end: last_op_end,
+                        },
+                    );
+                }
             }
 
             if let Some((op_s, t, op_e)) = self.tok0.take() {
@@ -347,6 +347,15 @@ where
             &mut estack,
             &do_reduce_expression,
         ))
+    }
+
+    fn parse_expression_unit_collapsing_single_value_blocks(
+        &mut self,
+    ) -> Result<Option<UntypedExpr>, ParseError> {
+        match self.parse_expression_unit()? {
+            Some(expression) => Ok(Some(collapse_single_value_block(expression))),
+            None => Ok(None),
+        }
     }
 
     // examples:
@@ -466,7 +475,7 @@ where
                 }
             }
 
-            // Bitstring
+            // BitString
             Some((start, Token::LtLt, _)) => {
                 let _ = self.next_tok();
                 let segments = Parser::series_of(
@@ -474,7 +483,7 @@ where
                     &|s| {
                         Parser::parse_bit_string_segment(
                             s,
-                            &Parser::parse_expression_unit,
+                            &Parser::parse_expression_unit_collapsing_single_value_blocks,
                             &Parser::expect_expression,
                             &bit_string_expr_int,
                         )
@@ -511,16 +520,10 @@ where
                 }
             }
 
-            // expression group  "{" "}"
+            // expression block  "{" "}"
             Some((start, Token::LeftBrace, _)) => {
                 let _ = self.next_tok();
-                let expr = self.parse_expression_seq()?;
-                let (_, end) = self.expect_one(&Token::RightBrace)?;
-                if let Some((expr, _)) = expr {
-                    expr
-                } else {
-                    return parse_error(ParseErrorType::NoExpression, SrcSpan { start, end });
-                }
+                self.parse_block(start)?
             }
 
             // case
@@ -558,11 +561,6 @@ where
                 self.parse_assignment(start, kind)?
             }
 
-            Some((start, Token::Assert, _)) => {
-                let _ = self.next_tok();
-                self.parse_assignment(start, AssignmentKind::DeprecatedAssert)?
-            }
-
             Some((start, Token::Use, _)) => {
                 let _ = self.next_tok();
                 self.parse_use(start)?
@@ -577,12 +575,32 @@ where
             Some((start, Token::Bang, _end)) => {
                 let _ = self.next_tok();
                 match self.parse_expression_unit()? {
-                    Some(value) => UntypedExpr::Negate {
+                    Some(value) => UntypedExpr::NegateBool {
                         location: SrcSpan {
                             start,
                             end: value.location().end,
                         },
-                        value: Box::from(value),
+                        value: Box::from(collapse_single_value_block(value)),
+                    },
+                    None => {
+                        return parse_error(
+                            ParseErrorType::ExpectedExpr,
+                            SrcSpan { start, end: start },
+                        )
+                    }
+                }
+            }
+
+            // Int negation
+            Some((start, Token::Minus, _end)) => {
+                let _ = self.next_tok();
+                match self.parse_expression_unit()? {
+                    Some(value) => UntypedExpr::NegateInt {
+                        location: SrcSpan {
+                            start,
+                            end: value.location().end,
+                        },
+                        value: Box::from(collapse_single_value_block(value)),
                     },
                     None => {
                         return parse_error(
@@ -622,7 +640,7 @@ where
                             expr = UntypedExpr::TupleIndex {
                                 location: SrcSpan { start, end },
                                 index,
-                                tuple: Box::new(expr),
+                                tuple: Box::new(collapse_single_value_block(expr)),
                             }
                         } else {
                             return parse_error(
@@ -637,7 +655,7 @@ where
                         expr = UntypedExpr::FieldAccess {
                             location: SrcSpan { start, end },
                             label,
-                            container: Box::new(expr),
+                            container: Box::new(collapse_single_value_block(expr)),
                         }
                     }
 
@@ -690,7 +708,7 @@ where
                     // Call
                     let args = self.parse_fn_args()?;
                     let (_, end) = self.expect_one(&Token::RightParen)?;
-                    match make_call(expr, args, start, end) {
+                    match make_call(collapse_single_value_block(expr), args, start, end) {
                         Ok(e) => expr = e,
                         Err(_) => {
                             return parse_error(
@@ -774,73 +792,68 @@ where
 
     // examples:
     //   let pattern = expr
-    //   assert pattern: Type = expr
-    //   try pattern = expr
+    //   let assert pattern: Type = expr
     //   expr expr
     //   expr
     //
     //   In order to parse an expr sequence, you must try to parse an expr, if it is a `try`
     //   you MUST parse another expr, if it is some other expr, you MAY parse another expr
     fn parse_expression_seq(&mut self) -> Result<Option<(UntypedExpr, u32)>, ParseError> {
-        // assignment
-        if let Some(start) = self.maybe_try_start() {
-            let pattern = if let Some(p) = self.parse_pattern()? {
-                p
-            } else {
-                // DUPE: 62884
-                return self.next_tok_unexpected(vec!["A pattern".into()])?;
-            };
-            let annotation = self.parse_type_annotation(&Token::Colon, false)?;
-            let (eq_s, eq_e) = self.expect_one(&Token::Equal)?;
-            let value = self.parse_expression()?;
-            let then = self.parse_expression_seq()?;
-            match (value, then) {
-                (Some(value), Some((then, end))) => Ok(Some((
-                    UntypedExpr::Try {
-                        location: SrcSpan { start, end },
-                        value: Box::new(value),
-                        pattern,
-                        annotation,
-                        then: Box::new(then),
-                    },
-                    end,
-                ))),
+        let mut expressions = vec![];
+        let mut start = None;
+        let mut end = 0;
 
-                (None, _) => parse_error(
-                    ParseErrorType::ExpectedValue,
-                    SrcSpan {
-                        start: eq_s,
-                        end: eq_e,
-                    },
-                ),
-                (Some(val), None) => parse_error(
-                    ParseErrorType::ExprThenlessTry,
-                    SrcSpan {
-                        start,
-                        end: val.location().end,
-                    },
-                ),
+        // Try and parse as many expressions as possible
+        while let Some(expression) = self.parse_expression()? {
+            if start.is_none() {
+                start = Some(expression.location().start);
             }
-        } else if let Some(expression) = self.parse_expression()? {
-            let mut expression = expression;
-            while let Some((next, _)) = self.parse_expression_seq()? {
-                expression = expression.append_in_sequence(next);
-            }
-            let end = expression.location().end;
-            Ok(Some((expression, end)))
+            end = expression.location().end;
+            expressions.push(expression);
+        }
+
+        // If there are no expressions, return None
+        if expressions.is_empty() {
+            return Ok(None);
+        }
+
+        // If there is only one expression, return it
+        if expressions.len() == 1 {
+            let expression = expressions.pop().expect("existance checked in conditional");
+            return Ok(Some((expression, end)));
+        }
+
+        // Otherwise return all the expressions wrapped in a block
+        let location = SrcSpan::new(start.unwrap_or(0), end);
+        let expression = UntypedExpr::Block {
+            location,
+            expressions,
+        };
+        Ok(Some((expression, end)))
+    }
+
+    fn parse_expression_or_block(&mut self) -> Result<Option<UntypedExpr>, ParseError> {
+        if let Some((start, Token::LeftBrace, _)) = self.tok0.as_ref() {
+            let start = *start;
+            _ = self.next_tok();
+            Ok(Some(self.parse_block(start)?))
         } else {
-            Ok(None)
+            self.parse_expression()
         }
     }
 
-    // try
-    fn maybe_try_start(&mut self) -> Option<u32> {
-        match self.tok0 {
-            Some((start, Token::Try, _)) => {
-                let _ = self.next_tok();
-                Some(start)
-            }
-            _ => None,
+    fn parse_block(&mut self, start: u32) -> Result<UntypedExpr, ParseError> {
+        let body = self.parse_expression_seq()?;
+        let (_, end) = self.expect_one(&Token::RightBrace)?;
+        match body {
+            None => parse_error(ParseErrorType::NoExpression, SrcSpan { start, end }),
+
+            Some((expression @ UntypedExpr::Block { .. }, _)) => Ok(expression),
+
+            Some((expression, _)) => Ok(UntypedExpr::Block {
+                location: SrcSpan::new(start, end),
+                expressions: vec![expression],
+            }),
         }
     }
 
@@ -947,7 +960,7 @@ where
                     elems,
                 }
             }
-            // Bitstring
+            // BitString
             Some((start, Token::LtLt, _)) => {
                 let _ = self.next_tok();
                 let segments = Parser::series_of(
@@ -1054,7 +1067,7 @@ where
                 }
                 e
             })?;
-            let then = self.parse_expression()?;
+            let then = self.parse_expression_or_block()?;
             if let Some(then) = then {
                 Ok(Some(Clause {
                     location: SrcSpan {
@@ -2143,7 +2156,7 @@ where
                     typ: (),
                 }))
             }
-            // Bitstring
+            // BitString
             Some((start, Token::LtLt, _)) => {
                 let _ = self.next_tok();
                 let segments = Parser::series_of(
@@ -2818,11 +2831,12 @@ fn do_reduce_clause_guard(op: Spanned, estack: &mut Vec<UntypedClauseGuard>) {
 
 fn expr_op_reduction((_, token, _): Spanned, l: UntypedExpr, r: UntypedExpr) -> UntypedExpr {
     if token == Token::Pipe {
+        let r = collapse_single_value_block(r);
         let expressions = if let UntypedExpr::PipeLine { mut expressions } = l {
             expressions.push(r);
             expressions
         } else {
-            vec1![l, r]
+            vec1![collapse_single_value_block(l), r]
         };
         UntypedExpr::PipeLine { expressions }
     } else if let Some(bin_op) = tok_to_binop(&token) {
@@ -2832,11 +2846,20 @@ fn expr_op_reduction((_, token, _): Spanned, l: UntypedExpr, r: UntypedExpr) -> 
                 end: r.location().end,
             },
             name: bin_op,
-            left: Box::new(l),
-            right: Box::new(r),
+            left: Box::new(collapse_single_value_block(l)),
+            right: Box::new(collapse_single_value_block(r)),
         }
     } else {
         panic!("Token could not be converted to binop.")
+    }
+}
+
+fn collapse_single_value_block(expression: UntypedExpr) -> UntypedExpr {
+    match expression {
+        UntypedExpr::Block {
+            mut expressions, ..
+        } if expressions.len() == 1 => expressions.pop().expect("Block size checked above"),
+        expression => expression,
     }
 }
 
@@ -2928,9 +2951,9 @@ fn clause_guard_reduction(
     }
 }
 
-// Bitstring Parse Helpers
+// BitString Parse Helpers
 //
-// Bitstrings in patterns, guards, and expressions have a very similar structure
+// BitStrings in patterns, guards, and expressions have a very similar structure
 // but need specific types. These are helpers for that. There is probably a
 // rustier way to do this :)
 fn bit_string_pattern_int(value: SmolStr, start: u32, end: u32) -> UntypedPattern {
@@ -3007,7 +3030,6 @@ fn is_reserved_word(tok: Token) -> bool {
             | Token::Opaque
             | Token::Pub
             | Token::Todo
-            | Token::Try
             | Token::Type
             | Token::Use
     ]

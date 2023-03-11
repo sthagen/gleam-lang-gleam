@@ -18,7 +18,6 @@ mod recursion;
 mod results;
 mod strings;
 mod todo;
-mod try_;
 mod tuples;
 mod type_alias;
 mod use_;
@@ -46,7 +45,7 @@ macro_rules! assert_js {
             $crate::build::Origin::Src,
             &$dep_package.into(),
             &modules,
-            &mut vec![],
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let _ = modules.insert($dep_name.into(), dep.type_info);
@@ -59,7 +58,7 @@ macro_rules! assert_js {
             $crate::build::Origin::Src,
             &CURRENT_PACKAGE.into(),
             &modules,
-            &mut vec![],
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let line_numbers = LineNumbers::new($src);
@@ -85,7 +84,7 @@ macro_rules! assert_js {
             $crate::build::Origin::Src,
             &$dep_package.into(),
             &modules,
-            &mut vec![],
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let _ = modules.insert($dep_name.into("/"), dep.type_info);
@@ -98,7 +97,7 @@ macro_rules! assert_js {
             $crate::build::Origin::Src,
             &CURRENT_PACKAGE.into(),
             &modules,
-            &mut vec![],
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let mut output = String::new();
@@ -127,7 +126,7 @@ macro_rules! assert_js {
             $crate::build::Origin::Src,
             &"thepackage".into(),
             &modules,
-            &mut vec![],
+            &crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let line_numbers = LineNumbers::new($src);
@@ -155,7 +154,7 @@ macro_rules! assert_js {
             $crate::build::Origin::Src,
             &"thepackage".into(),
             &modules,
-            &mut vec![],
+            &crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let line_numbers = LineNumbers::new($src);
@@ -185,7 +184,7 @@ macro_rules! assert_ts_def {
             $crate::build::Origin::Src,
             &$dep_package.into(),
             &modules,
-            &mut vec![],
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let _ = modules.insert($dep_name.into(), dep.type_info);
@@ -198,7 +197,7 @@ macro_rules! assert_ts_def {
             $crate::build::Origin::Src,
             &CURRENT_PACKAGE.into(),
             &modules,
-            &mut vec![],
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let output = ts_declaration(&ast, Path::new(""), &"".into()).unwrap();
@@ -223,7 +222,7 @@ macro_rules! assert_ts_def {
             $crate::build::Origin::Src,
             &$dep_package.into(),
             &modules,
-            &mut vec![],
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let _ = modules.insert($dep_name.into("/"), dep.type_info);
@@ -236,7 +235,7 @@ macro_rules! assert_ts_def {
             $crate::build::Origin::Src,
             &CURRENT_PACKAGE.into(),
             &modules,
-            &mut vec![],
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let mut output = String::new();
@@ -264,7 +263,7 @@ macro_rules! assert_ts_def {
             $crate::build::Origin::Src,
             &"thepackage".into(),
             &modules,
-            &mut vec![],
+            &crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let output = ts_declaration(&ast, Path::new(""), &"".into()).unwrap();
@@ -291,7 +290,7 @@ macro_rules! assert_ts_def {
             $crate::build::Origin::Src,
             &"thepackage".into(),
             &modules,
-            &mut vec![],
+            &crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let mut output = String::new();

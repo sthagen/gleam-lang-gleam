@@ -2,12 +2,31 @@
 
 ## Unreleased
 
+- The language server now analyzes files on edit rather than on save, providing
+  feedback faster.
+- Added support for negation of integers with the new `-` unary operator.
+- The deprecated `try` expression has been removed.
+- The deprecated `assert ... = ...` syntax has been removed.
 - Semicolons are no longer whitespace. An error will be emitted if one is
   encountered.
+- Warnings are now immediately emitted rather than being buffered until the end
+  of the compilation.
+- The `--warnings-as-errors` flag is now supported by `gleam build`.
+- Blocks are now preserved by the formatter when they only have a single
+  expression within them.
+- Generated docs now export more meta data to improve the developer experience,
+  accessibility and search engine discoverability.
+- Files are now only recompiled if they have changed since the last compilation,
+  detected by file hash and modification time. Previously only the modification
+  time was used.
+  before loading cached entry.
+- Fixed a bug where the formatter would incorrectly remove `{ ... }` from bit
+  string segment value expressions.
 - Fixed a bug where the compiler used VSCode specific behaviour in the language
   server which was incompatible with Helix.
 - Fixed a bug where string concatenation patterns on strings with escape
   characters would generate javascript code with wrong slice index.
+- Fixed a bug where blocks could parse incorrectly.
 
 ## v0.27.0 - 2023-03-01
 

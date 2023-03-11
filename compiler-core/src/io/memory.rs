@@ -56,6 +56,21 @@ impl InMemoryFileSystem {
             .unwrap()
             .modification_time = time;
     }
+
+    pub fn try_set_modification_time(&self, path: &Path, time: SystemTime) -> Result<(), Error> {
+        self.files
+            .deref()
+            .borrow_mut()
+            .get_mut(path)
+            .ok_or_else(|| Error::FileIo {
+                kind: FileKind::File,
+                action: FileIoAction::Open,
+                path: path.to_path_buf(),
+                err: None,
+            })?
+            .modification_time = time;
+        Ok(())
+    }
 }
 
 impl FileSystemIO for InMemoryFileSystem {}

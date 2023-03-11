@@ -86,7 +86,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 location, value, ..
             } => Ok(self.infer_int(value, location)),
 
-            UntypedExpr::Sequence {
+            UntypedExpr::Block {
                 expressions,
                 location,
             } => self.infer_seq(location, expressions),
@@ -122,15 +122,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 annotation,
                 ..
             } => self.infer_assignment(pattern, *value, kind, &annotation, location),
-
-            UntypedExpr::Try {
-                location,
-                pattern,
-                value,
-                then,
-                annotation,
-                ..
-            } => self.infer_try(pattern, *value, *then, &annotation, location),
 
             UntypedExpr::Case {
                 location,
@@ -186,7 +177,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 arguments: args,
             } => self.infer_record_update(*constructor, spread, args, location),
 
-            UntypedExpr::Negate { location, value } => self.infer_negate(location, *value),
+            UntypedExpr::NegateBool { location, value } => self.infer_negate_bool(location, *value),
+
+            UntypedExpr::NegateInt { location, value } => self.infer_negate_int(location, *value),
 
             UntypedExpr::Use(use_) => {
                 let location = use_.location;
@@ -206,7 +199,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         label: Option<SmolStr>,
     ) -> TypedExpr {
         let typ = self.new_unbound_var();
-        self.environment.warnings.push(Warning::Todo {
+        self.environment.warnings.emit(Warning::Todo {
             kind,
             location,
             typ: typ.clone(),
@@ -253,14 +246,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     /// e.g. because it's of the `Result` type (errors should be handled)
     fn expression_discarded(&mut self, discarded: &TypedExpr) {
         if discarded.is_literal() {
-            self.environment.warnings.push(Warning::UnusedLiteral {
+            self.environment.warnings.emit(Warning::UnusedLiteral {
                 location: discarded.location(),
             });
         }
         if discarded.type_().is_result() && !discarded.is_assignment() {
             self.environment
                 .warnings
-                .push(Warning::ImplicitlyDiscardedResult {
+                .emit(Warning::ImplicitlyDiscardedResult {
                     location: discarded.location(),
                 });
         }
@@ -307,7 +300,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             expressions.push(expression);
         }
 
-        Ok(TypedExpr::Sequence {
+        Ok(TypedExpr::Block {
             location,
             expressions,
         })
@@ -347,7 +340,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             location: SrcSpan::new(first.start, sequence_location.end),
             return_annotation: None,
             is_capture: false,
-            body: Box::new(UntypedExpr::Sequence {
+            body: Box::new(UntypedExpr::Block {
                 location: sequence_location,
                 expressions,
             }),
@@ -370,12 +363,31 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
-    fn infer_negate(&mut self, location: SrcSpan, value: UntypedExpr) -> Result<TypedExpr, Error> {
+    fn infer_negate_bool(
+        &mut self,
+        location: SrcSpan,
+        value: UntypedExpr,
+    ) -> Result<TypedExpr, Error> {
         let value = self.infer(value)?;
 
         unify(bool(), value.type_()).map_err(|e| convert_unify_error(e, value.location()))?;
 
-        Ok(TypedExpr::Negate {
+        Ok(TypedExpr::NegateBool {
+            location,
+            value: Box::new(value),
+        })
+    }
+
+    fn infer_negate_int(
+        &mut self,
+        location: SrcSpan,
+        value: UntypedExpr,
+    ) -> Result<TypedExpr, Error> {
+        let value = self.infer(value)?;
+
+        unify(int(), value.type_()).map_err(|e| convert_unify_error(e, value.location()))?;
+
+        Ok(TypedExpr::NegateInt {
             location,
             value: Box::new(value),
         })
@@ -730,12 +742,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         annotation: &Option<TypeAst>,
         location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
-        if kind == AssignmentKind::DeprecatedAssert {
-            self.environment
-                .warnings
-                .push(Warning::DeprecatedAssertUsed { location });
-        }
-
         let value = self.in_new_scope(|value_typer| value_typer.infer(value))?;
         let value_typ = value.type_();
 
@@ -774,66 +780,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             kind,
             pattern,
             value: Box::new(value),
-        })
-    }
-
-    fn infer_try(
-        &mut self,
-        pattern: UntypedPattern,
-        value: UntypedExpr,
-        then: UntypedExpr,
-        annotation: &Option<TypeAst>,
-        location: SrcSpan,
-    ) -> Result<TypedExpr, Error> {
-        self.environment
-            .warnings
-            .push(Warning::TryUsed { location });
-
-        let value = self.in_new_scope(|value_typer| value_typer.infer(value))?;
-
-        let value_type = self.new_unbound_var();
-        let try_error_type = self.new_unbound_var();
-
-        // Ensure that the value is a result
-        {
-            let v = value_type.clone();
-            let e = try_error_type.clone();
-            unify(result(v, e), value.type_())
-                .map_err(|e| convert_unify_error(e, value.type_defining_location()))?;
-        };
-
-        // Ensure the pattern matches the type of the value
-        let pattern = pattern::PatternTyper::new(self.environment, &self.hydrator)
-            .unify(pattern, value_type.clone())?;
-
-        // Check the type of the following code
-        let then = self.infer(then)?;
-        let typ = then.type_();
-
-        // Ensure that a Result with the right error type is returned for `try`
-        {
-            let t = self.new_unbound_var();
-            unify(result(t, try_error_type), typ.clone()).map_err(|e| {
-                e.inconsistent_try(typ.is_result())
-                    .into_error(then.type_defining_location())
-            })?;
-        }
-
-        // Check that any type annotation is accurate.
-        if let Some(ann) = annotation {
-            let ann_typ = self
-                .type_from_ast(ann)
-                .map(|t| self.instantiate(t, &mut hashmap![]))?;
-            unify(ann_typ, value_type)
-                .map_err(|e| convert_unify_error(e, value.type_defining_location()))?;
-        }
-
-        Ok(TypedExpr::Try {
-            location,
-            typ,
-            pattern,
-            value: Box::new(value),
-            then: Box::new(then),
         })
     }
 
@@ -1505,13 +1451,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         if args.is_empty() {
             self.environment
                 .warnings
-                .push(Warning::NoFieldsRecordUpdate { location });
+                .emit(Warning::NoFieldsRecordUpdate { location });
         }
 
         if args.len() == field_map.arity as usize {
             self.environment
                 .warnings
-                .push(Warning::AllFieldsRecordUpdate { location });
+                .emit(Warning::AllFieldsRecordUpdate { location });
         }
 
         Ok(TypedExpr::RecordUpdate {

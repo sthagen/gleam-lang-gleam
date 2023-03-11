@@ -720,11 +720,19 @@ where
     document
 }
 
-fn seq<'a>(expressions: &'a [TypedExpr], env: &mut Env<'a>) -> Document<'a> {
+fn block<'a>(expressions: &'a [TypedExpr], env: &mut Env<'a>) -> Document<'a> {
+    let vars = env.current_scope_vars.clone();
+    let document = sequence(expressions, env);
+    env.current_scope_vars = vars;
+    document
+}
+
+fn sequence<'a>(expressions: &'a [TypedExpr], env: &mut Env<'a>) -> Document<'a> {
     let count = expressions.len();
     let mut documents = Vec::with_capacity(count * 3);
     for (i, expression) in expressions.iter().enumerate() {
         documents.push(expr(expression, env).group());
+
         if i + 1 < count {
             // This isn't the final expression so add the delimeters
             documents.push(",".to_doc());
@@ -809,38 +817,6 @@ fn bin_op<'a>(
                 .append("end")
         }
     }
-}
-
-fn try_<'a>(
-    value: &'a TypedExpr,
-    pat: &'a TypedPattern,
-    then: &'a TypedExpr,
-    env: &mut Env<'a>,
-) -> Document<'a> {
-    "case "
-        .to_doc()
-        .append(maybe_block_expr(value, env))
-        .append(" of")
-        .append(
-            line()
-                .append("{error, ")
-                .append(env.next_local_var_name(TRY_VARIABLE))
-                .append("} -> {error, ")
-                .append(env.local_var_name(TRY_VARIABLE))
-                .append("};")
-                .nest(INDENT),
-        )
-        .append(
-            line()
-                .append("{ok, ")
-                .append(pattern(pat, env))
-                .append("} ->")
-                .append(line().append(expr(then, env)).nest(INDENT))
-                .nest(INDENT),
-        )
-        .append(line())
-        .append("end")
-        .group()
 }
 
 fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) -> Document<'a> {
@@ -1385,18 +1361,36 @@ fn begin_end(document: Document<'_>) -> Document<'_> {
 /// Same as expr, expect it wraps seq, let, etc in begin end
 ///
 fn maybe_block_expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
-    if needs_wrapping_in_block(expression) {
+    if needs_begin_end_wrapping(expression) {
         begin_end(expr(expression, env))
     } else {
         expr(expression, env)
     }
 }
 
-fn needs_wrapping_in_block(expression: &TypedExpr) -> bool {
-    matches!(
-        expression,
-        TypedExpr::Pipeline { .. } | TypedExpr::Sequence { .. } | TypedExpr::Assignment { .. }
-    )
+fn needs_begin_end_wrapping(expression: &TypedExpr) -> bool {
+    match expression {
+        TypedExpr::Pipeline { .. } | TypedExpr::Block { .. } | TypedExpr::Assignment { .. } => true,
+        TypedExpr::Int { .. }
+        | TypedExpr::Float { .. }
+        | TypedExpr::String { .. }
+        | TypedExpr::Var { .. }
+        | TypedExpr::Fn { .. }
+        | TypedExpr::List { .. }
+        | TypedExpr::Call { .. }
+        | TypedExpr::BinOp { .. }
+        | TypedExpr::Case { .. }
+        | TypedExpr::RecordAccess { .. }
+        | TypedExpr::ModuleSelect { .. }
+        | TypedExpr::Tuple { .. }
+        | TypedExpr::TupleIndex { .. }
+        | TypedExpr::Todo { .. }
+        | TypedExpr::Panic { .. }
+        | TypedExpr::BitString { .. }
+        | TypedExpr::RecordUpdate { .. }
+        | TypedExpr::NegateBool { .. }
+        | TypedExpr::NegateInt { .. } => false,
+    }
 }
 
 fn todo<'a>(message: &'a Option<SmolStr>, location: SrcSpan, env: &mut Env<'a>) -> Document<'a> {
@@ -1464,8 +1458,8 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
         TypedExpr::Int { value, .. } => int(value),
         TypedExpr::Float { value, .. } => float(value),
         TypedExpr::String { value, .. } => string(value),
-        TypedExpr::Pipeline { expressions, .. } | TypedExpr::Sequence { expressions, .. } => {
-            seq(expressions, env)
+        TypedExpr::Pipeline { expressions, .. } | TypedExpr::Block { expressions, .. } => {
+            block(expressions, env)
         }
 
         TypedExpr::TupleIndex { tuple, index, .. } => tuple_index(tuple, *index, env),
@@ -1476,7 +1470,9 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
 
         TypedExpr::Fn { args, body, .. } => fun(args, body, env),
 
-        TypedExpr::Negate { value, .. } => negate(value, env),
+        TypedExpr::NegateBool { value, .. } => negate_with("not ", value, env),
+
+        TypedExpr::NegateInt { value, .. } => negate_with("- ", value, env),
 
         TypedExpr::List { elements, tail, .. } => expr_list(elements, tail, env),
 
@@ -1519,17 +1515,10 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
 
         TypedExpr::RecordUpdate { spread, args, .. } => record_update(spread, args, env),
 
-        TypedExpr::Try {
-            value,
-            pattern,
-            then,
-            ..
-        } => try_(value, pattern, then, env),
-
         TypedExpr::Assignment {
             value,
             pattern,
-            kind: AssignmentKind::Assert | AssignmentKind::DeprecatedAssert,
+            kind: AssignmentKind::Assert,
             ..
         } => assert(value, pattern, env),
 
@@ -1558,8 +1547,8 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
     }
 }
 
-fn negate<'a>(value: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
-    docvec!["not ", maybe_block_expr(value, env)]
+fn negate_with<'a>(op: &'static str, value: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
+    docvec![op, maybe_block_expr(value, env)]
 }
 
 fn tuple_index<'a>(tuple: &'a TypedExpr, index: u64, env: &mut Env<'a>) -> Document<'a> {
