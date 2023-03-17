@@ -12,8 +12,8 @@ mod telemetry;
 mod tests;
 
 pub use self::package_compiler::PackageCompiler;
-pub use self::project_compiler::{Options, ProjectCompiler};
-pub use self::telemetry::Telemetry;
+pub use self::project_compiler::{Built, Options, ProjectCompiler};
+pub use self::telemetry::{NullTelemetry, Telemetry};
 
 use crate::ast::{CustomType, DefinitionLocation, TypedExpr, TypedStatement};
 use crate::{

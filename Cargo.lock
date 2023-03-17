@@ -726,7 +726,6 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
- "urlencoding",
  "walkdir",
 ]
 
@@ -754,6 +753,8 @@ dependencies = [
  "insta",
  "itertools",
  "lazy_static",
+ "lsp-server",
+ "lsp-types",
  "petgraph",
  "pretty_assertions",
  "pulldown-cmark",
@@ -772,6 +773,7 @@ dependencies = [
  "thiserror",
  "toml",
  "tracing",
+ "urlencoding",
  "vec1",
  "xxhash-rust",
 ]

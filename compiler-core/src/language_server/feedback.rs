@@ -1,9 +1,8 @@
+use crate::{diagnostic::Diagnostic, Error, Warning};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
 };
-
-use gleam_core::{diagnostic::Diagnostic, Error, Warning};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Feedback {
@@ -47,7 +46,6 @@ pub struct FeedbackBookKeeper {
 }
 
 impl FeedbackBookKeeper {
-    // TODO: test
     /// Send diagnostics for any warnings and remove any diagnostics for files
     /// that have compiled without warnings.
     ///
@@ -62,10 +60,6 @@ impl FeedbackBookKeeper {
         // longer valid so we set an empty vector of diagnostics for the files
         // to erase their diagnostics.
         for path in compiled {
-            // TODO: remove this once the compiler is using absolute paths. This
-            // function has side effects so it shouldn't be anyway.
-            let path = path.canonicalize().unwrap_or(path);
-
             let has_existing_diagnostics = self.files_with_diagnostics.remove(&path);
             if has_existing_diagnostics {
                 feedback.unset_existing_diagnostics(path);
@@ -79,7 +73,6 @@ impl FeedbackBookKeeper {
         feedback
     }
 
-    // TODO: test
     /// Compilation failed, boo!
     ///
     /// Send diagnostics for any warnings and remove any diagnostics for files
@@ -97,9 +90,6 @@ impl FeedbackBookKeeper {
 
         match diagnostic.location.as_ref().map(|l| l.path.clone()) {
             Some(path) => {
-                // TODO: remove this once the compiler is using absolute paths. This
-                // function has side effects so it shouldn't be anyway.
-                let path = path.canonicalize().unwrap_or(path);
                 _ = self.files_with_diagnostics.insert(path.clone());
                 feedback.append_diagnostic(path, diagnostic);
             }
@@ -115,9 +105,6 @@ impl FeedbackBookKeeper {
     fn insert_warning(&mut self, feedback: &mut Feedback, warning: Warning) {
         let diagnostic = warning.to_diagnostic();
         if let Some(path) = diagnostic.location.as_ref().map(|l| l.path.clone()) {
-            // TODO: remove this once the compiler is using absolute paths. This
-            // function has side effects so it shouldn't be anyway.
-            let path = path.canonicalize().unwrap_or(path);
             _ = self.files_with_diagnostics.insert(path.clone());
             feedback.append_diagnostic(path, diagnostic);
         }
@@ -127,7 +114,7 @@ impl FeedbackBookKeeper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gleam_core::{
+    use crate::{
         ast::SrcSpan,
         parse::error::{ParseError, ParseErrorType},
         type_,
@@ -177,7 +164,7 @@ mod tests {
         );
 
         let feedback = book_keeper.diagnostics(
-            vec![file1.clone(), file2.clone(), file3.clone()].into_iter(),
+            vec![file1.clone(), file2.clone(), file3].into_iter(),
             vec![],
         );
 
@@ -185,7 +172,7 @@ mod tests {
             Feedback {
                 diagnostics: vec![
                     // File 1 and 2 had diagnostics before so they have been unset
-                    (file1.clone(), vec![]),
+                    (file1, vec![]),
                     (file2, vec![]),
                     // File 3 had no diagnostics so does not need to to be unset
                 ]
@@ -223,7 +210,7 @@ mod tests {
 
         assert_eq!(
             Feedback {
-                diagnostics: vec![(file1.clone(), vec![warning1.to_diagnostic()])]
+                diagnostics: vec![(file1, vec![warning1.to_diagnostic()])]
                     .into_iter()
                     .collect(),
                 messages: vec![locationless_error.to_diagnostic()],
@@ -266,7 +253,7 @@ mod tests {
         assert_eq!(
             Feedback {
                 diagnostics: vec![
-                    (file1.clone(), vec![warning1.to_diagnostic()]),
+                    (file1, vec![warning1.to_diagnostic()]),
                     (file3.clone(), vec![error.to_diagnostic()]),
                 ]
                 .into_iter()

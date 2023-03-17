@@ -127,6 +127,18 @@ pub enum Error {
         reason: InvalidProjectNameReason,
     },
 
+    #[error("{module} is not a valid module name")]
+    InvalidModuleName { module: String },
+
+    #[error("{module} is not module")]
+    ModuleDoesNotExist { module: SmolStr },
+
+    #[error("{module} does not have a main function")]
+    ModuleDoesNotHaveMainFunction { module: SmolStr },
+
+    #[error("{module} has the wrong arity so it can not be run.")]
+    MainFunctionHasWrongArity { module: SmolStr, arity: usize },
+
     #[error("{input} is not a valid version. {error}")]
     InvalidVersionFormat { input: String, error: String },
 
@@ -414,6 +426,45 @@ This prefix is intended for official Gleam packages only.",
                     location: None,
                 }
             }
+
+            Error::InvalidModuleName { module } => Diagnostic {
+                title: "Invalid module name".into(),
+                text: format!(
+                    "`{module}` is not a valid module name.
+Module names can only contain lowercase letters, underscore, and
+forward slash and must not end with a slash."
+            ),
+                level: Level::Error,
+                location: None,
+                hint: None,
+            },
+
+            Error::ModuleDoesNotExist { module } => Diagnostic {
+                title: "Module does not exist".into(),
+                text: format!("Module `{module}` was not found"),
+                level: Level::Error,
+                location: None,
+                hint: Some(
+                    format!("Try creating the file `src/{}.gleam`.",
+                    module)
+                ),
+            },
+
+            Error::ModuleDoesNotHaveMainFunction { module } => Diagnostic {
+                title: "Module does not have a main function".into(),
+                text: format!("`{module}` does not have a main function so the module can not be run."),
+                level: Level::Error,
+                location: None,
+                hint: Some(format!("Add a function with the singature `pub fn main() {{}}` to `src/{module}.gleam`")),
+            },
+
+            Error::MainFunctionHasWrongArity { module, arity } => Diagnostic {
+                title: "Main function has wrong arity".into(),
+                text: format!("`{module}:main` should have an arity of 0 to be run but its arity is {arity}."),
+                level: Level::Error,
+                location: None,
+                hint: Some("Change the function signature of main to `pub fn main() {}`".into()),
+            },
 
             Error::ProjectRootAlreadyExist { path } => Diagnostic {
                 title: "Project folder already exists".into(),

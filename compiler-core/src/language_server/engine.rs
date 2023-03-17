@@ -1,15 +1,18 @@
-use super::feedback::{Feedback, FeedbackBookKeeper};
-use super::{src_span_to_lsp_range, uri_to_module_name, LspProjectCompiler};
-use crate::{fs::ProjectIO, lsp::COMPILING_PROGRESS_TOKEN};
-use gleam_core::Warning;
-use gleam_core::{ast::Import, io::FileSystemReader, language_server::FileSystemProxy};
-use gleam_core::{
-    ast::Statement,
+use crate::{
+    ast::{Import, Statement},
     build::{Located, Module},
     config::PackageConfig,
+    io::{CommandExecutor, FileSystemReader, FileSystemWriter},
+    language_server::{
+        compiler::LspProjectCompiler,
+        feedback::{Feedback, FeedbackBookKeeper},
+        files::FileSystemProxy,
+        progress::ProgressReporter,
+    },
     line_numbers::LineNumbers,
+    paths::ProjectPaths,
     type_::pretty::Printer,
-    Error, Result,
+    Error, Result, Warning,
 };
 use lsp::DidOpenTextDocumentParams;
 use lsp_types::{
@@ -18,98 +21,76 @@ use lsp_types::{
 };
 use std::path::{Path, PathBuf};
 
+use super::{src_span_to_lsp_range, DownloadDependencies, MakeLocker};
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Response<T> {
     pub payload: Option<T>,
     pub feedback: Feedback,
 }
 
-pub struct LanguageServer {
-    /// A cached copy of the absolute path of the project root
-    project_root: PathBuf,
+#[derive(Debug)]
+pub struct LanguageServerEngine<'a, IO> {
+    paths: ProjectPaths,
 
     /// A compiler for the project that supports repeat compilation of the root
     /// package.
     /// In the event the the project config changes this will need to be
     /// discarded and reloaded to handle any changes to dependencies.
-    compiler: Option<LspProjectCompiler<FileSystemProxy<ProjectIO>>>,
+    compiler: Option<LspProjectCompiler<FileSystemProxy<IO>>>,
 
-    fs_proxy: FileSystemProxy<ProjectIO>,
+    io: FileSystemProxy<IO>,
 
     config: Option<PackageConfig>,
 
     feedback: FeedbackBookKeeper,
     modules_compiled_since_last_feedback: Vec<PathBuf>,
+
+    // Used to publish progress notifications to the client without waiting for
+    // the usual request-response loop.
+    progress_reporter: ProgressReporter<'a>,
 }
 
-impl LanguageServer {
-    pub fn new(config: Option<PackageConfig>) -> Result<Self> {
-        let project_root = std::env::current_dir().expect("Project root");
+impl<'a, IO> LanguageServerEngine<'a, IO>
+where
+    IO: FileSystemReader
+        + FileSystemWriter
+        + CommandExecutor
+        + DownloadDependencies
+        + MakeLocker
+        + Clone,
+{
+    pub fn new(
+        config: Option<PackageConfig>,
+        progress_reporter: ProgressReporter<'a>,
+        io: FileSystemProxy<IO>,
+        paths: ProjectPaths,
+    ) -> Result<Self> {
         let mut language_server = Self {
             modules_compiled_since_last_feedback: vec![],
+            progress_reporter,
             feedback: FeedbackBookKeeper::default(),
-            project_root,
             compiler: None,
-            fs_proxy: FileSystemProxy::new(ProjectIO::new()),
             config,
+            paths,
+            io,
         };
         language_server.create_new_compiler()?;
         Ok(language_server)
     }
 
-    fn notify_client_of_compilation_start(&self, connection: &lsp_server::Connection) {
-        self.send_work_done_notification(
-            connection,
-            lsp::WorkDoneProgress::Begin(lsp::WorkDoneProgressBegin {
-                title: "Compiling Gleam".into(),
-                cancellable: Some(false),
-                message: None,
-                percentage: None,
-            }),
-        );
-    }
-
-    // TODO: move to protocol adapter
-    fn notify_client_of_compilation_end(&self, connection: &lsp_server::Connection) {
-        self.send_work_done_notification(
-            connection,
-            lsp::WorkDoneProgress::End(lsp::WorkDoneProgressEnd { message: None }),
-        );
-    }
-
-    // TODO: move to protocol adapter
-    fn send_work_done_notification(
-        &self,
-        connection: &lsp_server::Connection,
-        work_done: lsp::WorkDoneProgress,
-    ) {
-        tracing::info!("sending {:?}", work_done);
-        let params = lsp::ProgressParams {
-            token: lsp::NumberOrString::String(COMPILING_PROGRESS_TOKEN.to_string()),
-            value: lsp::ProgressParamsValue::WorkDone(work_done),
-        };
-        let notification = lsp_server::Notification {
-            method: "$/progress".into(),
-            params: serde_json::to_value(&params).expect("ProgressParams json"),
-        };
-        connection
-            .sender
-            .send(lsp_server::Message::Notification(notification))
-            .expect("send_work_done_notification send")
-    }
-
-    pub fn compile_please(&mut self, connection: &lsp_server::Connection) -> Feedback {
-        self.notified(|this| this.compile(connection))
+    pub fn compile_please(&mut self) -> Feedback {
+        self.notified(Self::compile)
     }
 
     /// Compile the project if we are in one. Otherwise do nothing.
-    fn compile(&mut self, connection: &lsp_server::Connection) -> Result<(), Error> {
-        self.notify_client_of_compilation_start(connection);
+    fn compile(&mut self) -> Result<(), Error> {
+        self.progress_reporter.compilation_started();
         let result = match self.compiler.as_mut() {
             Some(compiler) => compiler.compile(),
             None => Ok(vec![]),
         };
-        self.notify_client_of_compilation_end(connection);
+        self.progress_reporter.compilation_finished();
 
         let modules = result?;
         self.modules_compiled_since_last_feedback
@@ -120,7 +101,7 @@ impl LanguageServer {
 
     fn take_warnings(&mut self) -> Vec<Warning> {
         if let Some(compiler) = self.compiler.as_mut() {
-            compiler.warnings.take()
+            compiler.take_warnings()
         } else {
             vec![]
         }
@@ -128,38 +109,45 @@ impl LanguageServer {
 
     pub fn create_new_compiler(&mut self) -> Result<(), Error> {
         if let Some(config) = self.config.as_ref() {
-            let compiler = LspProjectCompiler::new(config.clone(), self.fs_proxy.clone())?;
+            let locker = self.io.inner().make_locker(&self.paths, config.target)?;
+
+            // Download dependencies to ensure they are up-to-date for this new
+            // configuration and new instance of the compiler
+            self.progress_reporter.dependency_downloading_started();
+            let manifest = self.io.inner().download_dependencies(&self.paths);
+            self.progress_reporter.dependency_downloading_finished();
+            let manifest = manifest?;
+
+            let compiler = LspProjectCompiler::new(
+                manifest,
+                config.clone(),
+                self.paths.clone(),
+                self.io.clone(),
+                locker,
+            )?;
             self.compiler = Some(compiler);
         }
         Ok(())
     }
 
-    pub fn text_document_did_open(
-        &mut self,
-        params: DidOpenTextDocumentParams,
-        connection: &lsp_server::Connection,
-    ) -> Feedback {
+    pub fn text_document_did_open(&mut self, params: DidOpenTextDocumentParams) -> Feedback {
         self.notified(|this| {
             // A file opened in the editor which might be unsaved so store a copy of the new content in memory and compile
             let path = params.text_document.uri.path().to_string();
-            this.fs_proxy
+            this.io
                 .write_mem_cache(Path::new(path.as_str()), &params.text_document.text)?;
-            this.compile(connection)?;
+            this.compile()?;
             Ok(())
         })
     }
 
-    pub fn text_document_did_save(
-        &mut self,
-        params: DidSaveTextDocumentParams,
-        connection: &lsp_server::Connection,
-    ) -> Feedback {
+    pub fn text_document_did_save(&mut self, params: DidSaveTextDocumentParams) -> Feedback {
         self.notified(|this| {
             // The file is in sync with the file system, discard our cache of the changes
-            this.fs_proxy
+            this.io
                 .delete_mem_cache(Path::new(params.text_document.uri.path()))?;
             // The files on disc have changed, so compile the project with the new changes
-            this.compile(connection)?;
+            this.compile()?;
             Ok(())
         })
     }
@@ -167,24 +155,20 @@ impl LanguageServer {
     pub fn text_document_did_close(&mut self, params: DidCloseTextDocumentParams) -> Feedback {
         self.notified(|this| {
             // The file is in sync with the file system, discard our cache of the changes
-            this.fs_proxy
+            this.io
                 .delete_mem_cache(Path::new(params.text_document.uri.path()))?;
             Ok(())
         })
     }
 
-    pub fn text_document_did_change(
-        &mut self,
-        params: DidChangeTextDocumentParams,
-        connection: &lsp_server::Connection,
-    ) -> Feedback {
+    pub fn text_document_did_change(&mut self, params: DidChangeTextDocumentParams) -> Feedback {
         self.notified(|this| {
             // A file has changed in the editor so store a copy of the new content in memory and compile
             let path = params.text_document.uri.path().to_string();
             if let Some(changes) = params.content_changes.into_iter().next() {
-                this.fs_proxy
+                this.io
                     .write_mem_cache(Path::new(path.as_str()), changes.text.as_str())?;
-                this.compile(connection)?;
+                this.compile()?;
             }
             Ok(())
         })
@@ -229,7 +213,7 @@ impl LanguageServer {
                     let module = match this
                         .compiler
                         .as_ref()
-                        .and_then(|compiler| compiler.sources.get(name))
+                        .and_then(|compiler| compiler.get_source(name))
                     {
                         Some(module) => module,
                         // TODO: support goto definition for functions defined in
@@ -311,8 +295,8 @@ impl LanguageServer {
             let path = params.text_document.uri.path();
             let mut new_text = String::new();
 
-            let src = this.fs_proxy.read(Path::new(path))?.into();
-            gleam_core::format::pretty(&mut new_text, &src, Path::new(path))?;
+            let src = this.io.read(Path::new(path))?.into();
+            crate::format::pretty(&mut new_text, &src, Path::new(path))?;
             let line_count = src.lines().count() as u32;
 
             let edit = TextEdit {
@@ -396,8 +380,94 @@ impl LanguageServer {
     fn module_for_uri(&self, uri: &Url) -> Option<&Module> {
         self.compiler.as_ref().and_then(|compiler| {
             let module_name =
-                uri_to_module_name(uri, &self.project_root).expect("uri to module name");
+                uri_to_module_name(uri, self.paths.root()).expect("uri to module name");
             compiler.modules.get(&module_name)
         })
     }
+}
+
+// TODO: Fix this rubbish.
+#[cfg(target_os = "windows")]
+fn uri_to_module_name(uri: &Url, root: &Path) -> Option<String> {
+    use itertools::Itertools;
+    use urlencoding::decode;
+
+    let mut uri_path = decode(&*uri.path().replace('/', "\\"))
+        .expect("Invalid formatting")
+        .to_string();
+    if uri_path.starts_with("\\") {
+        uri_path = uri_path
+            .strip_prefix("\\")
+            .expect("Failed to remove \"\\\" prefix")
+            .to_string();
+    }
+    let path = PathBuf::from(uri_path);
+    let components = path
+        .strip_prefix(&root)
+        .ok()?
+        .components()
+        .skip(1)
+        .map(|c| c.as_os_str().to_string_lossy());
+    let module_name = Itertools::intersperse(components, "/".into())
+        .collect::<String>()
+        .strip_suffix(".gleam")?
+        .to_string();
+    tracing::info!("(uri_to_module_name) module_name: {}", module_name);
+    Some(module_name)
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn uri_to_module_name_test() {
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///b%3A/projects/app/src/one/two/three.rs").unwrap();
+    assert_eq!(uri_to_module_name(&uri, &root), None);
+
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///c%3A/projects/app/src/one/two/three.rs").unwrap();
+    assert_eq!(uri_to_module_name(&uri, &root), None);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn uri_to_module_name(uri: &Url, root: &Path) -> Option<String> {
+    use itertools::Itertools;
+
+    let path = PathBuf::from(uri.path());
+    let components = path
+        .strip_prefix(root)
+        .ok()?
+        .components()
+        .skip(1)
+        .map(|c| c.as_os_str().to_string_lossy());
+    let module_name = Itertools::intersperse(components, "/".into())
+        .collect::<String>()
+        .strip_suffix(".gleam")?
+        .to_string();
+    Some(module_name)
+}
+
+#[test]
+#[cfg(not(target_os = "windows"))]
+fn uri_to_module_name_test() {
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///projects/app/src/one/two/three.gleam").unwrap();
+    assert_eq!(
+        uri_to_module_name(&uri, &root),
+        Some("one/two/three".into())
+    );
+
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///projects/app/test/one/two/three.gleam").unwrap();
+    assert_eq!(
+        uri_to_module_name(&uri, &root),
+        Some("one/two/three".into())
+    );
+
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///somewhere/else/src/one/two/three.gleam").unwrap();
+    assert_eq!(uri_to_module_name(&uri, &root), None);
+
+    let root = PathBuf::from("/projects/app");
+    let uri = Url::parse("file:///projects/app/src/one/two/three.rs").unwrap();
+    assert_eq!(uri_to_module_name(&uri, &root), None);
 }

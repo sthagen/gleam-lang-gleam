@@ -13,8 +13,7 @@ use std::{cell::RefCell, collections::HashMap, ffi::OsStr, rc::Rc, time::Duratio
 //
 // Not thread safe. The compiler is single threaded, so that's OK.
 //
-// Only supports absolute paths. For now. In future we could have a explicit
-// current directory, or say that the current directory is always the root.
+// Only supports absolute paths.
 //
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct InMemoryFileSystem {
@@ -72,8 +71,6 @@ impl InMemoryFileSystem {
         Ok(())
     }
 }
-
-impl FileSystemIO for InMemoryFileSystem {}
 
 impl FileSystemWriter for InMemoryFileSystem {
     fn delete(&self, path: &Path) -> Result<(), Error> {
@@ -208,10 +205,6 @@ impl FileSystemReader for InMemoryFileSystem {
         );
 
         Ok(read_dir)
-    }
-
-    fn current_dir(&self) -> Result<PathBuf, Error> {
-        Ok(PathBuf::from("/"))
     }
 
     fn modification_time(&self, path: &Path) -> Result<SystemTime, Error> {

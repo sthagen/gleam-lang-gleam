@@ -336,14 +336,14 @@ macro_rules! assert_with_module_error {
             Origin::Src,
             &"thepackage".into(),
             &modules,
-            &crate::warning::TypeWarningEmitter::null(),
+            &$crate::warning::TypeWarningEmitter::null(),
         )
         .expect("should successfully infer");
         let _ = modules.insert($name2.into(), module.type_info);
 
         let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
         ast.name = "my_module".into();
-        let error = crate::analyse::infer_module(
+        let error = $crate::analyse::infer_module(
             crate::build::Target::Erlang,
             &ids,
             ast,
@@ -413,8 +413,8 @@ macro_rules! assert_warning {
     ($src:expr, $warning:expr $(,)?) => {
         let (mut ast, _) = $crate::parse::parse_module($src).expect("syntax error");
         ast.name = "my_module".into();
-        let warnings = crate::warning::VectorWarningEmitterIO::default();
-        let warning_emitter = crate::warning::TypeWarningEmitter::new(
+        let warnings = $crate::warning::VectorWarningEmitterIO::default();
+        let warning_emitter = $crate::warning::TypeWarningEmitter::new(
             std::path::PathBuf::new(),
             smol_str::SmolStr::new(""),
             crate::warning::WarningEmitter::new(
@@ -539,8 +539,8 @@ macro_rules! assert_no_warnings {
     };
     ($(($name:expr, $module_src:literal)),+, $src:expr $(,)?) => {
         let expected: Vec<Warning> = vec![];
-        let warnings = crate::warning::VectorWarningEmitterIO::default();
-        let warning_emitter = crate::warning::TypeWarningEmitter::new(
+        let warnings = $crate::warning::VectorWarningEmitterIO::default();
+        let warning_emitter = $crate::warning::TypeWarningEmitter::new(
             std::path::PathBuf::new(),
             smol_str::SmolStr::new(""),
             crate::warning::WarningEmitter::new(

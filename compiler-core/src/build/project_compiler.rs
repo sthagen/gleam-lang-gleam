@@ -6,9 +6,11 @@ use crate::{
     codegen::{self, ErlangApp},
     config::PackageConfig,
     error::{FileIoAction, FileKind},
-    io::{CommandExecutor, FileSystemIO, FileSystemWriter, Stdio},
+    io::{CommandExecutor, FileSystemReader, FileSystemWriter, Stdio},
     manifest::ManifestPackage,
-    metadata, paths, type_,
+    metadata,
+    paths::{self, ProjectPaths},
+    type_::{self, ModuleFunction},
     uid::UniqueIdGenerator,
     version::COMPILER_VERSION,
     warning::{self, WarningEmitter, WarningEmitterIO},
@@ -48,6 +50,23 @@ pub struct Options {
 }
 
 #[derive(Debug)]
+pub struct Built {
+    pub root_package: Package,
+    module_interfaces: im::HashMap<SmolStr, type_::Module>,
+}
+
+impl Built {
+    pub fn get_main_function(&self, module: &SmolStr) -> Result<ModuleFunction, Error> {
+        match self.module_interfaces.get(module) {
+            Some(module_data) => module_data.get_main_function(),
+            None => Err(Error::ModuleDoesNotExist {
+                module: module.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct ProjectCompiler<IO> {
     // The gleam.toml config for the root package of the project
     config: PackageConfig,
@@ -57,6 +76,7 @@ pub struct ProjectCompiler<IO> {
     warnings: WarningEmitter,
     telemetry: Box<dyn Telemetry>,
     options: Options,
+    paths: ProjectPaths,
     ids: UniqueIdGenerator,
     io: IO,
     /// We may want to silence subprocess stdout if we are running in LSP mode.
@@ -69,7 +89,7 @@ pub struct ProjectCompiler<IO> {
 
 impl<IO> ProjectCompiler<IO>
 where
-    IO: CommandExecutor + FileSystemIO + Clone,
+    IO: CommandExecutor + FileSystemWriter + FileSystemReader + Clone,
 {
     pub fn new(
         config: PackageConfig,
@@ -77,6 +97,7 @@ where
         packages: Vec<ManifestPackage>,
         telemetry: Box<dyn Telemetry>,
         warning_emitter: Arc<dyn WarningEmitterIO>,
+        paths: ProjectPaths,
         io: IO,
     ) -> Self {
         let packages = packages
@@ -94,6 +115,7 @@ where
             packages,
             options,
             config,
+            paths,
             io,
         }
     }
@@ -125,7 +147,7 @@ where
     }
 
     /// Returns the compiled information from the root package
-    pub fn compile(&mut self) -> Result<Package> {
+    pub fn compile(mut self) -> Result<Built> {
         self.check_gleam_version()?;
         self.compile_dependencies()?;
         self.warnings.reset_count();
@@ -134,7 +156,7 @@ where
             Codegen::All => self.telemetry.compiling_package(&self.config.name),
             Codegen::DepsOnly | Codegen::None => self.telemetry.checking_package(&self.config.name),
         }
-        let result = self.compile_root_package();
+        let root_package = self.compile_root_package()?;
 
         // TODO: test
         if self.options.warnings_as_errors && self.warnings.count() > 0 {
@@ -143,12 +165,15 @@ where
             });
         }
 
-        result
+        Ok(Built {
+            root_package,
+            module_interfaces: self.importable_modules,
+        })
     }
 
     pub fn compile_root_package(&mut self) -> Result<Package, Error> {
         let config = self.config.clone();
-        let modules = self.compile_gleam_package(&config, true, paths::root())?;
+        let modules = self.compile_gleam_package(&config, true, self.paths.root().to_path_buf())?;
 
         Ok(Package { config, modules })
     }
@@ -158,8 +183,10 @@ where
     /// before continuing. This will ensure that upgrading gleam will not leave
     /// one with confusing or hard to debug states.
     pub fn check_gleam_version(&self) -> Result<(), Error> {
-        let build_path = paths::build_packages(self.mode(), self.target());
-        let version_path = paths::build_gleam_version(self.mode(), self.target());
+        let build_path = self
+            .paths
+            .build_directory_for_target(self.mode(), self.target());
+        let version_path = self.paths.build_gleam_version(self.mode(), self.target());
         if self.io.is_file(&version_path) {
             let version = self.io.read(&version_path)?;
             if version == COMPILER_VERSION {
@@ -198,7 +225,9 @@ where
     }
 
     fn load_cache_or_compile_package(&mut self, package: &ManifestPackage) -> Result<(), Error> {
-        let build_path = paths::build_package(self.mode(), self.target(), &package.name);
+        let build_path =
+            self.paths
+                .build_directory_for_package(self.mode(), self.target(), &package.name);
         if self.io.is_directory(&build_path) {
             tracing::info!(package=%package.name, "loading_precompiled_package");
             return self.load_cached_package(build_path, package);
@@ -214,8 +243,11 @@ where
         // TODO: test. This one is not covered by the integration tests.
         if result.is_err() {
             tracing::debug!(package=%package.name, "removing_failed_build");
-            let dir = paths::build_package(self.mode(), self.target(), &package.name);
-            self.io.delete(&dir)?;
+            self.io.delete(&self.paths.build_directory_for_package(
+                self.mode(),
+                self.target(),
+                &package.name,
+            ))?;
         }
 
         result
@@ -238,10 +270,10 @@ where
             return Ok(());
         }
 
-        let package = paths::build_deps_package(name);
-        let build_packages = paths::build_packages(mode, target);
-        let ebins = paths::build_packages_ebins_glob(mode, target);
-        let package_build = paths::build_package(mode, target, name);
+        let package = self.paths.build_packages_package(name);
+        let build_packages = self.paths.build_directory_for_target(mode, target);
+        let ebins = self.paths.build_packages_ebins_glob(mode, target);
+        let package_build = self.paths.build_directory_for_package(mode, target, name);
         let rebar3_path = |path: &Path| format!("../{}", path.to_str().expect("Build path"));
 
         tracing::debug!("copying_package_to_build");
@@ -295,20 +327,14 @@ where
             return Ok(());
         }
 
-        let build_dir = paths::build_packages(mode, target);
-        let project_dir = paths::build_deps_package(name);
+        let build_dir = self.paths.build_directory_for_target(mode, target);
+        let project_dir = self.paths.build_packages_package(name);
         let mix_build_dir = project_dir.join("_build").join(mix_target);
-        // Absolute build path is needed for mix to make accurate symlinks
-        let mix_build_path = self
-            .io
-            .current_dir()
-            .expect("Project root")
-            .join(&mix_build_dir);
         let mix_build_lib_dir = mix_build_dir.join("lib");
         let up = paths::unnest(&project_dir);
         let mix_path = |path: &Path| up.join(path).to_str().unwrap_or_default().to_string();
-        let ebins = paths::build_packages_ebins_glob(mode, target);
-        let dest = paths::build_package(mode, target, name);
+        let ebins = self.paths.build_packages_ebins_glob(mode, target);
+        let dest = self.paths.build_directory_for_package(mode, target, name);
 
         // Elixir core libs must be loaded
         package_compiler::maybe_link_elixir_libs(&self.io, &build_dir, self.subprocess_stdio)?;
@@ -329,7 +355,7 @@ where
         }
 
         let env = [
-            ("MIX_BUILD_PATH", mix_path(&mix_build_path)),
+            ("MIX_BUILD_PATH", mix_path(&mix_build_dir)),
             ("MIX_ENV", mix_target.into()),
             ("MIX_QUIET", "1".into()),
             ("TERM", "dumb".into()),
@@ -369,9 +395,9 @@ where
     }
 
     fn compile_gleam_dep_package(&mut self, package: &ManifestPackage) -> Result<(), Error> {
-        let config_path = paths::build_deps_package_config(&package.name);
+        let config_path = self.paths.build_packages_package_config(&package.name);
         let config = PackageConfig::read(config_path, &self.io)?;
-        let root = paths::build_deps_package(&package.name);
+        let root = self.paths.build_packages_package(&package.name);
         self.compile_gleam_package(&config, false, root)
             .map(|_| ())?;
         Ok(())
@@ -400,8 +426,12 @@ where
         is_root: bool,
         root_path: PathBuf,
     ) -> Result<Vec<Module>, Error> {
-        let out_path = paths::build_package(self.mode(), self.target(), &config.name);
-        let lib_path = paths::build_packages(self.mode(), self.target());
+        let out_path =
+            self.paths
+                .build_directory_for_package(self.mode(), self.target(), &config.name);
+        let lib_path = self
+            .paths
+            .build_directory_for_target(self.mode(), self.target());
         let mode = self.mode();
         let target = match self.target() {
             Target::Erlang => super::TargetCodegenConfiguration::Erlang {

@@ -19,7 +19,6 @@
 - Files are now only recompiled if they have changed since the last compilation,
   detected by file hash and modification time. Previously only the modification
   time was used.
-  before loading cached entry.
 - Fixed a bug where the formatter would incorrectly remove `{ ... }` from bit
   string segment value expressions.
 - Fixed a bug where the compiler used VSCode specific behaviour in the language
@@ -27,6 +26,7 @@
 - Fixed a bug where string concatenation patterns on strings with escape
   characters would generate javascript code with wrong slice index.
 - Fixed a bug where blocks could parse incorrectly.
+- Allow modules to be run with the `gleam run --module` command.
 
 ## v0.27.0 - 2023-03-01
 

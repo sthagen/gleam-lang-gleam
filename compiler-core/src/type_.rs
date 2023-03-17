@@ -409,6 +409,11 @@ impl ModuleValueConstructor {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ModuleFunction {
+    pub package: SmolStr,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub name: SmolStr,
@@ -418,6 +423,29 @@ pub struct Module {
     pub types_constructors: HashMap<SmolStr, Vec<SmolStr>>,
     pub values: HashMap<SmolStr, ValueConstructor>,
     pub accessors: HashMap<SmolStr, AccessorsMap>,
+}
+
+impl Module {
+    pub fn get_main_function(&self) -> Result<ModuleFunction, crate::Error> {
+        match self.values.get(&SmolStr::from("main")) {
+            Some(ValueConstructor {
+                variant: ValueConstructorVariant::ModuleFn { arity: 0, .. },
+                ..
+            }) => Ok(ModuleFunction {
+                package: self.package.clone(),
+            }),
+            Some(ValueConstructor {
+                variant: ValueConstructorVariant::ModuleFn { arity, .. },
+                ..
+            }) => Err(crate::Error::MainFunctionHasWrongArity {
+                module: self.name.clone(),
+                arity: *arity,
+            }),
+            _ => Err(crate::Error::ModuleDoesNotHaveMainFunction {
+                module: self.name.clone(),
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,9 +1,13 @@
 use gleam_core::{
+    build::{NullTelemetry, Target},
     error::{Error, FileIoAction, FileKind},
     io::{
-        CommandExecutor, Content, DirEntry, FileSystemIO, FileSystemWriter, OutputFile, ReadDir,
-        Stdio, WrappedReader,
+        CommandExecutor, Content, DirEntry, FileSystemReader, FileSystemWriter, OutputFile,
+        ReadDir, Stdio, WrappedReader,
     },
+    language_server::{DownloadDependencies, Locker, MakeLocker},
+    manifest::Manifest,
+    paths::ProjectPaths,
     warning::WarningEmitterIO,
     Result, Warning,
 };
@@ -16,6 +20,8 @@ use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
+
+use crate::{dependencies::UseManifest, lsp::LspLocker};
 
 #[cfg(test)]
 mod tests;
@@ -34,7 +40,7 @@ impl ProjectIO {
     }
 }
 
-impl gleam_core::io::FileSystemReader for ProjectIO {
+impl FileSystemReader for ProjectIO {
     fn gleam_source_files(&self, dir: &Path) -> Vec<PathBuf> {
         if !dir.is_dir() {
             return vec![];
@@ -90,15 +96,6 @@ impl gleam_core::io::FileSystemReader for ProjectIO {
             entries
                 .map(|result| result.map(|entry| DirEntry::from_path(entry.path())))
                 .collect()
-        })
-    }
-
-    fn current_dir(&self) -> Result<PathBuf, Error> {
-        std::env::current_dir().map_err(|e| Error::FileIo {
-            action: FileIoAction::Read,
-            kind: FileKind::Directory,
-            path: PathBuf::from("."),
-            err: Some(e.to_string()),
         })
     }
 
@@ -187,7 +184,18 @@ impl CommandExecutor for ProjectIO {
     }
 }
 
-impl FileSystemIO for ProjectIO {}
+impl MakeLocker for ProjectIO {
+    fn make_locker(&self, paths: &ProjectPaths, target: Target) -> Result<Box<dyn Locker>> {
+        let locker = LspLocker::new(paths, target)?;
+        Ok(Box::new(locker))
+    }
+}
+
+impl DownloadDependencies for ProjectIO {
+    fn download_dependencies(&self, paths: &ProjectPaths) -> Result<Manifest> {
+        crate::dependencies::download(paths, NullTelemetry, None, UseManifest::Yes)
+    }
+}
 
 pub fn delete_dir(dir: &Path) -> Result<(), Error> {
     tracing::trace!(path=?dir, "deleting_directory");
