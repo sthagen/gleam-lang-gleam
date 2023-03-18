@@ -3,6 +3,7 @@ mod engine;
 mod feedback;
 mod files;
 mod progress;
+mod router;
 mod server;
 
 pub use server::LanguageServer;
@@ -13,11 +14,6 @@ use crate::{
 };
 use lsp_types::{Position, Range};
 use std::any::Any;
-
-// TODO: Make a new router class which finds the root of the project a message
-// is for and dispatches to the correct language server, making one for that
-// root if it does not exist. This will require the compiler to be modified so
-// that it can run on projects where the root is not the cwd.
 
 #[derive(Debug)]
 pub struct LockGuard(pub Box<dyn Any>);

@@ -1,21 +1,22 @@
 use crate::{
-    config::PackageConfig,
     diagnostic::{Diagnostic, Level},
     io::{CommandExecutor, FileSystemReader, FileSystemWriter},
     language_server::{
-        engine::{LanguageServerEngine, Response},
-        feedback::Feedback,
+        engine::{self, LanguageServerEngine},
+        feedback::{Feedback, FeedbackBookKeeper},
         files::FileSystemProxy,
         progress::ProgressReporter,
+        router::Router,
         src_span_to_lsp_range, DownloadDependencies, MakeLocker,
     },
     line_numbers::LineNumbers,
-    paths::ProjectPaths,
     Result,
 };
 use debug_ignore::DebugIgnore;
 use lsp::{
-    notification::DidOpenTextDocument, request::GotoDefinition, HoverProviderCapability, Url,
+    notification::{DidChangeWatchedFiles, DidOpenTextDocument},
+    request::GotoDefinition,
+    HoverProviderCapability, Position, Range, TextEdit, Url,
 };
 use lsp_types::{
     self as lsp,
@@ -23,6 +24,7 @@ use lsp_types::{
     request::{Completion, Formatting, HoverRequest},
     InitializeParams, PublishDiagnosticsParams,
 };
+use serde_json::Value as Json;
 use std::{collections::HashMap, path::PathBuf};
 
 /// This class is responsible for handling the language server protocol and
@@ -32,13 +34,16 @@ use std::{collections::HashMap, path::PathBuf};
 /// - Decoding requests.
 /// - Encoding responses.
 /// - Sending diagnostics and messages to the client.
+/// - Tracking the state of diagnostics and messages.
 /// - Performing the initialisation handshake.
 ///
 #[derive(Debug)]
 pub struct LanguageServer<'a, IO> {
     initialise_params: InitializeParams,
     connection: DebugIgnore<&'a lsp_server::Connection>,
-    server: LanguageServerEngine<'a, IO>,
+    feedback: FeedbackBookKeeper,
+    router: Router<'a, IO>,
+    io: FileSystemProxy<IO>,
 }
 
 impl<'a, IO> LanguageServer<'a, IO>
@@ -50,30 +55,22 @@ where
         + MakeLocker
         + Clone,
 {
-    pub fn new(
-        connection: &'a lsp_server::Connection,
-        config: Option<PackageConfig>,
-        paths: ProjectPaths,
-        io: IO,
-    ) -> Result<Self> {
+    pub fn new(connection: &'a lsp_server::Connection, io: IO) -> Result<Self> {
         let initialise_params = initialisation_handshake(connection);
         let reporter = ProgressReporter::new(connection, &initialise_params);
-        // TODO: move this wrapping to the top level once that is in core.
         let io = FileSystemProxy::new(io);
-        let language_server = LanguageServerEngine::new(config, reporter, io, paths)?;
+        let router = Router::new(reporter, io.clone());
         Ok(Self {
             connection: connection.into(),
             initialise_params,
-            server: language_server,
+            feedback: FeedbackBookKeeper::default(),
+            router,
+            io,
         })
     }
 
     pub fn run(&mut self) -> Result<()> {
         self.start_watching_gleam_toml();
-
-        // Compile the project once so we have all the state and any initial errors
-        let feedback = self.server.compile_please();
-        self.publish_feedback(feedback);
 
         // Enter the message loop, handling each message that comes in from the client
         for message in &self.connection.receiver {
@@ -115,22 +112,22 @@ where
         let (payload, feedback) = match request.method.as_str() {
             "textDocument/formatting" => {
                 let params = cast_request::<Formatting>(request);
-                convert_response(self.server.format(params))
+                self.format(params)
             }
 
             "textDocument/hover" => {
                 let params = cast_request::<HoverRequest>(request);
-                convert_response(self.server.hover(params))
+                self.hover(params)
             }
 
             "textDocument/definition" => {
                 let params = cast_request::<GotoDefinition>(request);
-                convert_response(self.server.goto_definition(params))
+                self.goto_definition(params)
             }
 
             "textDocument/completion" => {
                 let params = cast_request::<Completion>(request);
-                convert_response(self.server.completion(params))
+                self.completion(params)
             }
 
             _ => panic!("Unsupported LSP request"),
@@ -153,28 +150,27 @@ where
         let feedback = match notification.method.as_str() {
             "textDocument/didOpen" => {
                 let params = cast_notification::<DidOpenTextDocument>(notification);
-                self.server.text_document_did_open(params)
+                self.text_document_did_open(params)
             }
 
             "textDocument/didSave" => {
                 let params = cast_notification::<DidSaveTextDocument>(notification);
-                self.server.text_document_did_save(params)
+                self.text_document_did_save(params)
             }
 
             "textDocument/didClose" => {
                 let params = cast_notification::<DidCloseTextDocument>(notification);
-                self.server.text_document_did_close(params)
+                self.text_document_did_close(params)
             }
 
             "textDocument/didChange" => {
                 let params = cast_notification::<DidChangeTextDocument>(notification);
-                self.server.text_document_did_change(params)
+                self.text_document_did_change(params)
             }
 
             "workspace/didChangeWatchedFiles" => {
-                tracing::info!("gleam_toml_changed_so_recompiling_full_project");
-                self.server.create_new_compiler().expect("create");
-                self.server.compile_please()
+                let params = cast_notification::<DidChangeWatchedFiles>(notification);
+                self.watched_files_changed(params)
             }
 
             _ => return,
@@ -237,7 +233,7 @@ where
             register_options: Some(
                 serde_json::value::to_value(lsp::DidChangeWatchedFilesRegistrationOptions {
                     watchers: vec![lsp::FileSystemWatcher {
-                        glob_pattern: "gleam.toml".into(),
+                        glob_pattern: "**/gleam.toml".into(),
                         kind: Some(lsp::WatchKind::Change),
                     }],
                 })
@@ -276,6 +272,151 @@ where
                 .send(lsp_server::Message::Notification(notification))
                 .expect("send window/showMessage");
         }
+    }
+
+    fn respond_with_engine<T>(
+        &mut self,
+        path: PathBuf,
+        handler: impl FnOnce(&mut LanguageServerEngine<'a, IO>) -> engine::Response<T>,
+    ) -> (Json, Feedback)
+    where
+        T: serde::Serialize,
+    {
+        match self.router.engine_for_path(&path) {
+            Ok(Some(engine)) => {
+                let engine::Response {
+                    result,
+                    warnings,
+                    compiled_modules,
+                } = handler(engine);
+                let modules = compiled_modules.into_iter();
+                match result {
+                    Ok(value) => {
+                        let feedback = self.feedback.compiled(modules, warnings);
+                        let json = serde_json::to_value(value).expect("response to json");
+                        (json, feedback)
+                    }
+                    Err(e) => {
+                        let feedback = self.feedback.build_with_error(e, modules, warnings);
+                        (Json::Null, feedback)
+                    }
+                }
+            }
+
+            Ok(None) => (Json::Null, Feedback::default()),
+
+            Err(error) => (Json::Null, self.feedback.error(error)),
+        }
+    }
+
+    fn notified_with_engine(
+        &mut self,
+        path: PathBuf,
+        handler: impl FnOnce(&mut LanguageServerEngine<'a, IO>) -> engine::Response<()>,
+    ) -> Feedback {
+        self.respond_with_engine(path, handler).1
+    }
+
+    fn format(&mut self, params: lsp::DocumentFormattingParams) -> (Json, Feedback) {
+        let path = path(&params.text_document.uri);
+        let mut new_text = String::new();
+
+        let src = match self.io.read(&path) {
+            Ok(src) => src.into(),
+            Err(error) => return (Json::Null, self.feedback.error(error)),
+        };
+
+        if let Err(error) = crate::format::pretty(&mut new_text, &src, &path) {
+            return (Json::Null, self.feedback.error(error));
+        }
+
+        let line_count = src.lines().count() as u32;
+
+        let edit = TextEdit {
+            range: Range::new(Position::new(0, 0), Position::new(line_count, 0)),
+            new_text,
+        };
+        let json = serde_json::to_value(vec![edit]).expect("to JSON value");
+
+        (json, Feedback::default())
+    }
+
+    fn hover(&mut self, params: lsp::HoverParams) -> (Json, Feedback) {
+        let path = path(&params.text_document_position_params.text_document.uri);
+        self.respond_with_engine(path, |engine| engine.hover(params))
+    }
+
+    fn goto_definition(&mut self, params: lsp::GotoDefinitionParams) -> (Json, Feedback) {
+        let path = path(&params.text_document_position_params.text_document.uri);
+        self.respond_with_engine(path, |engine| engine.goto_definition(params))
+    }
+
+    fn completion(&mut self, params: lsp::CompletionParams) -> (Json, Feedback) {
+        let path = path(&params.text_document_position.text_document.uri);
+        self.respond_with_engine(path, |engine| engine.completion(params))
+    }
+
+    /// A file opened in the editor may be unsaved, so store a copy of the
+    /// new content in memory and compile.
+    fn text_document_did_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Feedback {
+        let path = path(&params.text_document.uri);
+        if let Err(error) = self.io.write_mem_cache(&path, &params.text_document.text) {
+            return self.feedback.error(error);
+        }
+
+        self.notified_with_engine(path, |engine| engine.compile_please())
+    }
+
+    fn text_document_did_save(&mut self, params: lsp::DidSaveTextDocumentParams) -> Feedback {
+        let path = path(&params.text_document.uri);
+
+        // The file is in sync with the file system, discard our cache of the changes
+        if let Err(error) = self.io.delete_mem_cache(&path) {
+            return self.feedback.error(error);
+        }
+
+        // The files on disc have changed, so compile the project with the new changes
+        self.notified_with_engine(path, |engine| engine.compile_please())
+    }
+
+    fn text_document_did_close(&mut self, params: lsp::DidCloseTextDocumentParams) -> Feedback {
+        let path = path(&params.text_document.uri);
+
+        // The file is in sync with the file system, discard our cache of the changes
+        if let Err(error) = self.io.delete_mem_cache(&path) {
+            return self.feedback.error(error);
+        }
+
+        Feedback::default()
+    }
+
+    /// A file has changed in the editor, so store a copy of the new content in
+    /// memory and compile.
+    fn text_document_did_change(&mut self, params: lsp::DidChangeTextDocumentParams) -> Feedback {
+        let path = path(&params.text_document.uri);
+
+        let changes = match params.content_changes.into_iter().last() {
+            Some(changes) => changes,
+            None => return Feedback::default(),
+        };
+
+        if let Err(error) = self.io.write_mem_cache(&path, changes.text.as_str()) {
+            return self.feedback.error(error);
+        }
+
+        // The files on disc have changed, so compile the project with the new changes
+        self.notified_with_engine(path, |engine| engine.compile_please())
+    }
+
+    fn watched_files_changed(&mut self, params: lsp::DidChangeWatchedFilesParams) -> Feedback {
+        let changes = match params.changes.into_iter().last() {
+            Some(changes) => changes,
+            None => return Feedback::default(),
+        };
+
+        let path = path(&changes.uri);
+        self.router.delete_engine_for_path(&path);
+        self.notified_with_engine(path, LanguageServerEngine::compile_please)
     }
 }
 
@@ -422,18 +563,17 @@ fn diagnostic_to_lsp(diagnostic: Diagnostic) -> Vec<lsp::Diagnostic> {
     }
 }
 
-fn convert_response<T>(result: Response<T>) -> (serde_json::Value, Feedback)
-where
-    T: serde::Serialize,
-{
-    (
-        serde_json::to_value(result.payload).expect("json to_value"),
-        result.feedback,
-    )
-}
-
 fn path_to_uri(path: PathBuf) -> Url {
     let mut file: String = "file://".into();
     file.push_str(&path.as_os_str().to_string_lossy());
     Url::parse(&file).expect("path_to_uri URL parse")
+}
+
+fn path(uri: &Url) -> PathBuf {
+    // The to_file_path method is available on these platforms
+    #[cfg(any(unix, windows, target_os = "redox", target_os = "wasi"))]
+    return uri.to_file_path().expect("URL file");
+
+    #[cfg(not(any(unix, windows, target_os = "redox", target_os = "wasi")))]
+    return uri.path().into();
 }

@@ -160,6 +160,6 @@ where
         _cwd: Option<&Path>,
         _stdio: Stdio,
     ) -> Result<i32> {
-        panic!("Command execution is not supported in LSP")
+        panic!("The language server is not permitted to create subprocesses")
     }
 }

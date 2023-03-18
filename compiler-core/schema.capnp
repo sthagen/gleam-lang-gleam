@@ -82,6 +82,7 @@ struct ValueConstructorVariant {
       literal @0 :Constant;
       location @1 :SrcSpan;
       module @2 :Text;
+      documentation @14 :Text;
     }
 
     moduleFn :group {
@@ -90,6 +91,7 @@ struct ValueConstructorVariant {
       module @5 :Text;
       arity @6 :UInt16;
       location @7 :SrcSpan;
+      documentation @15 :Text;
     }
 
     record :group {
@@ -99,6 +101,7 @@ struct ValueConstructorVariant {
       location @11 :SrcSpan;
       module @12 :Text;
       constructorsCount @13 :UInt16;
+      documentation @16 :Text;
     }
   }
 }

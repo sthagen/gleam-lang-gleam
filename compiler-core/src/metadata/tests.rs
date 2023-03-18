@@ -37,6 +37,7 @@ fn constant_module(constant: TypedConstant) -> Module {
                 public: true,
                 type_: type_::int(),
                 variant: ValueConstructorVariant::ModuleConstant {
+                    documentation: Some("Some documentation".into()),
                     literal: constant,
                     location: SrcSpan::default(),
                     module: "one/two".into(),
@@ -240,6 +241,7 @@ fn module_fn_value() {
                 public: true,
                 type_: type_::int(),
                 variant: ValueConstructorVariant::ModuleFn {
+                    documentation: Some("wobble!".into()),
                     name: "one".into(),
                     field_map: None,
                     module: "a".into(),
@@ -273,6 +275,7 @@ fn module_fn_value_regression() {
                 public: true,
                 type_: type_::int(),
                 variant: ValueConstructorVariant::ModuleFn {
+                    documentation: Some("wabble!".into()),
                     name: "one".into(),
                     field_map: None,
                     module: "a".into(),
@@ -305,6 +308,7 @@ fn module_fn_value_with_field_map() {
                 public: true,
                 type_: type_::int(),
                 variant: ValueConstructorVariant::ModuleFn {
+                    documentation: Some("wubble!".into()),
                     name: "one".into(),
                     field_map: Some(FieldMap {
                         arity: 20,
@@ -339,6 +343,7 @@ fn record_value() {
                 public: true,
                 type_: type_::int(),
                 variant: ValueConstructorVariant::Record {
+                    documentation: Some("webble!".into()),
                     name: "one".into(),
                     module: "themodule".into(),
                     field_map: None,
@@ -374,6 +379,7 @@ fn record_value_with_field_map() {
                 public: true,
                 type_: type_::int(),
                 variant: ValueConstructorVariant::Record {
+                    documentation: Some("wybble!".into()),
                     module: "themodule".into(),
                     name: "one".into(),
                     field_map: Some(FieldMap {
@@ -590,6 +596,7 @@ fn constant_var() {
             public: true,
             type_: type_::int(),
             variant: ValueConstructorVariant::ModuleConstant {
+                documentation: Some("some doc".into()),
                 literal: one_original.clone(),
                 location: SrcSpan::default(),
                 module: "one/two".into(),
@@ -611,6 +618,7 @@ fn constant_var() {
                     public: true,
                     type_: type_::int(),
                     variant: ValueConstructorVariant::ModuleConstant {
+                        documentation: Some("some doc!!!!!!!!!".into()),
                         literal: one,
                         location: SrcSpan::default(),
                         module: "one/two".into(),
@@ -623,6 +631,7 @@ fn constant_var() {
                     public: true,
                     type_: type_::int(),
                     variant: ValueConstructorVariant::ModuleConstant {
+                        documentation: Some("some doc yeah".into()),
                         literal: one_original,
                         location: SrcSpan::default(),
                         module: "one/two".into(),

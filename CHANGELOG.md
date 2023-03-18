@@ -4,6 +4,10 @@
 
 - The language server now analyzes files on edit rather than on save, providing
   feedback faster.
+- The language server now supports editor sessions that span multiple projects.
+  This is useful for mono-repos and projects with both a frontend and backend in
+  Gleam.
+- The language server now shows documentation on hover for expressions.
 - Added support for negation of integers with the new `-` unary operator.
 - The deprecated `try` expression has been removed.
 - The deprecated `assert ... = ...` syntax has been removed.
@@ -19,6 +23,7 @@
 - Files are now only recompiled if they have changed since the last compilation,
   detected by file hash and modification time. Previously only the modification
   time was used.
+- Autocompletion of module imports was removed due to a buggy implementation.
 - Fixed a bug where the formatter would incorrectly remove `{ ... }` from bit
   string segment value expressions.
 - Fixed a bug where the compiler used VSCode specific behaviour in the language

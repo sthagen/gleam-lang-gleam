@@ -268,6 +268,7 @@ pub enum ValueConstructorVariant {
 
     /// A module constant
     ModuleConstant {
+        documentation: Option<SmolStr>,
         location: SrcSpan,
         module: SmolStr,
         literal: Constant<Arc<Type>, SmolStr>,
@@ -280,6 +281,7 @@ pub enum ValueConstructorVariant {
         module: SmolStr,
         arity: usize,
         location: SrcSpan,
+        documentation: Option<SmolStr>,
     },
 
     /// A constructor for a custom type
@@ -290,6 +292,7 @@ pub enum ValueConstructorVariant {
         location: SrcSpan,
         module: SmolStr,
         constructors_count: u16,
+        documentation: Option<SmolStr>,
     },
 }
 
@@ -306,6 +309,7 @@ impl ValueConstructorVariant {
                 arity,
                 field_map,
                 location,
+                documentation,
                 ..
             } => ModuleValueConstructor::Record {
                 name: name.clone(),
@@ -313,19 +317,25 @@ impl ValueConstructorVariant {
                 arity: *arity,
                 type_,
                 location: *location,
+                documentation: documentation.clone(),
             },
 
             // TODO: remove this clone with an rc clone
             Self::ModuleConstant {
-                literal, location, ..
+                documentation,
+                literal,
+                location,
+                ..
             } => ModuleValueConstructor::Constant {
                 literal: literal.clone(),
                 location: *location,
+                documentation: documentation.clone(),
             },
 
             Self::LocalVariable { location, .. } => ModuleValueConstructor::Fn {
                 name: function_name.clone(),
                 module: module_name.clone(),
+                documentation: None,
                 location: *location,
             },
 
@@ -333,10 +343,12 @@ impl ValueConstructorVariant {
                 name,
                 module,
                 location,
+                documentation,
                 ..
             } => ModuleValueConstructor::Fn {
                 name: name.clone(),
                 module: module.clone(),
+                documentation: documentation.clone(),
                 location: *location,
             },
         }
@@ -373,6 +385,7 @@ pub enum ModuleValueConstructor {
         type_: Arc<Type>,
         field_map: Option<FieldMap>,
         location: SrcSpan,
+        documentation: Option<SmolStr>,
     },
 
     Fn {
@@ -391,11 +404,13 @@ pub enum ModuleValueConstructor {
         ///
         module: SmolStr,
         name: SmolStr,
+        documentation: Option<SmolStr>,
     },
 
     Constant {
         literal: TypedConstant,
         location: SrcSpan,
+        documentation: Option<SmolStr>,
     },
 }
 
@@ -405,6 +420,14 @@ impl ModuleValueConstructor {
             ModuleValueConstructor::Fn { location, .. }
             | ModuleValueConstructor::Record { location, .. }
             | ModuleValueConstructor::Constant { location, .. } => *location,
+        }
+    }
+
+    pub fn get_documentation(&self) -> Option<&str> {
+        match self {
+            ModuleValueConstructor::Record { documentation, .. }
+            | ModuleValueConstructor::Fn { documentation, .. }
+            | ModuleValueConstructor::Constant { documentation, .. } => documentation.as_deref(),
         }
     }
 }
@@ -566,6 +589,18 @@ impl ValueConstructor {
                 module: None,
                 span: *location,
             },
+        }
+    }
+
+    pub(crate) fn get_documentation(&self) -> Option<&str> {
+        match &self.variant {
+            ValueConstructorVariant::LocalVariable { .. } => Some("A locally defined variable."),
+
+            ValueConstructorVariant::ModuleFn { documentation, .. }
+            | ValueConstructorVariant::Record { documentation, .. }
+            | ValueConstructorVariant::ModuleConstant { documentation, .. } => {
+                Some(documentation.as_ref()?.as_str())
+            }
         }
     }
 }
