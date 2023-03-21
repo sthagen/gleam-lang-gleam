@@ -476,7 +476,28 @@ pub enum PatternConstructor {
     Record {
         name: SmolStr,
         field_map: Option<FieldMap>,
+        documentation: Option<SmolStr>,
+        module: Option<SmolStr>,
+        location: SrcSpan,
     },
+}
+impl PatternConstructor {
+    pub fn definition_location(&self) -> Option<DefinitionLocation<'_>> {
+        match self {
+            PatternConstructor::Record {
+                module, location, ..
+            } => Some(DefinitionLocation {
+                module: Some(module.as_deref()?),
+                span: *location,
+            }),
+        }
+    }
+
+    pub fn get_documentation(&self) -> Option<&str> {
+        match self {
+            PatternConstructor::Record { documentation, .. } => documentation.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

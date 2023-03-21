@@ -208,16 +208,24 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
         type_: Arc<Type>,
     ) -> Result<TypedPattern, Error> {
         match pattern {
-            Pattern::Discard { name, location } => Ok(Pattern::Discard { name, location }),
+            Pattern::Discard { name, location, .. } => Ok(Pattern::Discard {
+                type_,
+                name,
+                location,
+            }),
 
             Pattern::Var { name, location, .. } => {
-                self.insert_variable(&name, type_, location)
+                self.insert_variable(&name, type_.clone(), location)
                     .map_err(|e| convert_unify_error(e, location))?;
-                Ok(Pattern::Var { name, location })
+                Ok(Pattern::Var {
+                    type_,
+                    name,
+                    location,
+                })
             }
 
             Pattern::VarUsage { name, location, .. } => {
-                let ValueConstructor { type_: typ, .. } = self
+                let ValueConstructor { type_, .. } = self
                     .environment
                     .get_variable(&name)
                     .cloned()
@@ -229,7 +237,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 self.environment.increment_usage(&name);
                 let typ = self
                     .environment
-                    .instantiate(typ, &mut hashmap![], self.hydrator);
+                    .instantiate(type_, &mut hashmap![], self.hydrator);
                 unify(int(), typ.clone()).map_err(|e| convert_unify_error(e, location))?;
 
                 Ok(Pattern::VarUsage {
@@ -298,19 +306,21 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 location,
                 elements,
                 tail,
+                ..
             } => match type_.get_app_args(true, "", "List", 1, self.environment) {
                 Some(args) => {
-                    let typ = args
+                    let type_ = args
                         .get(0)
                         .expect("Failed to get type argument of List")
                         .clone();
                     let elements = elements
                         .into_iter()
-                        .map(|element| self.unify(element, typ.clone()))
+                        .map(|element| self.unify(element, type_.clone()))
                         .try_collect()?;
+                    let type_ = list(type_);
 
                     let tail = match tail {
-                        Some(tail) => Some(Box::new(self.unify(*tail, list(typ))?)),
+                        Some(tail) => Some(Box::new(self.unify(*tail, type_.clone())?)),
                         None => None,
                     };
 
@@ -318,6 +328,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                         location,
                         elements,
                         tail,
+                        type_,
                     })
                 }
 
@@ -437,6 +448,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                                     value: Pattern::Discard {
                                         name: "_".into(),
                                         location: spread_location,
+                                        type_: (),
                                     },
                                     location: spread_location,
                                     label: None,
@@ -455,17 +467,24 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 }
 
                 let constructor_typ = cons.type_.clone();
-                let constructor = match cons.variant {
-                    ValueConstructorVariant::Record { ref name, .. } => {
-                        PatternConstructor::Record {
-                            name: name.clone(),
-                            field_map: cons.field_map().cloned(),
-                        }
-                    }
+                let constructor = match &cons.variant {
+                    ValueConstructorVariant::Record {
+                        name,
+                        documentation,
+                        module,
+                        location,
+                        ..
+                    } => PatternConstructor::Record {
+                        documentation: documentation.clone(),
+                        name: name.clone(),
+                        field_map: cons.field_map().cloned(),
+                        module: Some(module.clone()),
+                        location: *location,
+                    },
                     ValueConstructorVariant::LocalVariable { .. }
                     | ValueConstructorVariant::ModuleConstant { .. }
                     | ValueConstructorVariant::ModuleFn { .. } => {
-                        panic!("Unexpected value constructor type for a constructor pattern.",)
+                        panic!("Unexpected value constructor type for a constructor pattern.")
                     }
                 };
 
@@ -503,7 +522,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                                 arguments: pattern_args,
                                 constructor,
                                 with_spread,
-                                type_: instantiated_constructor_type,
+                                type_: retrn.clone(),
                             })
                         } else {
                             Err(Error::IncorrectArity {
@@ -538,7 +557,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                         }
                     }
 
-                    _ => panic!("Unexpected constructor type for a constructor pattern.",),
+                    _ => panic!("Unexpected constructor type for a constructor pattern."),
                 }
             }
         }

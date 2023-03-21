@@ -543,8 +543,8 @@ impl TypedStatement {
         // TODO: test. Note that the fn src-span covers the function head, not
         // the entire statement.
         if let Statement::Function(Function { body, .. }) = self {
-            if let Some(expression) = body.find_node(byte_index) {
-                return Some(Located::Expression(expression));
+            if let found @ Some(_) = body.find_node(byte_index) {
+                return found;
             }
         }
 
@@ -746,7 +746,13 @@ pub struct CallArg<A> {
 }
 
 impl CallArg<TypedExpr> {
-    pub fn find_node(&self, byte_index: u32) -> Option<&TypedExpr> {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        self.value.find_node(byte_index)
+    }
+}
+
+impl CallArg<TypedPattern> {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
         self.value.find_node(byte_index)
     }
 }
@@ -782,7 +788,7 @@ pub struct TypedRecordUpdateArg {
 }
 
 impl TypedRecordUpdateArg {
-    pub fn find_node(&self, byte_index: u32) -> Option<&TypedExpr> {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
         self.value.find_node(byte_index)
     }
 }
@@ -817,8 +823,11 @@ impl TypedClause {
         }
     }
 
-    pub fn find_node(&self, byte_index: u32) -> Option<&TypedExpr> {
-        self.then.find_node(byte_index)
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        self.pattern
+            .iter()
+            .find_map(|p| p.find_node(byte_index))
+            .or_else(|| self.then.find_node(byte_index))
     }
 }
 
@@ -1030,6 +1039,7 @@ pub enum Pattern<Constructor, Type> {
     Var {
         location: SrcSpan,
         name: SmolStr,
+        type_: Type,
     },
 
     /// A reference to a variable in a bit string. This is always a variable
@@ -1054,12 +1064,14 @@ pub enum Pattern<Constructor, Type> {
     Discard {
         name: SmolStr,
         location: SrcSpan,
+        type_: Type,
     },
 
     List {
         location: SrcSpan,
         elements: Vec<Self>,
         tail: Option<Box<Self>>,
+        type_: Type,
     },
 
     /// The constructor for a custom type. Starts with an uppercase letter.
@@ -1089,8 +1101,7 @@ pub enum Pattern<Constructor, Type> {
         left_location: SrcSpan,
         right_location: SrcSpan,
         left_side_string: SmolStr,
-        /// The variable on the right hand side of the `<>`. It is `None` if the
-        /// variable stars with `_` (it is a discard and assigns no variable).
+        /// The variable on the right hand side of the `<>`.
         right_side_assignment: AssignName,
     },
 }
@@ -1148,6 +1159,94 @@ impl<A, B> Pattern<A, B> {
         matches!(self, Self::Discard { .. })
     }
 }
+
+impl TypedPattern {
+    pub fn definition_location(&self) -> Option<DefinitionLocation<'_>> {
+        match self {
+            Pattern::Int { .. }
+            | Pattern::Float { .. }
+            | Pattern::String { .. }
+            | Pattern::Var { .. }
+            | Pattern::VarUsage { .. }
+            | Pattern::Assign { .. }
+            | Pattern::Discard { .. }
+            | Pattern::List { .. }
+            | Pattern::Tuple { .. }
+            | Pattern::BitString { .. }
+            | Pattern::Concatenate { .. } => None,
+
+            Pattern::Constructor { constructor, .. } => constructor.definition_location(),
+        }
+    }
+
+    pub fn get_documentation(&self) -> Option<&str> {
+        match self {
+            Pattern::Int { .. }
+            | Pattern::Float { .. }
+            | Pattern::String { .. }
+            | Pattern::Var { .. }
+            | Pattern::VarUsage { .. }
+            | Pattern::Assign { .. }
+            | Pattern::Discard { .. }
+            | Pattern::List { .. }
+            | Pattern::Tuple { .. }
+            | Pattern::BitString { .. }
+            | Pattern::Concatenate { .. } => None,
+
+            Pattern::Constructor { constructor, .. } => constructor.get_documentation(),
+        }
+    }
+
+    pub fn type_(&self) -> Arc<Type> {
+        match self {
+            Pattern::Int { .. } => type_::int(),
+            Pattern::Float { .. } => type_::float(),
+            Pattern::String { .. } => type_::string(),
+            Pattern::BitString { .. } => type_::bit_string(),
+            Pattern::Concatenate { .. } => type_::string(),
+
+            Pattern::Var { type_, .. }
+            | Pattern::List { type_, .. }
+            | Pattern::VarUsage { type_, .. }
+            | Pattern::Constructor { type_, .. } => type_.clone(),
+
+            Pattern::Assign { pattern, .. } => pattern.type_(),
+
+            Pattern::Discard { type_, .. } => type_.clone(),
+
+            Pattern::Tuple { elems, .. } => type_::tuple(elems.iter().map(|p| p.type_()).collect()),
+        }
+    }
+
+    fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        if !self.location().contains(byte_index) {
+            return None;
+        }
+
+        match self {
+            Pattern::Int { .. }
+            | Pattern::Float { .. }
+            | Pattern::String { .. }
+            | Pattern::Var { .. }
+            | Pattern::VarUsage { .. }
+            | Pattern::Assign { .. }
+            | Pattern::Discard { .. }
+            | Pattern::BitString { .. }
+            | Pattern::Concatenate { .. } => Some(Located::Pattern(self)),
+
+            Pattern::Constructor { arguments, .. } => {
+                arguments.iter().find_map(|arg| arg.find_node(byte_index))
+            }
+            Pattern::List { elements, tail, .. } => elements
+                .iter()
+                .find_map(|p| p.find_node(byte_index))
+                .or_else(|| tail.as_ref().and_then(|p| p.find_node(byte_index))),
+
+            Pattern::Tuple { elems, .. } => elems.iter().find_map(|p| p.find_node(byte_index)),
+        }
+        .or(Some(Located::Pattern(self)))
+    }
+}
 impl<A, B> HasLocation for Pattern<A, B> {
     fn location(&self) -> SrcSpan {
         self.location()
@@ -1191,7 +1290,7 @@ pub struct BitStringSegment<Value, Type> {
 }
 
 impl TypedExprBitStringSegment {
-    pub fn find_node(&self, byte_index: u32) -> Option<&TypedExpr> {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
         self.value.find_node(byte_index)
     }
 }
