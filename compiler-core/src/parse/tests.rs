@@ -6,26 +6,30 @@ use pretty_assertions::assert_eq;
 
 macro_rules! assert_error {
     ($src:expr, $error:expr $(,)?) => {
-        let result = crate::parse::parse_expression_sequence($src).expect_err("should not parse");
+        let result = crate::parse::parse_statement_sequence($src).expect_err("should not parse");
         assert_eq!(($src, $error), ($src, result),);
     };
     ($src:expr) => {
-        let result = crate::parse::parse_expression_sequence($src).expect_err("should not parse");
-        let error = crate::error::Error::Parse {
-            src: $src.into(),
-            path: PathBuf::from("/src/parse/error.gleam"),
-            error: result,
-        };
-        let result = error.pretty_string();
+        let result = $crate::parse::tests::expect_error($src);
         insta::assert_snapshot!(insta::internals::AutoName, result, $src);
     };
 }
 
 macro_rules! assert_parse {
     ($src:expr) => {
-        let result = crate::parse::parse_expression_sequence($src).expect("should parse");
+        let result = crate::parse::parse_statement_sequence($src).expect("should parse");
         insta::assert_snapshot!(insta::internals::AutoName, &format!("{:#?}", result), $src);
     };
+}
+
+pub fn expect_error(src: &str) -> String {
+    let result = crate::parse::parse_statement_sequence(src).expect_err("should not parse");
+    let error = crate::error::Error::Parse {
+        src: src.into(),
+        path: PathBuf::from("/src/parse/error.gleam"),
+        error: result,
+    };
+    error.pretty_string()
 }
 
 #[test]
@@ -225,27 +229,6 @@ fn lowcase_bool_in_pattern() {
     );
 }
 
-// https://github.com/gleam-lang/gleam/issues/1404
-#[test]
-fn clause_mutiple_expressions() {
-    assert_error!(
-        "case True {
-True ->
-  let a = 1
-  a + 1
-False -> 0
-}
-",
-        ParseError {
-            location: SrcSpan { start: 36, end: 37 },
-            error: ParseErrorType::UnexpectedToken {
-                expected: vec!["\"->\"".into()],
-                hint: Some("Did you mean to wrap a multi line clause in curly braces?".into())
-            },
-        }
-    );
-}
-
 // https://github.com/gleam-lang/gleam/issues/1613
 #[test]
 fn anonymous_function_labeled_arguments() {
@@ -413,4 +396,15 @@ fn block_of_two() {
 #[test]
 fn nested_block() {
     assert_parse!(r#"{ 1 { 1.0 2.0 } 3 }"#);
+}
+
+// https://github.com/gleam-lang/gleam/issues/1831
+#[test]
+fn argument_scope() {
+    assert_error!(
+        "
+1 + let a = 5
+a
+"
+    );
 }

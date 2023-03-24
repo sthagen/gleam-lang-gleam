@@ -11,7 +11,7 @@ use crate::{
     warning::TypeWarningEmitter,
 };
 
-use super::TypedModule;
+use super::{Statement, TypedModule, TypedStatement};
 
 fn compile_module(src: &str) -> TypedModule {
     use crate::type_::build_prelude;
@@ -35,8 +35,17 @@ fn compile_module(src: &str) -> TypedModule {
     .expect("should successfully infer")
 }
 
-fn compile_expression(src: &str) -> TypedExpr {
-    let ast = crate::parse::parse_expression_sequence(src).expect("syntax error");
+fn get_bare_expression(statement: &TypedStatement) -> &TypedExpr {
+    match statement {
+        Statement::Expression(expression) => expression,
+        Statement::Use(_) | Statement::Assignment(_) => {
+            panic!("Expected expression, got {:?}", statement)
+        }
+    }
+}
+
+fn compile_expression(src: &str) -> TypedStatement {
+    let ast = crate::parse::parse_statement_sequence(src).expect("syntax error");
 
     let mut modules = im::HashMap::new();
     let ids = UniqueIdGenerator::new();
@@ -101,94 +110,105 @@ fn compile_expression(src: &str) -> TypedExpr {
         },
     );
     ExprTyper::new(&mut environment)
-        .infer(ast)
+        .infer_statements(ast)
         .expect("should successfully infer")
+        .first()
+        .clone()
 }
 
 #[test]
 fn find_node_todo() {
-    let expr = compile_expression(r#" todo "#);
+    let statement = compile_expression(r#" todo "#);
+    let expr = get_bare_expression(&statement);
     assert_eq!(expr.find_node(0), None);
-    assert_eq!(expr.find_node(1), Some(Located::Expression(&expr)));
-    assert_eq!(expr.find_node(4), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(1), Some(Located::Expression(expr)));
+    assert_eq!(expr.find_node(4), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(5), None);
 }
 
 #[test]
 fn find_node_todo_with_string() {
-    let expr = compile_expression(r#" todo("ok") "#);
+    let statement = compile_expression(r#" todo("ok") "#);
+    let expr = get_bare_expression(&statement);
     assert_eq!(expr.find_node(0), None);
-    assert_eq!(expr.find_node(1), Some(Located::Expression(&expr)));
-    assert_eq!(expr.find_node(10), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(1), Some(Located::Expression(expr)));
+    assert_eq!(expr.find_node(10), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(11), None);
 }
 
 #[test]
 fn find_node_string() {
-    let expr = compile_expression(r#" "ok" "#);
+    let statement = compile_expression(r#" "ok" "#);
+    let expr = get_bare_expression(&statement);
     assert_eq!(expr.find_node(0), None);
-    assert_eq!(expr.find_node(1), Some(Located::Expression(&expr)));
-    assert_eq!(expr.find_node(4), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(1), Some(Located::Expression(expr)));
+    assert_eq!(expr.find_node(4), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(5), None);
 }
 
 #[test]
 fn find_node_float() {
-    let expr = compile_expression(r#" 1.02 "#);
+    let statement = compile_expression(r#" 1.02 "#);
+    let expr = get_bare_expression(&statement);
     assert_eq!(expr.find_node(0), None);
-    assert_eq!(expr.find_node(1), Some(Located::Expression(&expr)));
-    assert_eq!(expr.find_node(4), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(1), Some(Located::Expression(expr)));
+    assert_eq!(expr.find_node(4), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(5), None);
 }
 
 #[test]
 fn find_node_int() {
-    let expr = compile_expression(r#" 1302 "#);
+    let statement = compile_expression(r#" 1302 "#);
+    let expr = get_bare_expression(&statement);
     assert_eq!(expr.find_node(0), None);
-    assert_eq!(expr.find_node(1), Some(Located::Expression(&expr)));
-    assert_eq!(expr.find_node(4), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(1), Some(Located::Expression(expr)));
+    assert_eq!(expr.find_node(4), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(5), None);
 }
 
 #[test]
 fn find_node_var() {
-    let expr = compile_expression(
-        r#"let wibble = 1
-wibble"#,
+    let statement = compile_expression(
+        r#"{let wibble = 1
+wibble}"#,
     );
+    let expr = get_bare_expression(&statement);
 
     let var = TypedExpr::Var {
-        location: SrcSpan { start: 15, end: 21 },
+        location: SrcSpan { start: 16, end: 22 },
         constructor: ValueConstructor {
             public: false,
             variant: ValueConstructorVariant::LocalVariable {
-                location: SrcSpan { start: 4, end: 10 },
+                location: SrcSpan { start: 5, end: 11 },
             },
             type_: type_::int(),
         },
         name: "wibble".into(),
     };
 
-    assert_eq!(expr.find_node(14), None);
-    assert_eq!(expr.find_node(15), Some(Located::Expression(&var)));
-    assert_eq!(expr.find_node(20), Some(Located::Expression(&var)));
-    assert_eq!(expr.find_node(21), None);
+    assert_eq!(expr.find_node(15), None);
+    assert_eq!(expr.find_node(16), Some(Located::Expression(&var)));
+    assert_eq!(expr.find_node(21), Some(Located::Expression(&var)));
+    assert_eq!(expr.find_node(22), None);
 }
 
 #[test]
 fn find_node_sequence() {
-    let sequence = compile_expression(r#"1 2 3"#);
-    assert!(sequence.find_node(0).is_some());
-    assert!(sequence.find_node(1).is_none());
-    assert!(sequence.find_node(2).is_some());
-    assert!(sequence.find_node(3).is_none());
-    assert!(sequence.find_node(4).is_some());
-    assert!(sequence.find_node(5).is_none());
+    let block = compile_expression(r#"{ 1 2 3 }"#);
+    assert!(block.find_node(0).is_none());
+    assert!(block.find_node(1).is_none());
+    assert!(block.find_node(2).is_some());
+    assert!(block.find_node(3).is_none());
+    assert!(block.find_node(4).is_some());
+    assert!(block.find_node(5).is_none());
+    assert!(block.find_node(6).is_some());
+    assert!(block.find_node(7).is_none());
 }
 
 #[test]
 fn find_node_list() {
-    let list = compile_expression(r#"[1, 2, 3]"#);
+    let statement = compile_expression(r#"[1, 2, 3]"#);
+    let list = get_bare_expression(&statement);
 
     let int1 = TypedExpr::Int {
         location: SrcSpan { start: 1, end: 2 },
@@ -206,21 +226,22 @@ fn find_node_list() {
         value: "3".into(),
     };
 
-    assert_eq!(list.find_node(0), Some(Located::Expression(&list)));
+    assert_eq!(list.find_node(0), Some(Located::Expression(list)));
     assert_eq!(list.find_node(1), Some(Located::Expression(&int1)));
-    assert_eq!(list.find_node(2), Some(Located::Expression(&list)));
-    assert_eq!(list.find_node(3), Some(Located::Expression(&list)));
+    assert_eq!(list.find_node(2), Some(Located::Expression(list)));
+    assert_eq!(list.find_node(3), Some(Located::Expression(list)));
     assert_eq!(list.find_node(4), Some(Located::Expression(&int2)));
-    assert_eq!(list.find_node(5), Some(Located::Expression(&list)));
-    assert_eq!(list.find_node(6), Some(Located::Expression(&list)));
+    assert_eq!(list.find_node(5), Some(Located::Expression(list)));
+    assert_eq!(list.find_node(6), Some(Located::Expression(list)));
     assert_eq!(list.find_node(7), Some(Located::Expression(&int3)));
-    assert_eq!(list.find_node(8), Some(Located::Expression(&list)));
+    assert_eq!(list.find_node(8), Some(Located::Expression(list)));
     assert_eq!(list.find_node(9), None);
 }
 
 #[test]
 fn find_node_tuple() {
-    let tuple = compile_expression(r#"#(1, 2, 3)"#);
+    let statement = compile_expression(r#"#(1, 2, 3)"#);
+    let tuple = get_bare_expression(&statement);
 
     let int1 = TypedExpr::Int {
         location: SrcSpan { start: 2, end: 3 },
@@ -238,22 +259,23 @@ fn find_node_tuple() {
         value: "3".into(),
     };
 
-    assert_eq!(tuple.find_node(0), Some(Located::Expression(&tuple)));
-    assert_eq!(tuple.find_node(1), Some(Located::Expression(&tuple)));
+    assert_eq!(tuple.find_node(0), Some(Located::Expression(tuple)));
+    assert_eq!(tuple.find_node(1), Some(Located::Expression(tuple)));
     assert_eq!(tuple.find_node(2), Some(Located::Expression(&int1)));
-    assert_eq!(tuple.find_node(3), Some(Located::Expression(&tuple)));
-    assert_eq!(tuple.find_node(4), Some(Located::Expression(&tuple)));
+    assert_eq!(tuple.find_node(3), Some(Located::Expression(tuple)));
+    assert_eq!(tuple.find_node(4), Some(Located::Expression(tuple)));
     assert_eq!(tuple.find_node(5), Some(Located::Expression(&int2)));
-    assert_eq!(tuple.find_node(6), Some(Located::Expression(&tuple)));
-    assert_eq!(tuple.find_node(7), Some(Located::Expression(&tuple)));
+    assert_eq!(tuple.find_node(6), Some(Located::Expression(tuple)));
+    assert_eq!(tuple.find_node(7), Some(Located::Expression(tuple)));
     assert_eq!(tuple.find_node(8), Some(Located::Expression(&int3)));
-    assert_eq!(tuple.find_node(9), Some(Located::Expression(&tuple)));
+    assert_eq!(tuple.find_node(9), Some(Located::Expression(tuple)));
     assert_eq!(tuple.find_node(10), None);
 }
 
 #[test]
 fn find_node_binop() {
-    let expr = compile_expression(r#"1 + 2"#);
+    let statement = compile_expression(r#"1 + 2"#);
+    let expr = get_bare_expression(&statement);
     assert!(expr.find_node(0).is_some());
     assert!(expr.find_node(1).is_none());
     assert!(expr.find_node(2).is_none());
@@ -264,7 +286,8 @@ fn find_node_binop() {
 
 #[test]
 fn find_node_tuple_index() {
-    let expr = compile_expression(r#"#(1).0"#);
+    let statement = compile_expression(r#"#(1).0"#);
+    let expr = get_bare_expression(&statement);
 
     let int = TypedExpr::Int {
         location: SrcSpan { start: 2, end: 3 },
@@ -273,8 +296,8 @@ fn find_node_tuple_index() {
     };
 
     assert_eq!(expr.find_node(2), Some(Located::Expression(&int)));
-    assert_eq!(expr.find_node(4), Some(Located::Expression(&expr)));
-    assert_eq!(expr.find_node(5), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(4), Some(Located::Expression(expr)));
+    assert_eq!(expr.find_node(5), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(6), None);
 }
 
@@ -302,7 +325,8 @@ fn find_node_module_select() {
 
 #[test]
 fn find_node_fn() {
-    let expr = compile_expression("fn() { 1 }");
+    let statement = compile_expression("fn() { 1 }");
+    let expr = get_bare_expression(&statement);
 
     let int = TypedExpr::Int {
         location: SrcSpan { start: 7, end: 8 },
@@ -310,17 +334,18 @@ fn find_node_fn() {
         typ: type_::int(),
     };
 
-    assert_eq!(expr.find_node(0), Some(Located::Expression(&expr)));
-    assert_eq!(expr.find_node(6), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(0), Some(Located::Expression(expr)));
+    assert_eq!(expr.find_node(6), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(7), Some(Located::Expression(&int)));
-    assert_eq!(expr.find_node(8), Some(Located::Expression(&expr)));
-    assert_eq!(expr.find_node(9), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(8), Some(Located::Expression(expr)));
+    assert_eq!(expr.find_node(9), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(10), None);
 }
 
 #[test]
 fn find_node_call() {
-    let expr = compile_expression("fn(_, _) { 1 }(1, 2)");
+    let statement = compile_expression("fn(_, _) { 1 }(1, 2)");
+    let expr = get_bare_expression(&statement);
 
     let retrn = TypedExpr::Int {
         location: SrcSpan { start: 11, end: 12 },
@@ -341,16 +366,17 @@ fn find_node_call() {
     };
 
     assert_eq!(expr.find_node(11), Some(Located::Expression(&retrn)));
-    assert_eq!(expr.find_node(14), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(14), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(15), Some(Located::Expression(&arg1)));
-    assert_eq!(expr.find_node(16), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(16), Some(Located::Expression(expr)));
     assert_eq!(expr.find_node(18), Some(Located::Expression(&arg2)));
-    assert_eq!(expr.find_node(19), Some(Located::Expression(&expr)));
+    assert_eq!(expr.find_node(19), Some(Located::Expression(expr)));
 }
 
 #[test]
 fn find_node_record_access() {
-    let access = compile_expression(r#"Cat("Nubi", 3).name"#);
+    let statement = compile_expression(r#"Cat("Nubi", 3).name"#);
+    let access = get_bare_expression(&statement);
 
     let string = TypedExpr::String {
         location: SrcSpan { start: 4, end: 10 },
@@ -367,14 +393,15 @@ fn find_node_record_access() {
     assert_eq!(access.find_node(4), Some(Located::Expression(&string)));
     assert_eq!(access.find_node(9), Some(Located::Expression(&string)));
     assert_eq!(access.find_node(12), Some(Located::Expression(&int)));
-    assert_eq!(access.find_node(14), Some(Located::Expression(&access)));
-    assert_eq!(access.find_node(18), Some(Located::Expression(&access)));
+    assert_eq!(access.find_node(14), Some(Located::Expression(access)));
+    assert_eq!(access.find_node(18), Some(Located::Expression(access)));
     assert_eq!(access.find_node(19), None);
 }
 
 #[test]
 fn find_node_record_update() {
-    let update = compile_expression(r#"Cat(..Cat("Nubi", 3), age: 4)"#);
+    let statement = compile_expression(r#"Cat(..Cat("Nubi", 3), age: 4)"#);
+    let update = get_bare_expression(&statement);
 
     let int = TypedExpr::Int {
         location: SrcSpan { start: 27, end: 28 },
@@ -382,22 +409,23 @@ fn find_node_record_update() {
         typ: type_::int(),
     };
 
-    assert_eq!(update.find_node(0), Some(Located::Expression(&update)));
-    assert_eq!(update.find_node(3), Some(Located::Expression(&update)));
+    assert_eq!(update.find_node(0), Some(Located::Expression(update)));
+    assert_eq!(update.find_node(3), Some(Located::Expression(update)));
     assert_eq!(update.find_node(27), Some(Located::Expression(&int)));
-    assert_eq!(update.find_node(28), Some(Located::Expression(&update)));
+    assert_eq!(update.find_node(28), Some(Located::Expression(update)));
     assert_eq!(update.find_node(29), None);
 }
 
 #[test]
 fn find_node_case() {
-    let case = compile_expression(
+    let statement = compile_expression(
         r#"
 case 1, 2 {
   _, _ -> 3
 }
 "#,
     );
+    let case = get_bare_expression(&statement);
 
     let int1 = TypedExpr::Int {
         location: SrcSpan { start: 6, end: 7 },
@@ -417,17 +445,18 @@ case 1, 2 {
         typ: type_::int(),
     };
 
-    assert_eq!(case.find_node(1), Some(Located::Expression(&case)));
+    assert_eq!(case.find_node(1), Some(Located::Expression(case)));
     assert_eq!(case.find_node(6), Some(Located::Expression(&int1)));
     assert_eq!(case.find_node(9), Some(Located::Expression(&int2)));
     assert_eq!(case.find_node(23), Some(Located::Expression(&int3)));
-    assert_eq!(case.find_node(25), Some(Located::Expression(&case)));
+    assert_eq!(case.find_node(25), Some(Located::Expression(case)));
     assert_eq!(case.find_node(26), None);
 }
 
 #[test]
 fn find_node_bool() {
-    let negate = compile_expression(r#"!True"#);
+    let statement = compile_expression(r#"!True"#);
+    let negate = get_bare_expression(&statement);
 
     let bool = TypedExpr::Var {
         location: SrcSpan { start: 1, end: 5 },
@@ -447,7 +476,7 @@ fn find_node_bool() {
         name: "True".into(),
     };
 
-    assert_eq!(negate.find_node(0), Some(Located::Expression(&negate)));
+    assert_eq!(negate.find_node(0), Some(Located::Expression(negate)));
     assert_eq!(negate.find_node(1), Some(Located::Expression(&bool)));
     assert_eq!(negate.find_node(2), Some(Located::Expression(&bool)));
     assert_eq!(negate.find_node(3), Some(Located::Expression(&bool)));

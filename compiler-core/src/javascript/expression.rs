@@ -1,3 +1,5 @@
+use vec1::Vec1;
+
 use super::{
     pattern::{Assignment, CompiledPattern},
     *,
@@ -10,6 +12,22 @@ use crate::{
 };
 use std::sync::Arc;
 
+#[derive(Debug, Clone, Copy)]
+pub enum Position {
+    Tail,
+    NotTail,
+}
+
+impl Position {
+    /// Returns `true` if the position is [`Tail`].
+    ///
+    /// [`Tail`]: Position::Tail
+    #[must_use]
+    pub fn is_tail(&self) -> bool {
+        matches!(self, Self::Tail)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Generator<'module> {
     module_name: SmolStr,
@@ -17,8 +35,8 @@ pub(crate) struct Generator<'module> {
     function_name: Option<&'module SmolStr>,
     function_arguments: Vec<Option<&'module SmolStr>>,
     current_scope_vars: im::HashMap<SmolStr, usize>,
-    pub tail_position: bool,
-    pub in_iife: bool,
+    pub function_position: Position,
+    pub scope_position: Position,
     // We register whether these features are used within an expression so that
     // the module generator can output a suitable function if it is needed.
     pub tracker: &'module mut UsageTracker,
@@ -49,8 +67,8 @@ impl<'module> Generator<'module> {
             function_arguments,
             tail_recursion_used: false,
             current_scope_vars,
-            tail_position: true,
-            in_iife: false,
+            function_position: Position::Tail,
+            scope_position: Position::Tail,
         }
     }
 
@@ -74,10 +92,10 @@ impl<'module> Generator<'module> {
 
     pub fn function_body<'a>(
         &mut self,
-        expression: &'a TypedExpr,
+        body: &'a [TypedStatement],
         args: &'a [TypedArg],
     ) -> Output<'a> {
-        let body = self.expression(expression)?;
+        let body = self.statements(body)?;
         if self.tail_recursion_used {
             self.tail_call_loop(body, args)
         } else {
@@ -96,6 +114,18 @@ impl<'module> Generator<'module> {
             line(),
             "}"
         ))
+    }
+
+    fn statement<'a>(&mut self, statement: &'a TypedStatement) -> Output<'a> {
+        match statement {
+            Statement::Expression(expression) => self.expression(expression),
+            Statement::Assignment(assignment) => {
+                self.assignment(&assignment.value, &assignment.pattern)
+            }
+            Statement::Use(_use) => {
+                unreachable!("Use must not be present for JavaScript generation")
+            }
+        }
     }
 
     pub fn expression<'a>(&mut self, expression: &'a TypedExpr) -> Output<'a> {
@@ -136,11 +166,13 @@ impl<'module> Generator<'module> {
                 name, constructor, ..
             } => Ok(self.variable(name, constructor)),
 
-            TypedExpr::Pipeline { expressions, .. } | TypedExpr::Block { expressions, .. } => {
-                self.sequence(expressions)
-            }
+            TypedExpr::Pipeline {
+                assignments,
+                finally,
+                ..
+            } => self.pipeline(assignments.as_slice(), finally),
 
-            TypedExpr::Assignment { value, pattern, .. } => self.assignment(value, pattern),
+            TypedExpr::Block { statements, .. } => self.block(statements),
 
             TypedExpr::BinOp {
                 name, left, right, ..
@@ -228,7 +260,7 @@ impl<'module> Generator<'module> {
     }
 
     pub fn wrap_return<'a>(&self, document: Document<'a>) -> Document<'a> {
-        if self.tail_position {
+        if self.scope_position.is_tail() {
             docvec!["return ", document, ";"]
         } else {
             document
@@ -239,10 +271,15 @@ impl<'module> Generator<'module> {
     where
         CompileFn: Fn(&mut Self) -> Output<'a>,
     {
-        let tail = self.tail_position;
-        self.tail_position = false;
+        let function_position = self.function_position;
+        let scope_position = self.scope_position;
+
+        self.function_position = Position::NotTail;
+        self.scope_position = Position::NotTail;
         let result = compile(self);
-        self.tail_position = tail;
+
+        self.function_position = function_position;
+        self.scope_position = scope_position;
         result
     }
 
@@ -250,13 +287,13 @@ impl<'module> Generator<'module> {
     /// required due to being a JS statement
     pub fn wrap_expression<'a>(&mut self, expression: &'a TypedExpr) -> Output<'a> {
         match expression {
-            TypedExpr::Todo { .. }
+            TypedExpr::Panic { .. }
+            | TypedExpr::Todo { .. }
             | TypedExpr::Case { .. }
-            | TypedExpr::Block { .. }
-            | TypedExpr::Pipeline { .. }
-            | TypedExpr::Assignment { .. } => {
-                self.immediately_involked_function_expression(expression)
-            }
+            | TypedExpr::Pipeline { .. } => self
+                .immediately_involked_function_expression(expression, |gen, expr| {
+                    gen.expression(expr)
+                }),
             _ => self.expression(expression),
         }
     }
@@ -269,37 +306,33 @@ impl<'module> Generator<'module> {
             TypedExpr::BinOp { name, .. } if name.is_operator_to_wrap() => {
                 Ok(docvec!("(", self.expression(expression)?, ")"))
             }
-            TypedExpr::Case { .. }
-            | TypedExpr::Block { .. }
-            | TypedExpr::Pipeline { .. }
-            | TypedExpr::Assignment { .. } => {
-                self.immediately_involked_function_expression(expression)
-            }
-            _ => self.expression(expression),
+
+            _ => self.wrap_expression(expression),
         }
     }
 
     /// Wrap an expression in an immediately involked function expression
-    fn immediately_involked_function_expression<'a>(
+    fn immediately_involked_function_expression<'a, T, ToDoc>(
         &mut self,
-        expression: &'a TypedExpr,
-    ) -> Output<'a> {
+        statements: &'a T,
+        to_doc: ToDoc,
+    ) -> Output<'a>
+    where
+        ToDoc: FnOnce(&mut Self, &'a T) -> Output<'a>,
+    {
         // Save initial state
-        let tail = self.tail_position;
-        let iife = self.in_iife;
+        let scope_position = self.scope_position;
 
         // Set state for in this iife
-        self.tail_position = true;
-        self.in_iife = true;
+        self.scope_position = Position::Tail;
         let current_scope_vars = self.current_scope_vars.clone();
 
         // Generate the expression
-        let result = self.expression(expression);
+        let result = to_doc(self, statements);
 
         // Reset
-        self.in_iife = iife;
-        self.tail_position = tail;
         self.current_scope_vars = current_scope_vars;
+        self.scope_position = scope_position;
 
         // Wrap in iife document
         Ok(self.immediately_involked_function_expression_document(result?))
@@ -375,24 +408,73 @@ impl<'module> Generator<'module> {
         }
     }
 
-    fn sequence<'a>(&mut self, expressions: &'a [TypedExpr]) -> Output<'a> {
-        let count = expressions.len();
+    fn pipeline<'a>(
+        &mut self,
+        assignments: &'a [TypedAssignment],
+        finally: &'a TypedExpr,
+    ) -> Output<'a> {
+        let count = assignments.len();
+        let mut documents = Vec::with_capacity((count + 1) * 2);
+        for assignment in assignments.iter() {
+            documents.push(self.not_in_tail_position(|gen| {
+                gen.assignment(&assignment.value, &assignment.pattern)
+            })?);
+            documents.push(line());
+        }
+        documents.push(self.expression(finally)?);
+        Ok(documents.to_doc().force_break())
+    }
+
+    fn expression_flattening_blocks<'a>(&mut self, expression: &'a TypedExpr) -> Output<'a> {
+        match expression {
+            TypedExpr::Block { statements, .. } => self.statements(statements),
+            _ => self.expression(expression),
+        }
+    }
+
+    fn block<'a>(&mut self, statements: &'a Vec1<TypedStatement>) -> Output<'a> {
+        if statements.len() == 1 {
+            match statements.first() {
+                Statement::Expression(expression) => {
+                    Ok(docvec!['(', self.expression(expression)?, ')'])
+                }
+
+                Statement::Assignment(assignment) => Ok(docvec![
+                    '(',
+                    self.expression(assignment.value.as_ref())?,
+                    ')'
+                ]),
+
+                Statement::Use(_) => {
+                    unreachable!("use statements must not be present for JavaScript generation")
+                }
+            }
+        } else {
+            self.immediately_involked_function_expression(statements, |gen, statements| {
+                gen.statements(statements)
+            })
+        }
+    }
+
+    fn statements<'a>(&mut self, statements: &'a [TypedStatement]) -> Output<'a> {
+        let count = statements.len();
         let mut documents = Vec::with_capacity(count * 3);
-        for (i, expression) in expressions.iter().enumerate() {
+        for (i, statement) in statements.iter().enumerate() {
             if i + 1 < count {
-                documents.push(self.not_in_tail_position(|gen| gen.expression(expression))?);
-                if !matches!(
-                    expression,
-                    TypedExpr::Assignment { .. } | TypedExpr::Case { .. }
-                ) {
+                documents.push(self.not_in_tail_position(|gen| gen.statement(statement))?);
+                if requires_semicolon(statement) {
                     documents.push(";".to_doc());
                 }
                 documents.push(line());
             } else {
-                documents.push(self.expression(expression)?);
+                documents.push(self.statement(statement)?);
             }
         }
-        Ok(documents.to_doc().force_break())
+        if count == 1 {
+            Ok(documents.to_doc())
+        } else {
+            Ok(documents.to_doc().force_break())
+        }
     }
 
     fn assignment<'a>(&mut self, value: &'a TypedExpr, pattern: &'a TypedPattern) -> Output<'a> {
@@ -402,7 +484,7 @@ impl<'module> Generator<'module> {
             // Subject must be rendered before the variable for variable numbering
             let subject = self.not_in_tail_position(|gen| gen.wrap_expression(value))?;
             let js_name = self.next_local_var(name);
-            return Ok(if self.tail_position {
+            return Ok(if self.scope_position.is_tail() {
                 docvec![
                     "let ",
                     js_name.clone(),
@@ -429,7 +511,7 @@ impl<'module> Generator<'module> {
         let compiled = pattern_generator.take_compiled();
 
         // If we are in tail position we can return value being assigned
-        let afterwards = if self.tail_position {
+        let afterwards = if self.scope_position.is_tail() {
             line()
                 .append("return ")
                 .append(subject_assignment.clone().unwrap_or_else(|| value.clone()))
@@ -487,7 +569,9 @@ impl<'module> Generator<'module> {
             for multipatterns in multipatterns {
                 let scope = gen.expression_generator.current_scope_vars.clone();
                 let mut compiled = gen.generate(&subjects, multipatterns, clause.guard.as_ref())?;
-                let consequence = gen.expression_generator.expression(&clause.then)?;
+                let consequence = gen
+                    .expression_generator
+                    .expression_flattening_blocks(&clause.then)?;
 
                 // We've seen one more clause
                 clause_number += 1;
@@ -600,13 +684,19 @@ impl<'module> Generator<'module> {
     }
 
     fn call<'a>(&mut self, fun: &'a TypedExpr, arguments: &'a [CallArg<TypedExpr>]) -> Output<'a> {
-        let tail = self.tail_position;
-        self.tail_position = false;
+        let scope_position = self.scope_position;
+        let function_position = self.function_position;
+
+        self.scope_position = Position::NotTail;
+        self.function_position = Position::NotTail;
         let arguments = arguments
             .iter()
             .map(|element| self.wrap_expression(&element.value))
             .try_collect()?;
-        self.tail_position = tail;
+
+        self.function_position = function_position;
+        self.scope_position = scope_position;
+
         self.call_with_doc_args(fun, arguments)
     }
 
@@ -649,8 +739,7 @@ impl<'module> Generator<'module> {
             // frame, enabling recursion with constant memory usage.
             TypedExpr::Var { name, .. }
                 if self.function_name == Some(name)
-                    && !self.in_iife
-                    && self.tail_position
+                    && self.function_position.is_tail()
                     && self.current_scope_vars.get(name) == Some(&0) =>
             {
                 let mut docs = Vec::with_capacity(arguments.len() * 4);
@@ -697,10 +786,13 @@ impl<'module> Generator<'module> {
         }
     }
 
-    fn fn_<'a>(&mut self, arguments: &'a [TypedArg], body: &'a TypedExpr) -> Output<'a> {
+    fn fn_<'a>(&mut self, arguments: &'a [TypedArg], body: &'a [TypedStatement]) -> Output<'a> {
         // New function, this is now the tail position
-        let tail = self.tail_position;
-        self.tail_position = true;
+        let function_position = self.function_position;
+        let scope_position = self.scope_position;
+        self.function_position = Position::Tail;
+        self.scope_position = Position::Tail;
+
         // And there's a new scope
         let scope = self.current_scope_vars.clone();
         for name in arguments.iter().flat_map(Arg::get_variable_name) {
@@ -713,10 +805,11 @@ impl<'module> Generator<'module> {
         std::mem::swap(&mut self.function_name, &mut name);
 
         // Generate the function body
-        let result = self.expression(body);
+        let result = self.statements(body);
 
         // Reset function name, scope, and tail position tracking
-        self.tail_position = tail;
+        self.function_position = function_position;
+        self.scope_position = scope_position;
         self.current_scope_vars = scope;
         std::mem::swap(&mut self.function_name, &mut name);
 
@@ -862,8 +955,8 @@ impl<'module> Generator<'module> {
     }
 
     fn todo<'a>(&mut self, message: &'a Option<SmolStr>, location: &'a SrcSpan) -> Document<'a> {
-        let tail_position = self.tail_position;
-        self.tail_position = false;
+        let scope_position = self.scope_position;
+        self.scope_position = Position::NotTail;
 
         let message = message
             .as_deref()
@@ -872,20 +965,20 @@ impl<'module> Generator<'module> {
 
         // Reset tail position so later values are returned as needed. i.e.
         // following clauses in a case expression.
-        self.tail_position = tail_position;
+        self.scope_position = scope_position;
 
         doc
     }
 
     fn panic<'a>(&mut self, location: &'a SrcSpan) -> Document<'a> {
-        let tail_position = self.tail_position;
-        self.tail_position = false;
+        let scope_position = self.scope_position;
+        self.scope_position = Position::NotTail;
 
         let doc = self.throw_error("todo", "panic expression evaluated", *location, vec![]);
 
         // Reset tail position so later values are returned as needed. i.e.
         // following clauses in a case expression.
-        self.tail_position = tail_position;
+        self.scope_position = scope_position;
 
         doc
     }
@@ -1239,8 +1332,7 @@ impl TypedExpr {
             | TypedExpr::Case { .. }
             | TypedExpr::Panic { .. }
             | TypedExpr::Block { .. }
-            | TypedExpr::Pipeline { .. }
-            | TypedExpr::Assignment { .. } => true,
+            | TypedExpr::Pipeline { .. } => true,
 
             TypedExpr::Int { .. }
             | TypedExpr::Float { .. }
@@ -1292,4 +1384,38 @@ impl BinOp {
 
 pub fn is_js_scalar(t: Arc<Type>) -> bool {
     t.is_int() || t.is_float() || t.is_bool() || t.is_nil() || t.is_string()
+}
+
+fn requires_semicolon(statement: &TypedStatement) -> bool {
+    match statement {
+        Statement::Expression(
+            TypedExpr::Int { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::BitString { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::ModuleSelect { .. },
+        ) => true,
+
+        Statement::Expression(
+            TypedExpr::Todo { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. },
+        ) => false,
+
+        Statement::Assignment(_) => false,
+        Statement::Use(_) => false,
+    }
 }

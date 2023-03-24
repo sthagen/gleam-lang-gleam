@@ -54,14 +54,16 @@ pub mod extra;
 pub mod lexer;
 mod token;
 
+use crate::analyse::Inferred;
 use crate::ast::{
-    Arg, ArgNames, AssignName, AssignmentKind, BinOp, BitStringSegment, BitStringSegmentOption,
-    CallArg, Clause, ClauseGuard, Constant, CustomType, ExternalFnArg, ExternalFunction,
-    ExternalType, Function, HasLocation, Import, Module, ModuleConstant, Pattern,
-    RecordConstructor, RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement, TargetGroup,
-    TodoKind, TypeAlias, TypeAst, UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard,
-    UntypedConstant, UntypedExpr, UntypedExternalFnArg, UntypedModule, UntypedPattern,
-    UntypedRecordUpdateArg, UntypedStatement, Use, CAPTURE_VARIABLE,
+    Arg, ArgNames, AssignName, Assignment, AssignmentKind, BinOp, BitStringSegment,
+    BitStringSegmentOption, CallArg, Clause, ClauseGuard, Constant, CustomType, ExternalFnArg,
+    ExternalFunction, ExternalType, Function, HasLocation, Import, Module, ModuleConstant,
+    ModuleStatement, Pattern, RecordConstructor, RecordConstructorArg, RecordUpdateSpread, SrcSpan,
+    Statement, TargetGroup, TodoKind, TypeAlias, TypeAst, UnqualifiedImport, UntypedArg,
+    UntypedClause, UntypedClauseGuard, UntypedConstant, UntypedExpr, UntypedExternalFnArg,
+    UntypedModule, UntypedModuleStatement, UntypedPattern, UntypedRecordUpdateArg,
+    UntypedStatement, Use, CAPTURE_VARIABLE,
 };
 use crate::build::Target;
 use crate::parse::extra::ModuleExtra;
@@ -72,7 +74,8 @@ use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::str::FromStr;
 use token::Token;
-use vec1::vec1;
+use vec1::{vec1, Vec1};
+
 #[cfg(test)]
 mod tests;
 
@@ -90,10 +93,10 @@ pub fn parse_module(src: &str) -> Result<(UntypedModule, ModuleExtra), ParseErro
 // Test Interface
 //
 #[cfg(test)]
-pub fn parse_expression_sequence(src: &str) -> Result<UntypedExpr, ParseError> {
+pub fn parse_statement_sequence(src: &str) -> Result<Vec1<UntypedStatement>, ParseError> {
     let lex = lexer::make_tokenizer(src);
     let mut parser = Parser::new(lex);
-    let expr = parser.parse_expression_seq();
+    let expr = parser.parse_statement_seq();
     let expr = parser.ensure_no_errors_or_remaining_input(expr)?;
     if let Some((e, _)) = expr {
         Ok(e)
@@ -195,12 +198,12 @@ where
                 let _ = self.next_tok();
                 let target = self.expect_target()?;
                 let _ = self.expect_one(&Token::LeftBrace)?;
-                let statements = self.expect_statements()?;
+                let statements = self.expect_module_statements()?;
                 let (_, _) = self.expect_one(&Token::RightBrace)?;
                 Ok(Some(TargetGroup::Only(target, statements)))
             }
             Some(_) => {
-                let statements = self.expect_statements()?;
+                let statements = self.expect_module_statements()?;
                 if statements.is_empty() {
                     Ok(None)
                 } else {
@@ -211,12 +214,12 @@ where
         }
     }
 
-    fn expect_statements(&mut self) -> Result<Vec<UntypedStatement>, ParseError> {
-        let statements = Parser::series_of(self, &Parser::parse_statement, None);
+    fn expect_module_statements(&mut self) -> Result<Vec<UntypedModuleStatement>, ParseError> {
+        let statements = Parser::series_of(self, &Parser::parse_module_statement, None);
         self.ensure_no_errors(statements)
     }
 
-    fn parse_statement(&mut self) -> Result<Option<UntypedStatement>, ParseError> {
+    fn parse_module_statement(&mut self) -> Result<Option<UntypedModuleStatement>, ParseError> {
         match (self.tok0.take(), self.tok1.as_ref()) {
             // Imports
             (Some((_, Token::Import, _)), _) => {
@@ -356,7 +359,7 @@ where
         &mut self,
     ) -> Result<Option<UntypedExpr>, ParseError> {
         match self.parse_expression_unit()? {
-            Some(expression) => Ok(Some(collapse_single_value_block(expression))),
+            Some(expression) => Ok(Some(expression)),
             None => Ok(None),
         }
     }
@@ -502,7 +505,7 @@ where
             Some((start, Token::Fn, _)) => {
                 let _ = self.next_tok();
                 match self.parse_function(start, false, true)? {
-                    Some(Statement::Function(Function {
+                    Some(ModuleStatement::Function(Function {
                         location,
                         arguments: args,
                         body,
@@ -512,7 +515,7 @@ where
                         location,
                         is_capture: false,
                         arguments: args,
-                        body: Box::new(body),
+                        body,
                         return_annotation,
                     },
 
@@ -553,22 +556,6 @@ where
                 }
             }
 
-            Some((start, Token::Let, _)) => {
-                let _ = self.next_tok();
-                let kind = if let Some((_, Token::Assert, _)) = self.tok0 {
-                    _ = self.next_tok();
-                    AssignmentKind::Assert
-                } else {
-                    AssignmentKind::Let
-                };
-                self.parse_assignment(start, kind)?
-            }
-
-            Some((start, Token::Use, _)) => {
-                let _ = self.next_tok();
-                self.parse_use(start)?
-            }
-
             // helpful error on possibly trying to group with ""
             Some((start, Token::LeftParen, _)) => {
                 return parse_error(ParseErrorType::ExprLparStart, SrcSpan { start, end: start });
@@ -583,7 +570,7 @@ where
                             start,
                             end: value.location().end,
                         },
-                        value: Box::from(collapse_single_value_block(value)),
+                        value: Box::from(value),
                     },
                     None => {
                         return parse_error(
@@ -603,7 +590,7 @@ where
                             start,
                             end: value.location().end,
                         },
-                        value: Box::from(collapse_single_value_block(value)),
+                        value: Box::from(value),
                     },
                     None => {
                         return parse_error(
@@ -643,7 +630,7 @@ where
                             expr = UntypedExpr::TupleIndex {
                                 location: SrcSpan { start, end },
                                 index,
-                                tuple: Box::new(collapse_single_value_block(expr)),
+                                tuple: Box::new(expr),
                             }
                         } else {
                             return parse_error(
@@ -658,7 +645,7 @@ where
                         expr = UntypedExpr::FieldAccess {
                             location: SrcSpan { start, end },
                             label,
-                            container: Box::new(collapse_single_value_block(expr)),
+                            container: Box::new(expr),
                         }
                     }
 
@@ -711,7 +698,7 @@ where
                     // Call
                     let args = self.parse_fn_args()?;
                     let (_, end) = self.expect_one(&Token::RightParen)?;
-                    match make_call(collapse_single_value_block(expr), args, start, end) {
+                    match make_call(expr, args, start, end) {
                         Ok(e) => expr = e,
                         Err(_) => {
                             return parse_error(
@@ -737,7 +724,7 @@ where
     // use <- module.function(a, b)
     // use a, b, c <- function(a, b)
     // use a, b, c, <- function(a, b)
-    fn parse_use(&mut self, start: u32) -> Result<UntypedExpr, ParseError> {
+    fn parse_use(&mut self, start: u32) -> Result<UntypedStatement, ParseError> {
         let assignments = if let Some((_, Token::LArrow, _)) = self.tok0 {
             vec![]
         } else {
@@ -747,19 +734,21 @@ where
         _ = self.expect_one(&Token::LArrow)?;
         let call = self.expect_expression()?;
 
-        Ok(UntypedExpr::Use(Use {
+        Ok(Statement::Use(Use {
             location: SrcSpan::new(start, call.location().end),
             assignments,
             call: Box::new(call),
         }))
     }
 
-    // An assignment, with `Let` or `Assert` already consumed
-    fn parse_assignment(
-        &mut self,
-        start: u32,
-        kind: AssignmentKind,
-    ) -> Result<UntypedExpr, ParseError> {
+    // An assignment, with `Let` already consumed
+    fn parse_assignment(&mut self, start: u32) -> Result<UntypedStatement, ParseError> {
+        let kind = if let Some((_, Token::Assert, _)) = self.tok0 {
+            _ = self.next_tok();
+            AssignmentKind::Assert
+        } else {
+            AssignmentKind::Let
+        };
         let pattern = if let Some(p) = self.parse_pattern()? {
             p
         } else {
@@ -781,7 +770,7 @@ where
                 end: eq_e,
             },
         })?;
-        Ok(UntypedExpr::Assignment {
+        Ok(Statement::Assignment(Assignment {
             location: SrcSpan {
                 start,
                 end: value.location().end,
@@ -790,72 +779,65 @@ where
             pattern,
             annotation,
             kind,
-        })
+        }))
     }
 
     // examples:
-    //   let pattern = expr
-    //   let assert pattern: Type = expr
-    //   expr expr
     //   expr
-    //
-    //   In order to parse an expr sequence, you must try to parse an expr, if it is a `try`
-    //   you MUST parse another expr, if it is some other expr, you MAY parse another expr
-    fn parse_expression_seq(&mut self) -> Result<Option<(UntypedExpr, u32)>, ParseError> {
-        let mut expressions = vec![];
+    //   expr expr..
+    //   expr assignment..
+    //   assignment
+    //   assignment expr..
+    //   assignment assignment..
+    fn parse_statement_seq(&mut self) -> Result<Option<(Vec1<UntypedStatement>, u32)>, ParseError> {
+        let mut statements = vec![];
         let mut start = None;
         let mut end = 0;
 
         // Try and parse as many expressions as possible
-        while let Some(expression) = self.parse_expression()? {
+        while let Some(statement) = self.parse_statement()? {
             if start.is_none() {
-                start = Some(expression.location().start);
+                start = Some(statement.location().start);
             }
-            end = expression.location().end;
-            expressions.push(expression);
+            end = statement.location().end;
+            statements.push(statement);
         }
 
-        // If there are no expressions, return None
-        if expressions.is_empty() {
-            return Ok(None);
+        match Vec1::try_from_vec(statements) {
+            Ok(statements) => Ok(Some((statements, end))),
+            Err(_) => Ok(None),
         }
-
-        // If there is only one expression, return it
-        if expressions.len() == 1 {
-            let expression = expressions.pop().expect("existance checked in conditional");
-            return Ok(Some((expression, end)));
-        }
-
-        // Otherwise return all the expressions wrapped in a block
-        let location = SrcSpan::new(start.unwrap_or(0), end);
-        let expression = UntypedExpr::Block {
-            location,
-            expressions,
-        };
-        Ok(Some((expression, end)))
     }
 
-    fn parse_expression_or_block(&mut self) -> Result<Option<UntypedExpr>, ParseError> {
-        if let Some((start, Token::LeftBrace, _)) = self.tok0.as_ref() {
-            let start = *start;
-            _ = self.next_tok();
-            Ok(Some(self.parse_block(start)?))
-        } else {
-            self.parse_expression()
+    fn parse_statement(&mut self) -> Result<Option<UntypedStatement>, ParseError> {
+        match self.tok0.take() {
+            Some((start, Token::Use, _)) => {
+                let _ = self.next_tok();
+                Ok(Some(self.parse_use(start)?))
+            }
+
+            Some((start, Token::Let, _)) => {
+                let _ = self.next_tok();
+                Ok(Some(self.parse_assignment(start)?))
+            }
+
+            token => {
+                self.tok0 = token;
+                let expression = self.parse_expression()?.map(Statement::Expression);
+                Ok(expression)
+            }
         }
     }
 
     fn parse_block(&mut self, start: u32) -> Result<UntypedExpr, ParseError> {
-        let body = self.parse_expression_seq()?;
+        let body = self.parse_statement_seq()?;
         let (_, end) = self.expect_one(&Token::RightBrace)?;
+        let location = SrcSpan { start, end };
         match body {
             None => parse_error(ParseErrorType::NoExpression, SrcSpan { start, end }),
-
-            Some((expression @ UntypedExpr::Block { .. }, _)) => Ok(expression),
-
-            Some((expression, _)) => Ok(UntypedExpr::Block {
-                location: SrcSpan::new(start, end),
-                expressions: vec![expression],
+            Some((statements, _)) => Ok(UntypedExpr::Block {
+                statements,
+                location,
             }),
         }
     }
@@ -1074,7 +1056,7 @@ where
                 }
                 e
             })?;
-            let then = self.parse_expression_or_block()?;
+            let then = self.parse_expression()?;
             if let Some(then) = then {
                 Ok(Some(Clause {
                     location: SrcSpan {
@@ -1248,7 +1230,7 @@ where
             module: module.map(|(_, n, _)| n),
             name,
             with_spread,
-            constructor: (),
+            constructor: Inferred::Unknown,
             type_: (),
         })
     }
@@ -1362,7 +1344,7 @@ where
         start: u32,
         public: bool,
         is_anon: bool,
-    ) -> Result<Option<UntypedStatement>, ParseError> {
+    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
         let documentation = if is_anon {
             None
         } else {
@@ -1382,21 +1364,21 @@ where
         let (_, rpar_e) = self.expect_one(&Token::RightParen)?;
         let return_annotation = self.parse_type_annotation(&Token::RArrow, false)?;
         let _ = self.expect_one(&Token::LeftBrace)?;
-        let some_body = self.parse_expression_seq()?;
+        let some_body = self.parse_statement_seq()?;
         let (_, rbr_e) = self.expect_one(&Token::RightBrace)?;
         let end = return_annotation
             .as_ref()
             .map(|l| l.location().end)
             .unwrap_or_else(|| if is_anon { rbr_e } else { rpar_e });
         let body = match some_body {
-            None => UntypedExpr::Todo {
+            None => vec1![Statement::Expression(UntypedExpr::Todo {
                 kind: TodoKind::EmptyFunction,
                 location: SrcSpan { start, end },
                 label: None,
-            },
+            })],
             Some((body, _)) => body,
         };
-        Ok(Some(Statement::Function(Function {
+        Ok(Some(ModuleStatement::Function(Function {
             documentation,
             location: SrcSpan { start, end },
             end_position: rbr_e - 1,
@@ -1418,7 +1400,7 @@ where
         &mut self,
         start: u32,
         public: bool,
-    ) -> Result<Option<UntypedStatement>, ParseError> {
+    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
         let documentation = self.take_documentation(start);
         let (_, name, _) = self.expect_name()?;
         let _ = self.expect_one(&Token::LeftParen)?;
@@ -1431,7 +1413,7 @@ where
         let (_, fun, end) = self.expect_string()?;
 
         if let Some(retrn) = return_annotation {
-            Ok(Some(Statement::ExternalFunction(ExternalFunction {
+            Ok(Some(ModuleStatement::ExternalFunction(ExternalFunction {
                 documentation,
                 location: SrcSpan { start, end },
                 public,
@@ -1646,10 +1628,10 @@ where
         &mut self,
         start: u32,
         public: bool,
-    ) -> Result<Option<UntypedStatement>, ParseError> {
+    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
         let documentation = self.take_documentation(start);
         let (_, name, args, end) = self.expect_type_name()?;
-        Ok(Some(Statement::ExternalType(ExternalType {
+        Ok(Some(ModuleStatement::ExternalType(ExternalType {
             location: SrcSpan { start, end },
             public,
             name,
@@ -1672,7 +1654,7 @@ where
         start: u32,
         public: bool,
         opaque: bool,
-    ) -> Result<Option<UntypedStatement>, ParseError> {
+    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
         let documentation = self.take_documentation(start);
         let (_, name, parameters, end) = self.expect_type_name()?;
         if self.maybe_one(&Token::LeftBrace).is_some() {
@@ -1701,7 +1683,7 @@ where
             if constructors.is_empty() {
                 parse_error(ParseErrorType::NoConstructors, SrcSpan { start, end })
             } else {
-                Ok(Some(Statement::CustomType(CustomType {
+                Ok(Some(ModuleStatement::CustomType(CustomType {
                     documentation,
                     location: SrcSpan { start, end },
                     public,
@@ -1717,7 +1699,7 @@ where
             if !opaque {
                 if let Some(t) = self.parse_type(false)? {
                     let type_end = t.location().end;
-                    Ok(Some(Statement::TypeAlias(TypeAlias {
+                    Ok(Some(ModuleStatement::TypeAlias(TypeAlias {
                         documentation,
                         location: SrcSpan {
                             start,
@@ -1973,7 +1955,7 @@ where
     //   import a/b
     //   import a/b.{c}
     //   import a/b.{c as d} as e
-    fn parse_import(&mut self) -> Result<Option<UntypedStatement>, ParseError> {
+    fn parse_import(&mut self) -> Result<Option<UntypedModuleStatement>, ParseError> {
         let mut start = 0;
         let mut end;
         let mut module = String::new();
@@ -2024,7 +2006,7 @@ where
             end = e;
         }
 
-        Ok(Some(Statement::Import(Import {
+        Ok(Some(ModuleStatement::Import(Import {
             documentation,
             location: SrcSpan { start, end },
             unqualified,
@@ -2094,7 +2076,10 @@ where
     //   const a = 1
     //   const a:Int = 1
     //   pub const a:Int = 1
-    fn parse_module_const(&mut self, public: bool) -> Result<Option<UntypedStatement>, ParseError> {
+    fn parse_module_const(
+        &mut self,
+        public: bool,
+    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
         let (start, name, end) = self.expect_name()?;
         let documentation = self.take_documentation(start);
 
@@ -2102,7 +2087,7 @@ where
 
         let (eq_s, eq_e) = self.expect_one(&Token::Equal)?;
         if let Some(value) = self.parse_const_value()? {
-            Ok(Some(Statement::ModuleConstant(ModuleConstant {
+            Ok(Some(ModuleStatement::ModuleConstant(ModuleConstant {
                 documentation,
                 location: SrcSpan { start, end },
                 public,
@@ -2869,12 +2854,11 @@ fn do_reduce_clause_guard(op: Spanned, estack: &mut Vec<UntypedClauseGuard>) {
 
 fn expr_op_reduction((_, token, _): Spanned, l: UntypedExpr, r: UntypedExpr) -> UntypedExpr {
     if token == Token::Pipe {
-        let r = collapse_single_value_block(r);
         let expressions = if let UntypedExpr::PipeLine { mut expressions } = l {
             expressions.push(r);
             expressions
         } else {
-            vec1![collapse_single_value_block(l), r]
+            vec1![l, r]
         };
         UntypedExpr::PipeLine { expressions }
     } else if let Some(bin_op) = tok_to_binop(&token) {
@@ -2884,20 +2868,11 @@ fn expr_op_reduction((_, token, _): Spanned, l: UntypedExpr, r: UntypedExpr) -> 
                 end: r.location().end,
             },
             name: bin_op,
-            left: Box::new(collapse_single_value_block(l)),
-            right: Box::new(collapse_single_value_block(r)),
+            left: Box::new(l),
+            right: Box::new(r),
         }
     } else {
         panic!("Token could not be converted to binop.")
-    }
-}
-
-fn collapse_single_value_block(expression: UntypedExpr) -> UntypedExpr {
-    match expression {
-        UntypedExpr::Block {
-            mut expressions, ..
-        } if expressions.len() == 1 => expressions.pop().expect("Block size checked above"),
-        expression => expression,
     }
 }
 
@@ -3129,7 +3104,7 @@ pub fn make_call(
                 },
                 type_: (),
             }],
-            body: Box::new(call),
+            body: vec1![Statement::Expression(call)],
             return_annotation: None,
         }),
 

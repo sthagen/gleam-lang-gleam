@@ -3,10 +3,10 @@ mod tests;
 
 use crate::{
     ast::{
-        self, BitStringSegmentOption, CustomType, ExternalFunction, ExternalType, Function,
-        GroupedStatements, Import, Layer, ModuleConstant, ModuleFunction, RecordConstructor,
-        RecordConstructorArg, SrcSpan, Statement, TypeAlias, TypeAst, TypedModule, TypedStatement,
-        UnqualifiedImport, UntypedModule,
+        self, BitStringSegmentOption, CustomType, DefinitionLocation, ExternalFunction,
+        ExternalType, Function, GroupedStatements, Import, Layer, ModuleConstant, ModuleFunction,
+        ModuleStatement, RecordConstructor, RecordConstructorArg, SrcSpan, TypeAlias, TypeAst,
+        TypedModule, TypedModuleStatement, UnqualifiedImport, UntypedModule,
     },
     build::{Origin, Target},
     call_graph::into_dependency_order,
@@ -18,8 +18,8 @@ use crate::{
         fields::{FieldMap, FieldMapBuilder},
         hydrator::Hydrator,
         prelude::*,
-        AccessorsMap, Module, RecordAccessor, Type, TypeConstructor, ValueConstructor,
-        ValueConstructorVariant,
+        AccessorsMap, Module, PatternConstructor, RecordAccessor, Type, TypeConstructor,
+        ValueConstructor, ValueConstructorVariant,
     },
     uid::UniqueIdGenerator,
     warning::TypeWarningEmitter,
@@ -27,6 +27,38 @@ use crate::{
 use itertools::Itertools;
 use smol_str::SmolStr;
 use std::{collections::HashMap, sync::Arc};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inferred<T> {
+    Known(T),
+    Unknown,
+}
+
+impl<T> Inferred<T> {
+    pub fn expect(self, message: &str) -> T {
+        match self {
+            Inferred::Known(value) => Some(value),
+            Inferred::Unknown => None,
+        }
+        .expect(message)
+    }
+}
+
+impl Inferred<PatternConstructor> {
+    pub fn definition_location(&self) -> Option<DefinitionLocation<'_>> {
+        match self {
+            Inferred::Known(value) => value.definition_location(),
+            Inferred::Unknown => None,
+        }
+    }
+
+    pub fn get_documentation(&self) -> Option<&str> {
+        match self {
+            Inferred::Known(value) => value.get_documentation(),
+            Inferred::Unknown => None,
+        }
+    }
+}
 
 // TODO: This takes too many arguments.
 /// Crawl the AST, annotating each node with the inferred type or
@@ -690,7 +722,7 @@ fn infer_function(
     environment: &mut Environment<'_>,
     hydrators: &mut HashMap<SmolStr, Hydrator>,
     module_name: &SmolStr,
-) -> Result<TypedStatement, Error> {
+) -> Result<TypedModuleStatement, Error> {
     let Function {
         documentation: doc,
         location,
@@ -712,7 +744,7 @@ fn infer_function(
         .expect("Preregistered type for fn was not a fn");
 
     // Infer the type using the preregistered args + return types as a starting point
-    let (typ, args, body, safe_to_generalise) = environment.in_new_scope(|environment| {
+    let (type_, args, body, safe_to_generalise) = environment.in_new_scope(|environment| {
         let args = args
             .into_iter()
             .zip(&args_types)
@@ -724,18 +756,18 @@ fn infer_function(
             .expect("Could not find hydrator for fn");
         let (args, body) = expr_typer.infer_fn_with_known_types(args, body, Some(return_type))?;
         let args_types = args.iter().map(|a| a.type_.clone()).collect();
-        let typ = fn_(args_types, body.type_());
+        let typ = fn_(args_types, body.last().type_());
         let safe_to_generalise = !expr_typer.ungeneralised_function_used;
         Ok((typ, args, body, safe_to_generalise))
     })?;
 
     // Assert that the inferred type matches the type of any recursive call
-    unify(preregistered_type, typ.clone()).map_err(|e| convert_unify_error(e, location))?;
+    unify(preregistered_type, type_.clone()).map_err(|e| convert_unify_error(e, location))?;
 
     // Generalise the function if safe to do so
-    let typ = if safe_to_generalise {
+    let type_ = if safe_to_generalise {
         let _ = environment.ungeneralised_functions.remove(&name);
-        let typ = type_::generalise(typ);
+        let type_ = type_::generalise(type_);
         environment.insert_variable(
             name.clone(),
             ValueConstructorVariant::ModuleFn {
@@ -746,15 +778,15 @@ fn infer_function(
                 arity: args.len(),
                 location,
             },
-            typ.clone(),
+            type_.clone(),
             public,
         );
-        typ
+        type_
     } else {
-        typ
+        type_
     };
 
-    Ok(Statement::Function(Function {
+    Ok(ModuleStatement::Function(Function {
         documentation: doc,
         location,
         name,
@@ -762,7 +794,7 @@ fn infer_function(
         arguments: args,
         end_position: end_location,
         return_annotation,
-        return_type: typ
+        return_type: type_
             .return_type()
             .expect("Could not find return type for fn"),
         body,
@@ -772,7 +804,7 @@ fn infer_function(
 fn infer_external_function(
     f: ExternalFunction<()>,
     environment: &mut Environment<'_>,
-) -> Result<TypedStatement, Error> {
+) -> Result<TypedModuleStatement, Error> {
     let ExternalFunction {
         documentation: doc,
         location,
@@ -796,7 +828,7 @@ fn infer_external_function(
         .zip(&args_types)
         .map(|(a, t)| a.set_type(t.clone()))
         .collect();
-    Ok(Statement::ExternalFunction(ExternalFunction {
+    Ok(ModuleStatement::ExternalFunction(ExternalFunction {
         return_type,
         documentation: doc,
         location,
@@ -812,7 +844,7 @@ fn infer_external_function(
 fn insert_type_alias(
     t: TypeAlias<()>,
     environment: &mut Environment<'_>,
-) -> Result<TypedStatement, Error> {
+) -> Result<TypedModuleStatement, Error> {
     let TypeAlias {
         documentation: doc,
         location,
@@ -827,7 +859,7 @@ fn insert_type_alias(
         .expect("Could not find existing type for type alias")
         .typ
         .clone();
-    Ok(Statement::TypeAlias(TypeAlias {
+    Ok(ModuleStatement::TypeAlias(TypeAlias {
         documentation: doc,
         location,
         public,
@@ -841,7 +873,7 @@ fn insert_type_alias(
 fn infer_custom_type(
     t: CustomType<()>,
     environment: &mut Environment<'_>,
-) -> Result<TypedStatement, Error> {
+) -> Result<TypedModuleStatement, Error> {
     let CustomType {
         documentation: doc,
         location,
@@ -908,7 +940,7 @@ fn infer_custom_type(
         .parameters
         .clone();
 
-    Ok(Statement::CustomType(CustomType {
+    Ok(ModuleStatement::CustomType(CustomType {
         documentation: doc,
         location,
         public,
@@ -923,7 +955,7 @@ fn infer_custom_type(
 fn hydrate_external_type(
     t: ExternalType,
     environment: &mut Environment<'_>,
-) -> Result<TypedStatement, Error> {
+) -> Result<TypedModuleStatement, Error> {
     let ExternalType {
         documentation: doc,
         location,
@@ -940,7 +972,7 @@ fn hydrate_external_type(
         };
         let _ = hydrator.type_from_ast(&var, environment)?;
     }
-    Ok(Statement::ExternalType(ExternalType {
+    Ok(ModuleStatement::ExternalType(ExternalType {
         documentation: doc,
         location,
         public,
@@ -952,7 +984,7 @@ fn hydrate_external_type(
 fn record_imported_items_for_use_detection(
     i: Import<()>,
     environment: &mut Environment<'_>,
-) -> Result<TypedStatement, Error> {
+) -> Result<TypedModuleStatement, Error> {
     let Import {
         documentation,
         location,
@@ -978,7 +1010,7 @@ fn record_imported_items_for_use_detection(
             import.layer = Layer::Type;
         }
     }
-    Ok(Statement::Import(Import {
+    Ok(ModuleStatement::Import(Import {
         documentation,
         location,
         module,
@@ -992,7 +1024,7 @@ fn infer_module_constant(
     c: ModuleConstant<(), ()>,
     environment: &mut Environment<'_>,
     module_name: &SmolStr,
-) -> Result<TypedStatement, Error> {
+) -> Result<TypedModuleStatement, Error> {
     let ModuleConstant {
         documentation: doc,
         location,
@@ -1022,7 +1054,7 @@ fn infer_module_constant(
         environment.init_usage(name.clone(), EntityKind::PrivateConstant, location);
     }
 
-    Ok(Statement::ModuleConstant(ModuleConstant {
+    Ok(ModuleStatement::ModuleConstant(ModuleConstant {
         documentation: doc,
         location,
         name,
@@ -1102,19 +1134,21 @@ where
 }
 
 fn generalise_statement(
-    s: TypedStatement,
+    s: TypedModuleStatement,
     module_name: &SmolStr,
     environment: &mut Environment<'_>,
-) -> TypedStatement {
+) -> TypedModuleStatement {
     match s {
-        Statement::Function(function) => generalise_function(function, environment, module_name),
+        ModuleStatement::Function(function) => {
+            generalise_function(function, environment, module_name)
+        }
 
-        statement @ (Statement::TypeAlias(TypeAlias { .. })
-        | Statement::CustomType(CustomType { .. })
-        | Statement::ExternalFunction(ExternalFunction { .. })
-        | Statement::ExternalType(ExternalType { .. })
-        | Statement::Import(Import { .. })
-        | Statement::ModuleConstant(ModuleConstant { .. })) => statement,
+        statement @ (ModuleStatement::TypeAlias(TypeAlias { .. })
+        | ModuleStatement::CustomType(CustomType { .. })
+        | ModuleStatement::ExternalFunction(ExternalFunction { .. })
+        | ModuleStatement::ExternalType(ExternalType { .. })
+        | ModuleStatement::Import(Import { .. })
+        | ModuleStatement::ModuleConstant(ModuleConstant { .. })) => statement,
     }
 }
 
@@ -1122,7 +1156,7 @@ fn generalise_function(
     function: Function<Arc<Type>, ast::TypedExpr>,
     environment: &mut Environment<'_>,
     module_name: &SmolStr,
-) -> TypedStatement {
+) -> TypedModuleStatement {
     let Function {
         documentation: doc,
         location,
@@ -1166,7 +1200,7 @@ fn generalise_function(
         },
     );
 
-    Statement::Function(Function {
+    ModuleStatement::Function(Function {
         documentation: doc,
         location,
         name,

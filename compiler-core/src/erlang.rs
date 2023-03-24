@@ -25,6 +25,7 @@ use lazy_static::lazy_static;
 use pattern::pattern;
 use smol_str::SmolStr;
 use std::{char, collections::HashMap, ops::Deref, str::FromStr, sync::Arc};
+use vec1::Vec1;
 
 const INDENT: isize = 4;
 const MAX_COLUMNS: isize = 80;
@@ -88,7 +89,7 @@ pub fn records(module: &TypedModule) -> Vec<(&str, String)> {
         .statements
         .iter()
         .filter_map(|s| match s {
-            Statement::CustomType(CustomType {
+            ModuleStatement::CustomType(CustomType {
                 public: true,
                 constructors,
                 ..
@@ -218,7 +219,7 @@ fn module_document<'a>(
         module
             .statements
             .iter()
-            .flat_map(|s| statement(&module.name, s, &module.name, line_numbers)),
+            .flat_map(|s| module_statement(&module.name, s, &module.name, line_numbers)),
         lines(2),
     ));
 
@@ -232,28 +233,28 @@ fn module_document<'a>(
 }
 
 fn register_imports(
-    s: &TypedStatement,
+    s: &TypedModuleStatement,
     exports: &mut Vec<Document<'_>>,
     type_exports: &mut Vec<Document<'_>>,
     type_defs: &mut Vec<Document<'_>>,
     module_name: &str,
 ) {
     match s {
-        Statement::Function(Function {
+        ModuleStatement::Function(Function {
             public: true,
             name,
             arguments: args,
             ..
         }) => exports.push(atom(name.to_string()).append("/").append(args.len())),
 
-        Statement::ExternalFunction(ExternalFunction {
+        ModuleStatement::ExternalFunction(ExternalFunction {
             public: true,
             name,
             arguments: args,
             ..
         }) => exports.push(atom(name.to_string()).append("/").append(args.len())),
 
-        Statement::ExternalType(ExternalType {
+        ModuleStatement::ExternalType(ExternalType {
             name,
             arguments: args,
             ..
@@ -291,7 +292,7 @@ fn register_imports(
             type_defs.push(doc);
         }
 
-        Statement::CustomType(CustomType {
+        ModuleStatement::CustomType(CustomType {
             name,
             constructors,
             typed_parameters,
@@ -366,29 +367,29 @@ fn register_imports(
             type_defs.push(doc);
         }
 
-        Statement::Function(Function { .. })
-        | Statement::Import(Import { .. })
-        | Statement::TypeAlias(TypeAlias { .. })
-        | Statement::ExternalFunction(ExternalFunction { .. })
-        | Statement::ModuleConstant(ModuleConstant { .. }) => (),
+        ModuleStatement::Function(Function { .. })
+        | ModuleStatement::Import(Import { .. })
+        | ModuleStatement::TypeAlias(TypeAlias { .. })
+        | ModuleStatement::ExternalFunction(ExternalFunction { .. })
+        | ModuleStatement::ModuleConstant(ModuleConstant { .. }) => (),
     }
 }
 
-fn statement<'a>(
+fn module_statement<'a>(
     current_module: &'a str,
-    statement: &'a TypedStatement,
+    statement: &'a TypedModuleStatement,
     module: &'a str,
     line_numbers: &'a LineNumbers,
 ) -> Vec<Document<'a>> {
     match statement {
-        Statement::TypeAlias(TypeAlias { .. })
-        | Statement::CustomType(CustomType { .. })
-        | Statement::Import(Import { .. })
-        | Statement::ExternalType(ExternalType { .. })
-        | Statement::ModuleConstant(ModuleConstant { .. })
-        | Statement::ExternalFunction(ExternalFunction { public: false, .. }) => vec![],
+        ModuleStatement::TypeAlias(TypeAlias { .. })
+        | ModuleStatement::CustomType(CustomType { .. })
+        | ModuleStatement::Import(Import { .. })
+        | ModuleStatement::ExternalType(ExternalType { .. })
+        | ModuleStatement::ModuleConstant(ModuleConstant { .. })
+        | ModuleStatement::ExternalFunction(ExternalFunction { public: false, .. }) => vec![],
 
-        Statement::Function(Function {
+        ModuleStatement::Function(Function {
             arguments: args,
             name,
             body,
@@ -396,7 +397,7 @@ fn statement<'a>(
             ..
         }) => vec![mod_fun(name, args, body, module, return_type, line_numbers)],
 
-        Statement::ExternalFunction(ExternalFunction {
+        ModuleStatement::ExternalFunction(ExternalFunction {
             fun,
             module,
             arguments: args,
@@ -417,7 +418,7 @@ fn statement<'a>(
 fn mod_fun<'a>(
     name: &'a str,
     args: &'a [TypedArg],
-    body: &'a TypedExpr,
+    body: &'a [TypedStatement],
     module: &'a str,
     return_type: &'a Arc<Type>,
     line_numbers: &'a LineNumbers,
@@ -435,7 +436,12 @@ fn mod_fun<'a>(
     spec.append(atom(name.to_string()))
         .append(fun_args(args, &mut env))
         .append(" ->")
-        .append(line().append(expr(body, &mut env)).nest(INDENT).group())
+        .append(
+            line()
+                .append(statement_sequence(body, &mut env))
+                .nest(INDENT)
+                .group(),
+        )
         .append(".")
 }
 
@@ -595,6 +601,16 @@ fn const_segment<'a>(
     bit_string_segment(document, options, size, unit, true, env)
 }
 
+fn statement<'a>(statement: &'a TypedStatement, env: &mut Env<'a>) -> Document<'a> {
+    match statement {
+        Statement::Expression(e) => expr(e, env),
+        Statement::Assignment(a) => assignment(a, env),
+        Statement::Use(_) => {
+            unreachable!("Use statements must not be present for Erlang generation")
+        }
+    }
+}
+
 fn expr_segment<'a>(
     value: &'a TypedExpr,
     options: &'a [BitStringSegmentOption<TypedExpr>],
@@ -720,18 +736,23 @@ where
     document
 }
 
-fn block<'a>(expressions: &'a [TypedExpr], env: &mut Env<'a>) -> Document<'a> {
+fn block<'a>(statements: &'a Vec1<TypedStatement>, env: &mut Env<'a>) -> Document<'a> {
+    if statements.len() == 1 && statements.first().is_non_pipe_expression() {
+        return docvec!['(', statement(statements.first(), env), ')'];
+    }
+
     let vars = env.current_scope_vars.clone();
-    let document = sequence(expressions, env);
+    let document = statement_sequence(statements, env);
     env.current_scope_vars = vars;
-    document
+
+    begin_end(document)
 }
 
-fn sequence<'a>(expressions: &'a [TypedExpr], env: &mut Env<'a>) -> Document<'a> {
-    let count = expressions.len();
+fn statement_sequence<'a>(statements: &'a [TypedStatement], env: &mut Env<'a>) -> Document<'a> {
+    let count = statements.len();
     let mut documents = Vec::with_capacity(count * 3);
-    for (i, expression) in expressions.iter().enumerate() {
-        documents.push(expr(expression, env).group());
+    for (i, expression) in statements.iter().enumerate() {
+        documents.push(statement(expression, env).group());
 
         if i + 1 < count {
             // This isn't the final expression so add the delimeters
@@ -739,7 +760,11 @@ fn sequence<'a>(expressions: &'a [TypedExpr], env: &mut Env<'a>) -> Document<'a>
             documents.push(line());
         }
     }
-    documents.to_doc().force_break()
+    if count == 1 {
+        documents.to_doc()
+    } else {
+        documents.to_doc().force_break()
+    }
 }
 
 fn bin_op<'a>(
@@ -787,6 +812,7 @@ fn bin_op<'a>(
     let div = |left: Document<'a>, right: Document<'a>| {
         left.append(break_("", " "))
             .append(op)
+            .group()
             .append(" ")
             .append(right)
     };
@@ -1030,7 +1056,7 @@ fn clause<'a>(clause: &'a TypedClause, env: &mut Env<'a>) -> Document<'a> {
 
                 let guard = optional_clause_guard(guard.as_ref(), env);
                 if then_doc.is_none() {
-                    then_doc = Some(expr(then, env));
+                    then_doc = Some(clause_consequence(then, env));
                     end_erlang_vars = env.erl_function_scope_vars.clone();
                 }
 
@@ -1046,6 +1072,13 @@ fn clause<'a>(clause: &'a TypedClause, env: &mut Env<'a>) -> Document<'a> {
     let doc = concat(docs);
     env.erl_function_scope_vars = end_erlang_vars;
     doc
+}
+
+fn clause_consequence<'a>(consequence: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
+    match consequence {
+        TypedExpr::Block { statements, .. } => statement_sequence(statements, env),
+        _ => expr(consequence, env),
+    }
 }
 
 fn optional_clause_guard<'a>(
@@ -1291,11 +1324,11 @@ fn docs_args_call<'a>(
             body,
             ..
         } => {
-            if let TypedExpr::Call {
+            if let Statement::Expression(TypedExpr::Call {
                 fun,
                 args: inner_args,
                 ..
-            } = body.as_ref()
+            }) = body.first()
             {
                 let mut merged_args = Vec::with_capacity(inner_args.len());
                 for arg in inner_args {
@@ -1321,14 +1354,9 @@ fn docs_args_call<'a>(
             expr(fun, env).surround("(", ")").append(args)
         }
 
-        TypedExpr::Pipeline { .. } => {
-            let args = wrap_args(args);
-            begin_end(expr(fun, env)).append(args)
-        }
-
         other => {
             let args = wrap_args(args);
-            expr(other, env).append(args)
+            maybe_block_expr(other, env).append(args)
         }
     }
 }
@@ -1358,8 +1386,6 @@ fn begin_end(document: Document<'_>) -> Document<'_> {
     docvec!["begin", line().append(document).nest(INDENT), line(), "end"].force_break()
 }
 
-/// Same as expr, expect it wraps seq, let, etc in begin end
-///
 fn maybe_block_expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
     if needs_begin_end_wrapping(expression) {
         begin_end(expr(expression, env))
@@ -1370,7 +1396,8 @@ fn maybe_block_expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Documen
 
 fn needs_begin_end_wrapping(expression: &TypedExpr) -> bool {
     match expression {
-        TypedExpr::Pipeline { .. } | TypedExpr::Block { .. } | TypedExpr::Assignment { .. } => true,
+        TypedExpr::Pipeline { .. } => true,
+
         TypedExpr::Int { .. }
         | TypedExpr::Float { .. }
         | TypedExpr::String { .. }
@@ -1381,6 +1408,7 @@ fn needs_begin_end_wrapping(expression: &TypedExpr) -> bool {
         | TypedExpr::BinOp { .. }
         | TypedExpr::Case { .. }
         | TypedExpr::RecordAccess { .. }
+        | TypedExpr::Block { .. }
         | TypedExpr::ModuleSelect { .. }
         | TypedExpr::Tuple { .. }
         | TypedExpr::TupleIndex { .. }
@@ -1458,9 +1486,14 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
         TypedExpr::Int { value, .. } => int(value),
         TypedExpr::Float { value, .. } => float(value),
         TypedExpr::String { value, .. } => string(value),
-        TypedExpr::Pipeline { expressions, .. } | TypedExpr::Block { expressions, .. } => {
-            block(expressions, env)
-        }
+
+        TypedExpr::Pipeline {
+            assignments,
+            finally,
+            ..
+        } => pipeline(assignments, finally, env),
+
+        TypedExpr::Block { statements, .. } => block(statements, env),
 
         TypedExpr::TupleIndex { tuple, index, .. } => tuple_index(tuple, *index, env),
 
@@ -1515,20 +1548,6 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
 
         TypedExpr::RecordUpdate { spread, args, .. } => record_update(spread, args, env),
 
-        TypedExpr::Assignment {
-            value,
-            pattern,
-            kind: AssignmentKind::Assert,
-            ..
-        } => assert(value, pattern, env),
-
-        TypedExpr::Assignment {
-            value,
-            pattern,
-            kind: AssignmentKind::Let,
-            ..
-        } => let_(value, pattern, env),
-
         TypedExpr::Case {
             subjects, clauses, ..
         } => case(subjects, clauses, env),
@@ -1544,6 +1563,30 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
                 .iter()
                 .map(|s| expr_segment(&s.value, &s.options, env)),
         ),
+    }
+}
+
+fn pipeline<'a>(
+    assignments: &'a [Assignment<Arc<Type>, TypedExpr>],
+    finally: &'a TypedExpr,
+    env: &mut Env<'a>,
+) -> Document<'a> {
+    let mut documents = Vec::with_capacity((assignments.len() + 1) * 3);
+
+    for a in assignments {
+        documents.push(assignment(a, env));
+        documents.push(','.to_doc());
+        documents.push(line());
+    }
+
+    documents.push(expr(finally, env));
+    documents.to_doc()
+}
+
+fn assignment<'a>(assignment: &'a TypedAssignment, env: &mut Env<'a>) -> Document<'a> {
+    match assignment.kind {
+        AssignmentKind::Let => let_(&assignment.value, &assignment.pattern, env),
+        AssignmentKind::Assert => assert(&assignment.value, &assignment.pattern, env),
     }
 }
 
@@ -1576,12 +1619,16 @@ fn module_select_fn<'a>(typ: Arc<Type>, module_name: &'a str, label: &'a str) ->
     }
 }
 
-fn fun<'a>(args: &'a [TypedArg], body: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
+fn fun<'a>(args: &'a [TypedArg], body: &'a [TypedStatement], env: &mut Env<'a>) -> Document<'a> {
     let current_scope_vars = env.current_scope_vars.clone();
     let doc = "fun"
         .to_doc()
         .append(fun_args(args, env).append(" ->"))
-        .append(break_("", " ").append(expr(body, env)).nest(INDENT))
+        .append(
+            break_("", " ")
+                .append(statement_sequence(body, env))
+                .nest(INDENT),
+        )
         .append(break_("", " "))
         .append("end")
         .group();
