@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Fixed a bug where source links would be incorrect in HTML documentation.
+
+## v0.28.0-rc2 - 2023-03-27
+
+- Fixed a bug where single statement blocks inside binary operators could
+  generate invalid JavaScript.
+- Fixed a bug where the formatter could incorrectly place comments.
+- Fixed a bug where the language server would show outdated diagnostics when a
+  file with an error reverts to the previous valid version, causing the compiler
+  to use the cached version of the file.
+
+## v0.28.0-rc1 - 2023-03-26
+
 - The language server now analyzes files on edit rather than on save, providing
   feedback faster.
 - The language server now supports editor sessions that span multiple projects.
@@ -29,6 +42,8 @@
 - Autocompletion of module imports was removed due to a buggy implementation.
 - Fixed a bug where the formatter would incorrectly remove `{ ... }` from bit
   string segment value expressions.
+- Fixed a bug where TypeScript type definitions files could include incorrect
+  type names.
 - Fixed a bug where the compiler used VSCode specific behaviour in the language
   server which was incompatible with Helix.
 - Fixed a bug where string concatenation patterns on strings with escape
