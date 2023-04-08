@@ -1,9 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.28.1 - 2023-04-05
 
+- Fixed a bug where the languag server would unset too many error diagnostics
+  when multiple projects are open, more than one have errors, and one of them is
+  successfully compiled.
 - Fixed a bug where the language server would unset error diagnostics when
   displaying information on hover.
+- Added support for type annotations in use statements.
 
 ## v0.28.0 - 2023-04-03
 

@@ -233,6 +233,17 @@ fn patterns() {
 }
 
 #[test]
+fn patterns_with_annotation() {
+    assert_format!(
+        r#"pub fn main() {
+  use Box(x): Box(Int) <- apply(Box(1))
+  x
+}
+"#
+    );
+}
+
+#[test]
 fn long_patterns() {
     assert_format!(
         r#"pub fn main() {
@@ -261,6 +272,41 @@ fn multiple_long_patterns() {
     ),
     Box(_),
     Box(_),
+    Box(_)
+  <- apply(Box(1))
+  x
+}
+"#
+    );
+}
+
+#[test]
+fn multiple_long_patterns_with_annotations() {
+    assert_format!(
+        r#"pub fn main() {
+  use
+    Box(
+      xxxxxxxxxxxxxxxxxxxxxxx,
+      yyyyyyyyyyyyyyyyyyyyyyyyyyy,
+      zzzzzzzzzzzzzzzzzzzzzzzzzzzz,
+    ): Box(Int, Bool, String),
+    Box(_)
+  <- apply(Box(1))
+  x
+}
+"#
+    );
+}
+
+#[test]
+fn multiple_long_annotations() {
+    assert_format!(
+        r#"pub fn main() {
+  use
+    Box(_, _): Box(
+      Xxzxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,
+      Yyyyyyyyyyyyyyyyyyyyyyyy,
+    ),
     Box(_)
   <- apply(Box(1))
   x
