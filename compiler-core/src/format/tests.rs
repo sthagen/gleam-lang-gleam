@@ -4,6 +4,7 @@ use pretty_assertions::assert_eq;
 
 mod asignments;
 mod bit_string;
+mod blocks;
 mod record_update;
 mod tuple;
 mod use_;
@@ -5080,6 +5081,19 @@ fn calling_pipeline_1_list() {
     one
     |> two
   }([1, 2, 3])
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2119
+#[test]
+fn empty_line_after_fn_with_return_annotation() {
+    assert_format!(
+        r#"fn main() {
+  fn() -> String { "" }
+
+  0
 }
 "#
     );

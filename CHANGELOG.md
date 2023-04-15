@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- New Gleam projects are created with `actions/checkout@v3.5.1` and
+  `erlef/setup-beam@1.15.3` in their GitHub actions CI configuration.
+
+## v0.28.2 - 2023-04-10
+
+- Fixed a bug where comments above a `use` expression would be formatted
+  incorrectly.
+- Fixed a bug where the formatter would fail to preserve empty lines after a
+  block.
+- Fixed a bug where the formatter would fail to preserve empty lines after an
+  anonymous function with a return annotation.
+
 ## v0.28.1 - 2023-04-05
 
 - Fixed a bug where the languag server would unset too many error diagnostics
