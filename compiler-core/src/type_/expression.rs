@@ -361,6 +361,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         unify(bool(), value.type_()).map_err(|e| convert_unify_error(e, value.location()))?;
 
+        if let TypedExpr::NegateBool { .. } = value {
+            self.environment
+                .warnings
+                .emit(Warning::UnnecessaryDoubleBoolNegation { location });
+        }
+
         Ok(TypedExpr::NegateBool {
             location,
             value: Box::new(value),
@@ -375,6 +381,20 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let value = self.infer(value)?;
 
         unify(int(), value.type_()).map_err(|e| convert_unify_error(e, value.location()))?;
+
+        if let TypedExpr::Int { value: ref v, .. } = value {
+            if v.starts_with('-') {
+                self.environment
+                    .warnings
+                    .emit(Warning::UnnecessaryDoubleIntNegation { location });
+            }
+        }
+
+        if let TypedExpr::NegateInt { .. } = value {
+            self.environment
+                .warnings
+                .emit(Warning::UnnecessaryDoubleIntNegation { location });
+        }
 
         Ok(TypedExpr::NegateInt {
             location,

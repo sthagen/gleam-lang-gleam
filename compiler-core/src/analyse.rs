@@ -110,23 +110,21 @@ pub fn infer_module(
     }
 
     // Register values so they can be used in functions earlier in the module.
+    for c in &statements.constants {
+        assert_unique_name(&mut value_names, &c.name, c.location)?;
+    }
     for f in &statements.functions {
         register_value_from_function(f, &mut value_names, &mut env, &mut hydrators, &name)?;
     }
-    for f in &statements.external_functions {
-        register_external_function(f, &mut value_names, &mut env)?;
+    for ef in &statements.external_functions {
+        register_external_function(ef, &mut value_names, &mut env)?;
     }
     for t in &statements.custom_types {
         register_values_from_custom_type(t, &mut hydrators, &mut env, &mut value_names, &name)?;
     }
-    for c in &statements.constants {
-        assert_unique_const_name(&mut value_names, &c.name, c.location)?;
-    }
 
     // Infer the types of each statement in the module
-
     let mut typed_statements = Vec::with_capacity(statements_count);
-
     for i in statements.imports {
         let statement = record_imported_items_for_use_detection(i, &mut env)?;
         typed_statements.push(statement);
@@ -545,7 +543,7 @@ fn register_values_from_custom_type(
         environment.insert_accessors(name.clone(), map)
     }
     for constructor in constructors {
-        assert_unique_value_name(names, &constructor.name, constructor.location)?;
+        assert_unique_name(names, &constructor.name, constructor.location)?;
 
         let mut field_map = FieldMap::new(constructor.arguments.len() as u32);
         let mut args_types = Vec::with_capacity(constructor.arguments.len());
@@ -618,7 +616,7 @@ fn register_external_function(
         documentation,
         ..
     } = f;
-    assert_unique_value_name(names, name, *location)?;
+    assert_unique_name(names, name, *location)?;
     let mut hydrator = Hydrator::new();
     let (typ, field_map) = environment.in_new_scope(|environment| {
         let return_type = hydrator.type_from_ast(retrn, environment)?;
@@ -682,7 +680,7 @@ fn register_value_from_function(
         documentation,
         ..
     } = f;
-    assert_unique_value_name(names, name, *location)?;
+    assert_unique_name(names, name, *location)?;
     let _ = environment.ungeneralised_functions.insert(name.clone());
     let mut builder = FieldMapBuilder::new(args.len() as u32);
     for arg in args.iter() {
@@ -1243,31 +1241,16 @@ fn assert_unique_type_name(
     }
 }
 
-fn assert_unique_value_name(
+fn assert_unique_name(
     names: &mut HashMap<SmolStr, SrcSpan>,
     name: &SmolStr,
     location: SrcSpan,
 ) -> Result<(), Error> {
     match names.insert(name.clone(), location) {
         Some(previous_location) => Err(Error::DuplicateName {
-            name: name.clone(),
-            location_b: previous_location,
             location_a: location,
-        }),
-        None => Ok(()),
-    }
-}
-
-fn assert_unique_const_name(
-    names: &mut HashMap<SmolStr, SrcSpan>,
-    name: &SmolStr,
-    location: SrcSpan,
-) -> Result<(), Error> {
-    match names.insert(name.clone(), location) {
-        Some(previous_location) => Err(Error::DuplicateConstName {
+            location_b: previous_location,
             name: name.clone(),
-            previous_location,
-            location,
         }),
         None => Ok(()),
     }

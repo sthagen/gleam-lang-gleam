@@ -1014,6 +1014,94 @@ pub const duplicate = 1"
 }
 
 #[test]
+fn duplicate_const_and_function_names_const_fn() {
+    // We cannot declare const and functions with the same name in a module
+    // https://github.com/gleam-lang/gleam/issues/2069
+    assert_module_error!(
+        "const duplicate = 1
+fn duplicate() { 2 }"
+    );
+}
+
+#[test]
+fn duplicate_const_const() {
+    assert_module_error!(
+        "const foo = 1
+const foo = 2"
+    );
+}
+
+#[test]
+fn duplicate_fn_fn() {
+    assert_module_error!(
+        "fn foo() { 1 }
+fn foo() { 2 }"
+    );
+}
+
+#[test]
+fn duplicate_extfn_extfn() {
+    assert_module_error!(
+        "external fn foo() -> Float =
+  \"module1\" \"function1\"
+external fn foo() -> Float =
+  \"module2\" \"function2\""
+    );
+}
+
+#[test]
+fn duplicate_extfn_fn() {
+    assert_module_error!(
+        "external fn foo() -> Float =
+  \"module1\" \"function1\"
+fn foo() { 2 }"
+    );
+}
+
+#[test]
+fn duplicate_fn_extfn() {
+    assert_module_error!(
+        "fn foo() { 1 }
+external fn foo() -> Float =
+  \"module2\" \"function2\""
+    );
+}
+
+#[test]
+fn duplicate_const_extfn() {
+    assert_module_error!(
+        "const foo = 1
+external fn foo() -> Float =
+  \"module2\" \"function2\""
+    );
+}
+
+#[test]
+fn duplicate_extfn_const() {
+    assert_module_error!(
+        "external fn foo() -> Float =
+  \"module1\" \"function1\"
+const foo = 2"
+    );
+}
+
+#[test]
+fn duplicate_const_fn() {
+    assert_module_error!(
+        "const foo = 1
+fn foo() { 2 }"
+    );
+}
+
+#[test]
+fn duplicate_fn_const() {
+    assert_module_error!(
+        "fn foo() { 1 }
+const foo = 2"
+    );
+}
+
+#[test]
 fn correct_pipe_arity_error_location() {
     // https://github.com/gleam-lang/gleam/issues/672
     assert_module_error!(

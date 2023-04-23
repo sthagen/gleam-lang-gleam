@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Fixed a bug where record patterns using the spread operator (`..`) to discard
+  unwanted arguments would not type check correctly when the record had no
+  labelled fields.
+- A warning is now emitted for double unary negation on ints (`--`) and bools
+  (`!!`) as this does nothing but return the original value.
+- The errors emitted when a name is reused in a module have been made clearer.
+
+## v0.28.3 - 2023-04-17
+
+- Fixed a bug where the language server would show outdated error diagnostics
+  when a new one was emitted in a different module.
+- Fixed a bug where the language server would attempt to analyse Gleam modules
+  that were outside of the `src` or `test` directories.
 - New Gleam projects are created with `actions/checkout@v3.5.1` and
   `erlef/setup-beam@1.15.3` in their GitHub actions CI configuration.
 

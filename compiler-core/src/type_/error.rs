@@ -135,12 +135,6 @@ pub enum Error {
         name: SmolStr,
     },
 
-    DuplicateConstName {
-        location: SrcSpan,
-        previous_location: SrcSpan,
-        name: SmolStr,
-    },
-
     DuplicateArgument {
         location: SrcSpan,
         label: SmolStr,
@@ -321,6 +315,14 @@ pub enum Warning {
     UnusedVariable {
         location: SrcSpan,
         name: SmolStr,
+    },
+
+    UnnecessaryDoubleIntNegation {
+        location: SrcSpan,
+    },
+
+    UnnecessaryDoubleBoolNegation {
+        location: SrcSpan,
     },
 }
 
