@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use gleam_core::{
     build::{Codegen, Mode, Options, Runtime, Target},
     config::{DenoFlag, PackageConfig},
@@ -9,6 +7,7 @@ use gleam_core::{
 };
 use lazy_static::lazy_static;
 use smol_str::SmolStr;
+use std::path::PathBuf;
 
 use crate::fs::ProjectIO;
 
@@ -27,29 +26,47 @@ pub fn command(
     which: Which,
 ) -> Result<(), Error> {
     let paths = crate::project_paths_at_current_directory();
-    // Validate the module to make sure it is a gleam module path
-    match &module {
-        Some(module_name) if !is_gleam_module(module_name) => Err(Error::InvalidModuleName {
-            module: module_name.to_owned(),
-        }),
-        _ => Ok(()),
-    }?;
 
-    let config = crate::config::root_config()?;
+    // Validate the module path
+    if let Some(mod_path) = &module {
+        if !is_gleam_module(mod_path) {
+            return Err(Error::InvalidModuleName {
+                module: mod_path.to_owned(),
+            });
+        }
+    };
+
+    // Download dependencies
+    let manifest = crate::build::download_dependencies()?;
+
+    // Get the config for the module that is being run to check the target.
+    let mod_config = match &module {
+        Some(mod_path) => {
+            crate::config::find_package_config_for_module(mod_path, &manifest, &paths)
+        }
+        _ => crate::config::root_config(),
+    }?;
+    // The root config is required to run the project.
+    let root_config = crate::config::root_config()?;
 
     // Determine which module to run
     let module = module.unwrap_or(match which {
-        Which::Src => config.name.to_string(),
-        Which::Test => format!("{}_test", &config.name),
+        Which::Src => root_config.name.to_string(),
+        Which::Test => format!("{}_test", &root_config.name),
     });
 
+    let target = target.unwrap_or(mod_config.target);
+
     // Build project so we have bytecode to run
-    let built = crate::build::main(Options {
-        warnings_as_errors: false,
-        codegen: Codegen::All,
-        mode: Mode::Dev,
-        target,
-    })?;
+    let built = crate::build::main(
+        Options {
+            warnings_as_errors: false,
+            codegen: Codegen::All,
+            mode: Mode::Dev,
+            target: Some(target),
+        },
+        manifest,
+    )?;
 
     // A module can not be run if it does not exist or does not have a public main function.
     let main_function = built.get_main_function(&SmolStr::from(module.to_owned()))?;
@@ -60,18 +77,22 @@ pub fn command(
     crate::cli::print_running(&format!("{module}.main"));
 
     // Run the command
-    let status = match target.unwrap_or(config.target) {
+    let status = match target {
         Target::Erlang => match runtime {
             Some(r) => Err(Error::InvalidRuntime {
                 target: Target::Erlang,
                 invalid_runtime: r,
             }),
-            _ => run_erlang(&paths, &config.name, &module, arguments),
+            _ => run_erlang(&paths, &root_config.name, &module, arguments),
         },
-        Target::JavaScript => match runtime.unwrap_or(config.javascript.runtime) {
-            Runtime::Deno => {
-                run_javascript_deno(&paths, &config, &main_function.package, &module, arguments)
-            }
+        Target::JavaScript => match runtime.unwrap_or(mod_config.javascript.runtime) {
+            Runtime::Deno => run_javascript_deno(
+                &paths,
+                &root_config,
+                &main_function.package,
+                &module,
+                arguments,
+            ),
             Runtime::NodeJs => {
                 run_javascript_node(&paths, &main_function.package, &module, arguments)
             }
@@ -79,20 +100,6 @@ pub fn command(
     }?;
 
     std::process::exit(status);
-}
-
-fn is_gleam_module(module: &str) -> bool {
-    use regex::Regex;
-    lazy_static! {
-        static ref RE: Regex = Regex::new(&format!(
-            "^({module}{slash})*{module}$",
-            module = "[a-z][_a-z0-9]*",
-            slash = "/",
-        ))
-        .expect("is_gleam_module() RE regex");
-    }
-
-    RE.is_match(module)
 }
 
 fn run_erlang(
@@ -242,6 +249,21 @@ fn add_deno_flag(args: &mut Vec<String>, flag: &str, flags: &DenoFlag) {
             }
         }
     }
+}
+
+/// Check if a module name is a valid gleam module name.
+fn is_gleam_module(module: &str) -> bool {
+    use regex::Regex;
+    lazy_static! {
+        static ref RE: Regex = Regex::new(&format!(
+            "^({module}{slash})*{module}$",
+            module = "[a-z][_a-z0-9]*",
+            slash = "/",
+        ))
+        .expect("is_gleam_module() RE regex");
+    }
+
+    RE.is_match(module)
 }
 
 #[test]

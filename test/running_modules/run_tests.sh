@@ -17,8 +17,11 @@ should_succeed() {
 should_fail() {
     echo
     echo Running: "$@"
-    cargo run -- $@ > /dev/null 2>&1
-    if [ $? -eq 0 ]
+    
+    EXIT_CODE=0
+    cargo run -- $@ > /dev/null 2>&1 || EXIT_CODE=$?
+    
+    if [ $EXIT_CODE -eq 0 ]
     then
         echo ERROR: Command should have failed
         exit 1
@@ -55,3 +58,10 @@ should_fail run --module module/no_main_function
 
 # Main function with wrong arity
 should_fail run --module module/wrong_arity
+
+# try running gleam_module_javascript_test, which will crash if target is erlang
+should_succeed run --module gleam_module_javascript_test
+
+# verify that javascript target doesn't crash and erlang target does crash
+should_succeed run --module gleam_module_javascript_test --target=javascript
+should_fail run --module gleam_module_javascript_test --target=erlang

@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use gleam_core::{
     build::{Built, Codegen, Options, ProjectCompiler},
+    manifest::Manifest,
     paths::ProjectPaths,
     Result,
 };
@@ -13,11 +14,13 @@ use crate::{
     fs::{self, ConsoleWarningEmitter},
 };
 
-pub fn main(options: Options) -> Result<Built> {
+pub fn download_dependencies() -> Result<Manifest> {
     let paths = crate::project_paths_at_current_directory();
-    let manifest =
-        crate::dependencies::download(&paths, cli::Reporter::new(), None, UseManifest::Yes)?;
+    crate::dependencies::download(&paths, cli::Reporter::new(), None, UseManifest::Yes)
+}
 
+pub fn main(options: Options, manifest: Manifest) -> Result<Built> {
+    let paths = crate::project_paths_at_current_directory();
     let perform_codegen = options.codegen;
     let root_config = crate::config::root_config()?;
     let telemetry = Box::new(cli::Reporter::new());
