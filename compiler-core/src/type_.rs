@@ -84,7 +84,7 @@ impl Type {
     }
 
     pub fn is_result(&self) -> bool {
-        matches!(self, Self::App { name, module, .. } if "Result" == name && module.is_empty())
+        matches!(self, Self::App { name, module, .. } if "Result" == name && is_prelude_module(module))
     }
 
     pub fn is_unbound(&self) -> bool {
@@ -111,7 +111,7 @@ impl Type {
 
     pub fn is_nil(&self) -> bool {
         match self {
-            Self::App { module, name, .. } if "Nil" == name && module.is_empty() => true,
+            Self::App { module, name, .. } if "Nil" == name && is_prelude_module(module) => true,
             Self::Var { type_ } => type_.borrow().is_nil(),
             _ => false,
         }
@@ -119,7 +119,7 @@ impl Type {
 
     pub fn is_bool(&self) -> bool {
         match self {
-            Self::App { module, name, .. } if "Bool" == name && module.is_empty() => true,
+            Self::App { module, name, .. } if "Bool" == name && is_prelude_module(module) => true,
             Self::Var { type_ } => type_.borrow().is_bool(),
             _ => false,
         }
@@ -127,7 +127,7 @@ impl Type {
 
     pub fn is_int(&self) -> bool {
         match self {
-            Self::App { module, name, .. } if "Int" == name && module.is_empty() => true,
+            Self::App { module, name, .. } if "Int" == name && is_prelude_module(module) => true,
             Self::Var { type_ } => type_.borrow().is_int(),
             _ => false,
         }
@@ -135,7 +135,7 @@ impl Type {
 
     pub fn is_float(&self) -> bool {
         match self {
-            Self::App { module, name, .. } if "Float" == name && module.is_empty() => true,
+            Self::App { module, name, .. } if "Float" == name && is_prelude_module(module) => true,
             Self::Var { type_ } => type_.borrow().is_float(),
             _ => false,
         }
@@ -143,7 +143,7 @@ impl Type {
 
     pub fn is_string(&self) -> bool {
         match self {
-            Self::App { module, name, .. } if "String" == name && module.is_empty() => true,
+            Self::App { module, name, .. } if "String" == name && is_prelude_module(module) => true,
             Self::Var { type_ } => type_.borrow().is_string(),
             _ => false,
         }
@@ -438,7 +438,7 @@ pub struct ModuleFunction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Module {
+pub struct ModuleInterface {
     pub name: SmolStr,
     pub origin: Origin,
     pub package: SmolStr,
@@ -448,7 +448,25 @@ pub struct Module {
     pub accessors: HashMap<SmolStr, AccessorsMap>,
 }
 
-impl Module {
+impl ModuleInterface {
+    pub fn get_public_value(&self, name: &str) -> Option<&ValueConstructor> {
+        let value = self.values.get(name)?;
+        if value.public {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_public_type(&self, name: &str) -> Option<&TypeConstructor> {
+        let type_ = self.types.get(name)?;
+        if type_.public {
+            Some(type_)
+        } else {
+            None
+        }
+    }
+
     pub fn get_main_function(&self) -> Result<ModuleFunction, crate::Error> {
         match self.values.get(&SmolStr::from("main")) {
             Some(ValueConstructor {
@@ -468,6 +486,24 @@ impl Module {
                 module: self.name.clone(),
             }),
         }
+    }
+
+    pub fn public_value_names(&self) -> Vec<SmolStr> {
+        self.values
+            .iter()
+            .filter(|(_, v)| v.public)
+            .map(|(k, _)| k)
+            .cloned()
+            .collect_vec()
+    }
+
+    pub fn public_type_names(&self) -> Vec<SmolStr> {
+        self.types
+            .iter()
+            .filter(|(_, v)| v.public)
+            .map(|(k, _)| k)
+            .cloned()
+            .collect_vec()
     }
 }
 

@@ -11,7 +11,7 @@ use crate::{
     build::Origin,
     schema_capnp::{self as schema, *},
     type_::{
-        self, AccessorsMap, FieldMap, Module, RecordAccessor, Type, TypeConstructor,
+        self, AccessorsMap, FieldMap, ModuleInterface, RecordAccessor, Type, TypeConstructor,
         ValueConstructor, ValueConstructorVariant,
     },
     uid::UniqueIdGenerator,
@@ -58,12 +58,12 @@ impl ModuleDecoder {
         }
     }
 
-    pub fn read(&mut self, reader: impl BufRead) -> Result<Module> {
+    pub fn read(&mut self, reader: impl BufRead) -> Result<ModuleInterface> {
         let message_reader =
             capnp::serialize_packed::read_message(reader, capnp::message::ReaderOptions::new())?;
         let reader = message_reader.get_root::<module::Reader<'_>>()?;
 
-        Ok(Module {
+        Ok(ModuleInterface {
             name: reader.get_name()?.into(),
             package: reader.get_package()?.into(),
             origin: Origin::Src,
@@ -84,7 +84,7 @@ impl ModuleDecoder {
     ) -> Result<TypeConstructor> {
         let type_ = self.type_(&reader.get_type()?)?;
         Ok(TypeConstructor {
-            public: true,
+            public: reader.get_public(),
             origin: Default::default(),
             module: reader.get_module()?.into(),
             parameters: read_vec!(reader.get_parameters()?, self, type_),
@@ -148,8 +148,9 @@ impl ModuleDecoder {
     ) -> Result<ValueConstructor> {
         let type_ = self.type_(&reader.get_type()?)?;
         let variant = self.value_constructor_variant(&reader.get_variant()?)?;
+        let public = reader.get_public();
         Ok(ValueConstructor {
-            public: true,
+            public,
             type_,
             variant,
         })

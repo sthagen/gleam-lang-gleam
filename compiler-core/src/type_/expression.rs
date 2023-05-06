@@ -1,6 +1,3 @@
-use itertools::Itertools;
-use vec1::Vec1;
-
 use super::{pipe::PipeTyper, *};
 use crate::{
     analyse::infer_bit_string_segment_option,
@@ -14,8 +11,9 @@ use crate::{
         USE_ASSIGNMENT_VARIABLE,
     },
 };
-
 use im::hashmap;
+use itertools::Itertools;
+use vec1::Vec1;
 
 #[derive(Debug)]
 pub(crate) struct ExprTyper<'a, 'b> {
@@ -1224,8 +1222,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
             let constructor =
                 module
-                    .values
-                    .get(&label)
+                    .get_public_value(&label)
                     .ok_or_else(|| Error::UnknownModuleValue {
                         name: label.clone(),
                         location: SrcSpan {
@@ -1233,7 +1230,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             end: select_location.end,
                         },
                         module_name: module.name.clone(),
-                        value_constructors: module.values.keys().cloned().collect(),
+                        value_constructors: module.public_value_names(),
                     })?;
 
             // Register this imported module as having been used, to inform
@@ -1541,7 +1538,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         location: *location,
                         module_name: module_name.clone(),
                         name: name.clone(),
-                        value_constructors: module.values.keys().cloned().collect(),
+                        value_constructors: module.public_value_names(),
                     })?
             }
         };

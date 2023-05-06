@@ -35,6 +35,7 @@ struct TypeConstructor {
   # TODO: test
   parameters @1 :List(Type); 
   module @2 :Text;
+  public @3 :Bool;
 }
 
 struct AccessorsMap {
@@ -74,6 +75,7 @@ struct Type {
 struct ValueConstructor {
   type @0 :Type;
   variant @1 :ValueConstructorVariant;
+  public @2 :Bool;
 }
 
 struct ValueConstructorVariant {

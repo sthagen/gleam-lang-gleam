@@ -1,5 +1,5 @@
 use crate::{
-    ast::{TypedExpr, TypedPattern},
+    ast::{Import, ModuleStatement, TypedExpr, TypedModuleStatement, TypedPattern},
     build::{Located, Module},
     config::PackageConfig,
     io::{CommandExecutor, FileSystemReader, FileSystemWriter},
@@ -8,11 +8,13 @@ use crate::{
     },
     line_numbers::LineNumbers,
     paths::ProjectPaths,
-    type_::pretty::Printer,
+    type_::{pretty::Printer, PreludeType, ValueConstructorVariant},
     Error, Result, Warning,
 };
 use lsp_types::{self as lsp, Hover, HoverContents, MarkedString, Url};
+use smol_str::SmolStr;
 use std::path::PathBuf;
+use strum::IntoEnumIterator;
 
 use super::{src_span_to_lsp_range, DownloadDependencies, MakeLocker};
 
@@ -20,7 +22,15 @@ use super::{src_span_to_lsp_range, DownloadDependencies, MakeLocker};
 pub struct Response<T> {
     pub result: Result<T, Error>,
     pub warnings: Vec<Warning>,
-    pub compiled_modules: Vec<PathBuf>,
+    pub compilation: Compilation,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Compilation {
+    /// Compilation was attempted and succeeded for these modules.
+    Yes(Vec<PathBuf>),
+    /// Compilation was not attempted for this operation.
+    No,
 }
 
 #[derive(Debug)]
@@ -31,9 +41,10 @@ pub struct LanguageServerEngine<IO, Reporter> {
     /// package.
     /// In the event the the project config changes this will need to be
     /// discarded and reloaded to handle any changes to dependencies.
-    compiler: LspProjectCompiler<FileSystemProxy<IO>>,
+    pub compiler: LspProjectCompiler<FileSystemProxy<IO>>,
 
     modules_compiled_since_last_feedback: Vec<PathBuf>,
+    compiled_since_last_feedback: bool,
 
     // Used to publish progress notifications to the client without waiting for
     // the usual request-response loop.
@@ -74,6 +85,7 @@ where
 
         Ok(Self {
             modules_compiled_since_last_feedback: vec![],
+            compiled_since_last_feedback: false,
             progress_reporter,
             compiler,
             paths,
@@ -86,6 +98,8 @@ where
 
     /// Compile the project if we are in one. Otherwise do nothing.
     fn compile(&mut self) -> Result<(), Error> {
+        self.compiled_since_last_feedback = true;
+
         self.progress_reporter.compilation_started();
         let result = self.compiler.compile();
         self.progress_reporter.compilation_finished();
@@ -156,72 +170,72 @@ where
         })
     }
 
-    // TODO: function & constructor labels
-    // TODO: module types (including private)
-    // TODO: module values (including private)
-    // TODO: locally defined variables
-    // TODO: imported module values
-    // TODO: imported module types
-    // TODO: record accessors
-    // TODO: module imports
     pub fn completion(
         &mut self,
-        params: lsp::CompletionParams,
+        params: lsp::TextDocumentPositionParams,
     ) -> Response<Option<Vec<lsp::CompletionItem>>> {
         self.respond(|this| {
-            let found = this
-                .node_at_position(&params.text_document_position)
-                .map(|(_, found)| found);
+            let module = match this.module_for_uri(&params.text_document.uri) {
+                Some(m) => m,
+                None => return Ok(None),
+            };
 
-            Ok(match found {
-                None => None,
-                Some(Located::Pattern(_pattern)) => None,
-                Some(Located::Statement(_statement)) => None,
-                Some(Located::Expression(_expression)) => None,
-                Some(Located::ModuleStatement(_statement)) => None,
-            })
+            let line_numbers = LineNumbers::new(&module.code);
+            let byte_index =
+                line_numbers.byte_index(params.position.line, params.position.character);
+
+            let Some(found) = module.find_node(byte_index) else {
+                return Ok(None);
+            };
+
+            let completions = match found {
+                Located::Pattern(_pattern) => None,
+
+                Located::Statement(_) | Located::Expression(_) => {
+                    Some(this.completion_values(module))
+                }
+
+                Located::ModuleStatement(ModuleStatement::Function(function)) => {
+                    // The location of a function refers to the head, not the body
+                    if function.location.contains(byte_index) {
+                        Some(this.completion_types(module))
+                    } else {
+                        Some(this.completion_values(module))
+                    }
+                }
+
+                Located::ModuleStatement(
+                    ModuleStatement::ExternalFunction(_)
+                    | ModuleStatement::TypeAlias(_)
+                    | ModuleStatement::CustomType(_),
+                ) => Some(this.completion_types(module)),
+
+                Located::ModuleStatement(
+                    ModuleStatement::Import(_)
+                    | ModuleStatement::ExternalType(_)
+                    | ModuleStatement::ModuleConstant(_),
+                ) => None,
+            };
+
+            Ok(completions)
         })
     }
 
     fn respond<T>(&mut self, handler: impl FnOnce(&mut Self) -> Result<T>) -> Response<T> {
         let result = handler(self);
         let warnings = self.take_warnings();
-        let modules = std::mem::take(&mut self.modules_compiled_since_last_feedback);
+        let compilation = if self.compiled_since_last_feedback {
+            let modules = std::mem::take(&mut self.modules_compiled_since_last_feedback);
+            Compilation::Yes(modules)
+        } else {
+            Compilation::No
+        };
         Response {
             result,
             warnings,
-            compiled_modules: modules,
+            compilation,
         }
     }
-
-    // fn completion_for_import(&self) -> Vec<lsp::CompletionItem> {
-    //     // TODO: Test
-    //     let dependencies_modules = self
-    //         .compiler
-    //         .project_compiler
-    //         .get_importable_modules()
-    //         .keys()
-    //         .map(|name| name.to_string());
-    //     // TODO: Test
-    //     let project_modules = self
-    //         .compiler
-    //         .modules
-    //         .iter()
-    //         // TODO: We should autocomplete test modules if we are in the test dir
-    //         // TODO: Test
-    //         .filter(|(_name, module)| module.origin.is_src())
-    //         .map(|(name, _module)| name)
-    //         .cloned();
-    //     dependencies_modules
-    //         .chain(project_modules)
-    //         .map(|label| lsp::CompletionItem {
-    //             label,
-    //             kind: None,
-    //             documentation: None,
-    //             ..Default::default()
-    //         })
-    //         .collect()
-    // }
 
     pub fn hover(&mut self, params: lsp::HoverParams) -> Response<Option<Hover>> {
         self.respond(|this| {
@@ -241,16 +255,24 @@ where
         })
     }
 
-    fn node_at_position(
+    fn module_node_at_position(
         &self,
         params: &lsp::TextDocumentPositionParams,
-    ) -> Option<(LineNumbers, Located<'_>)> {
-        let module = self.module_for_uri(&params.text_document.uri)?;
+        module: &'a Module,
+    ) -> Option<(LineNumbers, Located<'a>)> {
         let line_numbers = LineNumbers::new(&module.code);
         let byte_index = line_numbers.byte_index(params.position.line, params.position.character);
         let node = module.find_node(byte_index);
         let node = node?;
         Some((line_numbers, node))
+    }
+
+    fn node_at_position(
+        &self,
+        params: &lsp::TextDocumentPositionParams,
+    ) -> Option<(LineNumbers, Located<'_>)> {
+        let module = self.module_for_uri(&params.text_document.uri)?;
+        self.module_node_at_position(params, module)
     }
 
     fn module_for_uri(&self, uri: &Url) -> Option<&Module> {
@@ -269,11 +291,167 @@ where
             .components()
             .skip(1)
             .map(|c| c.as_os_str().to_string_lossy());
-        let module_name = Itertools::intersperse(components, "/".into())
+        let module_name: SmolStr = Itertools::intersperse(components, "/".into())
             .collect::<String>()
             .strip_suffix(".gleam")?
-            .to_string();
+            .into();
+
         self.compiler.modules.get(&module_name)
+    }
+
+    fn completion_types<'b>(&'b self, module: &'b Module) -> Vec<lsp::CompletionItem> {
+        let mut completions = vec![];
+
+        // Prelude types
+        for type_ in PreludeType::iter() {
+            completions.push(lsp::CompletionItem {
+                label: type_.name().into(),
+                detail: Some("Type".into()),
+                kind: Some(lsp::CompletionItemKind::CLASS),
+                ..Default::default()
+            });
+        }
+
+        // Module types
+        for (name, type_) in &module.ast.type_info.types {
+            completions.push(type_completion(None, name, type_));
+        }
+
+        // Imported modules
+        for import in module.ast.statements.iter().filter_map(get_import) {
+            let alias = import.used_name();
+
+            // The module may not be known of yet if it has not previously
+            // compiled yet in this editor session.
+            // TODO: test getting completions from modules defined in other packages
+            let Some(module) = self.compiler.get_module_inferface(&import.module) else {
+                continue;
+            };
+
+            // Qualified types
+            for (name, type_) in &module.types {
+                if !type_.public {
+                    continue;
+                }
+                completions.push(type_completion(Some(&alias), name, type_));
+            }
+
+            // Unqualified types
+            for unqualified in &import.unqualified {
+                let Some(type_) = module.get_public_type(&unqualified.name) else {
+                    continue;
+                };
+                completions.push(type_completion(None, unqualified.variable_name(), type_));
+            }
+        }
+
+        completions
+    }
+
+    fn completion_values<'b>(&'b self, module: &'b Module) -> Vec<lsp::CompletionItem> {
+        let mut completions = vec![];
+
+        // Module functions
+        for (name, value) in &module.ast.type_info.values {
+            completions.push(value_completion(None, name, value));
+        }
+
+        // Imported modules
+        for import in module.ast.statements.iter().filter_map(get_import) {
+            let alias = import.used_name();
+
+            // The module may not be known of yet if it has not previously
+            // compiled yet in this editor session.
+            // TODO: test getting completions from modules defined in other packages
+            let Some(module) = self.compiler.get_module_inferface(&import.module) else {
+                continue;
+            };
+
+            // Qualified values
+            for (name, value) in &module.values {
+                if !value.public {
+                    continue;
+                }
+                completions.push(value_completion(Some(&alias), name, value));
+            }
+
+            // Unqualified values
+            for unqualified in &import.unqualified {
+                let Some(value) = module.get_public_value(&unqualified.name) else {
+                    continue;
+                };
+                completions.push(value_completion(None, unqualified.variable_name(), value));
+            }
+        }
+
+        completions
+    }
+}
+
+fn type_completion(
+    module: Option<&SmolStr>,
+    name: &str,
+    type_: &crate::type_::TypeConstructor,
+) -> lsp::CompletionItem {
+    let label = match module {
+        Some(module) => format!("{module}.{name}"),
+        None => name.to_string(),
+    };
+
+    let kind = Some(if type_.typ.is_variable() {
+        lsp::CompletionItemKind::VARIABLE
+    } else {
+        lsp::CompletionItemKind::CLASS
+    });
+
+    lsp::CompletionItem {
+        label,
+        kind,
+        detail: Some("Type".into()),
+        ..Default::default()
+    }
+}
+
+fn value_completion(
+    module: Option<&str>,
+    name: &str,
+    value: &crate::type_::ValueConstructor,
+) -> lsp::CompletionItem {
+    let label = match module {
+        Some(module) => format!("{module}.{name}"),
+        None => name.to_string(),
+    };
+
+    let type_ = Printer::new().pretty_print(&value.type_, 0);
+
+    let kind = Some(match value.variant {
+        ValueConstructorVariant::LocalVariable { .. } => lsp::CompletionItemKind::VARIABLE,
+        ValueConstructorVariant::ModuleConstant { .. } => lsp::CompletionItemKind::CONSTANT,
+        ValueConstructorVariant::ModuleFn { .. } => lsp::CompletionItemKind::FUNCTION,
+        ValueConstructorVariant::Record { arity: 0, .. } => lsp::CompletionItemKind::ENUM_MEMBER,
+        ValueConstructorVariant::Record { .. } => lsp::CompletionItemKind::CONSTRUCTOR,
+    });
+
+    let documentation = value.get_documentation().map(|d| {
+        lsp::Documentation::MarkupContent(lsp::MarkupContent {
+            kind: lsp::MarkupKind::Markdown,
+            value: d.to_string(),
+        })
+    });
+
+    lsp::CompletionItem {
+        label,
+        kind,
+        detail: Some(type_),
+        documentation,
+        ..Default::default()
+    }
+}
+
+fn get_import(statement: &TypedModuleStatement) -> Option<&Import<SmolStr>> {
+    match statement {
+        ModuleStatement::Import(import) => Some(import),
+        _ => None,
     }
 }
 

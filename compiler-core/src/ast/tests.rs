@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::type_::PRELUDE_MODULE_NAME;
 use crate::{
     ast::{SrcSpan, TypedExpr},
     build::Located,
@@ -22,7 +23,7 @@ fn compile_module(src: &str) -> TypedModule {
     // TODO: Currently we do this here and also in the tests. It would be better
     // to have one place where we create all this required state for use in each
     // place.
-    let _ = modules.insert("gleam".into(), build_prelude(&ids));
+    let _ = modules.insert(PRELUDE_MODULE_NAME.into(), build_prelude(&ids));
     crate::analyse::infer_module(
         crate::build::Target::Erlang,
         &ids,
@@ -53,7 +54,7 @@ fn compile_expression(src: &str) -> TypedStatement {
     // TODO: Currently we do this here and also in the tests. It would be better
     // to have one place where we create all this required state for use in each
     // place.
-    let _ = modules.insert("gleam".into(), type_::build_prelude(&ids));
+    let _ = modules.insert(PRELUDE_MODULE_NAME.into(), type_::build_prelude(&ids));
     let emitter = TypeWarningEmitter::null();
     let mut environment = Environment::new(ids, "mymod", &modules, &emitter);
 
@@ -469,7 +470,7 @@ fn find_node_bool() {
                 arity: 0,
                 field_map: None,
                 location: SrcSpan { start: 0, end: 0 },
-                module: "".into(),
+                module: PRELUDE_MODULE_NAME.into(),
             },
             type_: type_::bool(),
         },
@@ -501,11 +502,9 @@ pub fn main() {
 
     // The fn
     assert!(module.find_node(2).is_some());
-    assert!(module.find_node(14).is_some());
+    assert!(module.find_node(24).is_some());
 
-    assert!(module.find_node(15).is_none());
-    assert!(module.find_node(16).is_none());
-    assert!(module.find_node(17).is_none());
+    assert!(module.find_node(25).is_none());
 }
 
 #[test]

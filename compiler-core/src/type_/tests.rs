@@ -35,6 +35,7 @@ macro_rules! assert_infer_with_module {
     (($name:expr, $module_src:literal), $src:expr, $module:expr $(,)?) => {
         let constructors = $crate::type_::tests::infer_module($src, vec![($name, $module_src)]);
         let expected = $crate::type_::tests::stringify_tuple_strs($module);
+
         assert_eq!(($src, constructors), ($src, expected));
     };
 }
@@ -174,7 +175,7 @@ fn compile_statement_sequence(src: &str) -> Result<Vec1<TypedStatement>, crate::
     // TODO: Currently we do this here and also in the tests. It would be better
     // to have one place where we create all this required state for use in each
     // place.
-    let _ = modules.insert("gleam".into(), build_prelude(&ids));
+    let _ = modules.insert(PRELUDE_MODULE_NAME.into(), build_prelude(&ids));
     crate::type_::ExprTyper::new(&mut crate::type_::Environment::new(
         ids,
         "themodule",
@@ -202,6 +203,7 @@ pub fn infer_module(src: &str, dep: Vec<(&str, &str)>) -> Vec<(SmolStr, String)>
     ast.type_info
         .values
         .iter()
+        .filter(|(_, v)| v.public)
         .map(|(k, v)| {
             let mut printer = Printer::new();
             (k.clone(), printer.pretty_print(&v.type_, 0))
@@ -229,7 +231,7 @@ pub fn compile_module(
     // TODO: Currently we do this here and also in the tests. It would be better
     // to have one place where we create all this required state for use in each
     // place.
-    let _ = modules.insert("gleam".into(), build_prelude(&ids));
+    let _ = modules.insert(PRELUDE_MODULE_NAME.into(), build_prelude(&ids));
 
     for (name, module_src) in dep {
         let (mut ast, _) = crate::parse::parse_module(module_src).expect("syntax error");
@@ -425,7 +427,7 @@ fn infer_module_type_retention_test() {
     // TODO: Currently we do this here and also in the tests. It would be better
     // to have one place where we create all this required state for use in each
     // place.
-    let _ = modules.insert("gleam".into(), build_prelude(&ids));
+    let _ = modules.insert(PRELUDE_MODULE_NAME.into(), build_prelude(&ids));
     let module = crate::analyse::infer_module(
         Target::Erlang,
         &ids,
@@ -439,7 +441,7 @@ fn infer_module_type_retention_test() {
 
     assert_eq!(
         module.type_info,
-        Module {
+        ModuleInterface {
             origin: Origin::Src,
             package: "thepackage".into(),
             name: "ok".into(),

@@ -1,13 +1,15 @@
 use debug_ignore::DebugIgnore;
+use smol_str::SmolStr;
 
 use crate::{
-    build::{self, Mode, Module, NullTelemetry, ProjectCompiler},
+    build::{self, CheckpointState, Mode, Module, NullTelemetry, ProjectCompiler},
     config::PackageConfig,
     io::{CommandExecutor, FileSystemReader, FileSystemWriter, Stdio},
     language_server::Locker,
     line_numbers::LineNumbers,
     manifest::Manifest,
     paths::ProjectPaths,
+    type_::ModuleInterface,
     warning::VectorWarningEmitterIO,
     Error, Result, Warning,
 };
@@ -24,10 +26,9 @@ pub struct LspProjectCompiler<IO> {
     /// Whether the dependencies have been compiled previously.
     pub dependencies_compiled: bool,
 
-    // TODO: use smolstr
     /// Information on compiled modules.
-    pub modules: HashMap<String, Module>,
-    pub sources: HashMap<String, ModuleSourceInformation>,
+    pub modules: HashMap<SmolStr, Module>,
+    pub sources: HashMap<SmolStr, ModuleSourceInformation>,
 
     /// The storage for the warning emitter.
     pub warnings: Arc<VectorWarningEmitterIO>,
@@ -35,6 +36,10 @@ pub struct LspProjectCompiler<IO> {
     /// A lock to ensure that multiple instances of the LSP don't try and use
     /// build directory at the same time.
     pub locker: DebugIgnore<Box<dyn Locker>>,
+
+    /// The state of the compiler before the last compilation of the root
+    /// package, so we can reset to this state and recompile.
+    checkpoint_state: Option<CheckpointState>,
 }
 
 impl<IO> LspProjectCompiler<IO>
@@ -90,6 +95,7 @@ where
             modules: HashMap::new(),
             sources: HashMap::new(),
             dependencies_compiled: false,
+            checkpoint_state: None,
         })
     }
 
@@ -101,18 +107,21 @@ where
             // TODO: store compiled module info
             self.project_compiler.compile_dependencies()?;
             self.dependencies_compiled = true;
+            self.checkpoint_state = None;
         }
 
-        // Save the state prior to compilation of the root package
-        let checkpoint = self.project_compiler.checkpoint();
+        match &self.checkpoint_state {
+            // Restore the state so that later we can compile the root again
+            Some(checkpoint) => self.project_compiler.restore(checkpoint.clone()),
+
+            // Save the state prior to compilation of the root package
+            None => self.checkpoint_state = Some(self.project_compiler.checkpoint()),
+        }
 
         // Do that there compilation. We don't use `?` to return early in the
         // event of an error because we _always_ want to do the restoration of
         // state afterwards.
         let result = self.project_compiler.compile_root_package();
-
-        // Restore the state so that later we can compile the root again
-        self.project_compiler.restore(checkpoint);
 
         // Return any error
         let package = result?;
@@ -124,11 +133,15 @@ where
             let line_numbers = LineNumbers::new(&module.code);
             let source = ModuleSourceInformation { path, line_numbers };
             compiled_modules.push(module.input_path.clone());
-            _ = self.sources.insert(module.name.to_string(), source);
-            _ = self.modules.insert(module.name.to_string(), module);
+            _ = self.sources.insert(module.name.clone(), source);
+            _ = self.modules.insert(module.name.clone(), module);
         }
 
         Ok(compiled_modules)
+    }
+
+    pub fn get_module_inferface(&self, name: &str) -> Option<&ModuleInterface> {
+        self.project_compiler.get_importable_modules().get(name)
     }
 }
 

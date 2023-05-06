@@ -15,13 +15,13 @@ use std::{collections::HashMap, ops::Deref, sync::Arc};
 
 #[derive(Debug)]
 pub struct ModuleEncoder<'a> {
-    data: &'a type_::Module,
+    data: &'a type_::ModuleInterface,
     next_type_var_id: u64,
     type_var_id_map: HashMap<u64, u64>,
 }
 
 impl<'a> ModuleEncoder<'a> {
-    pub fn new(data: &'a type_::Module) -> Self {
+    pub fn new(data: &'a type_::ModuleInterface) -> Self {
         Self {
             data,
             next_type_var_id: 0,
@@ -124,6 +124,7 @@ impl<'a> ModuleEncoder<'a> {
         mut builder: type_constructor::Builder<'_>,
         constructor: &TypeConstructor,
     ) {
+        builder.set_public(constructor.public);
         builder.set_module(&constructor.module);
         let type_builder = builder.reborrow().init_type();
         self.build_type(type_builder, &constructor.typ);
@@ -150,6 +151,7 @@ impl<'a> ModuleEncoder<'a> {
         mut builder: value_constructor::Builder<'_>,
         constructor: &ValueConstructor,
     ) {
+        builder.set_public(constructor.public);
         self.build_type(builder.reborrow().init_type(), &constructor.type_);
         self.build_value_constructor_variant(builder.init_variant(), &constructor.variant);
     }
@@ -392,9 +394,8 @@ impl<'a> ModuleEncoder<'a> {
 
             Type::Var { type_: typ } => match typ.borrow().deref() {
                 TypeVar::Link { type_: typ } => self.build_type(builder, typ),
-                TypeVar::Generic { id } => self.build_type_var(builder.init_var(), *id),
-                TypeVar::Unbound { .. } => {
-                    panic!("Unexpected unbound var when serialising module metadata",)
+                TypeVar::Unbound { id, .. } | TypeVar::Generic { id } => {
+                    self.build_type_var(builder.init_var(), *id)
                 }
             },
         }

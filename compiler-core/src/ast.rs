@@ -31,7 +31,7 @@ pub trait HasLocation {
     fn location(&self) -> SrcSpan;
 }
 
-pub type TypedModule = Module<type_::Module, TypedModuleStatement>;
+pub type TypedModule = Module<type_::ModuleInterface, TypedModuleStatement>;
 
 pub type UntypedModule = Module<(), TargetGroup>;
 
@@ -409,6 +409,12 @@ pub struct Function<T, Expr> {
     pub documentation: Option<SmolStr>,
 }
 
+impl<T, E> Function<T, E> {
+    fn full_location(&self) -> SrcSpan {
+        SrcSpan::new(self.location.start, self.end_position)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Import another Gleam module so the current module can use the types and
 /// values it defines.
@@ -429,7 +435,7 @@ pub struct Import<PackageName> {
     pub package: PackageName,
 }
 impl<T> Import<T> {
-    pub(crate) fn variable_name(&self) -> SmolStr {
+    pub(crate) fn used_name(&self) -> SmolStr {
         self.as_name
             .as_ref()
             .cloned()
@@ -477,6 +483,7 @@ pub struct ModuleConstant<T, ConstantRecordTag> {
 /// ```
 pub struct CustomType<T> {
     pub location: SrcSpan,
+    pub end_position: u32,
     pub name: SmolStr,
     pub parameters: Vec<SmolStr>,
     pub public: bool,
@@ -484,6 +491,15 @@ pub struct CustomType<T> {
     pub documentation: Option<SmolStr>,
     pub opaque: bool,
     pub typed_parameters: Vec<T>,
+}
+
+impl<T> CustomType<T> {
+    /// The `location` field of a `CustomType` is only the location of `pub type
+    /// TheName`. This method returns a `SrcSpan` that includes the entire type
+    /// definition.
+    pub fn full_location(&self) -> SrcSpan {
+        SrcSpan::new(self.location.start, self.end_position)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -545,21 +561,51 @@ pub enum ModuleStatement<T, Expr, ConstantRecordTag, PackageName> {
 
 impl TypedModuleStatement {
     pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
-        // TODO: test. Note that the fn src-span covers the function head, not
-        // the entire statement.
-        if let ModuleStatement::Function(Function { body, .. }) = self {
-            let found = body.iter().find_map(|s| s.find_node(byte_index));
-            if found.is_some() {
-                return found;
+        match self {
+            ModuleStatement::Function(function) => {
+                if let Some(found) = function.body.iter().find_map(|s| s.find_node(byte_index)) {
+                    return Some(found);
+                };
+
+                // Note that the fn `.location` covers the function head, not
+                // the entire statement.
+                if function.full_location().contains(byte_index) {
+                    Some(Located::ModuleStatement(self))
+                } else {
+                    None
+                }
+            }
+
+            ModuleStatement::CustomType(custom) => {
+                // Note that the custom type `.location` covers the function
+                // head, not the entire statement.
+                if custom.full_location().contains(byte_index) {
+                    Some(Located::ModuleStatement(self))
+                } else {
+                    None
+                }
+            }
+
+            ModuleStatement::TypeAlias(_)
+            | ModuleStatement::ExternalFunction(_)
+            | ModuleStatement::ExternalType(_)
+            | ModuleStatement::Import(_)
+            | ModuleStatement::ModuleConstant(_) => {
+                if self.location().contains(byte_index) {
+                    Some(Located::ModuleStatement(self))
+                } else {
+                    None
+                }
             }
         }
+    }
 
-        // TODO: test
-        if self.location().contains(byte_index) {
-            Some(Located::ModuleStatement(self))
-        } else {
-            None
-        }
+    /// Returns `true` if the module statement is [`Function`].
+    ///
+    /// [`Function`]: ModuleStatement::Function
+    #[must_use]
+    pub fn is_function(&self) -> bool {
+        matches!(self, Self::Function(..))
     }
 }
 

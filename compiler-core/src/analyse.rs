@@ -18,7 +18,7 @@ use crate::{
         fields::{FieldMap, FieldMapBuilder},
         hydrator::Hydrator,
         prelude::*,
-        AccessorsMap, Module, PatternConstructor, RecordAccessor, Type, TypeConstructor,
+        AccessorsMap, ModuleInterface, PatternConstructor, RecordAccessor, Type, TypeConstructor,
         ValueConstructor, ValueConstructorVariant,
     },
     uid::UniqueIdGenerator,
@@ -70,7 +70,7 @@ pub fn infer_module(
     mut module: UntypedModule,
     origin: Origin,
     package: &SmolStr,
-    modules: &im::HashMap<SmolStr, Module>,
+    modules: &im::HashMap<SmolStr, ModuleInterface>,
     warnings: &TypeWarningEmitter,
 ) -> Result<TypedModule, Error> {
     let name = module.name.clone();
@@ -182,14 +182,18 @@ pub fn infer_module(
     // Generate warnings for unused items
     env.convert_unused_to_warnings();
 
-    // Remove private and imported types and values to create the public interface
-    env.module_types
-        .retain(|_, info| info.public && info.module == name);
-    env.module_values.retain(|_, info| info.public);
+    // Remove imported types and values to create the public interface
+    // Private types and values are retained so they can be used in the language
+    // server, but are filtered out when type checking to prevent using private
+    // items.
+    env.module_types.retain(|_, info| info.module == name);
     env.accessors.retain(|_, accessors| accessors.public);
 
     // Ensure no exported values have private types in their type signature
     for value in env.module_values.values() {
+        if !value.public {
+            continue;
+        }
         if let Some(leaked) = value.type_.find_private_type() {
             return Err(Error::PrivateTypeLeak {
                 location: value.variant.definition_location(),
@@ -210,7 +214,7 @@ pub fn infer_module(
         documentation,
         name: name.clone(),
         statements: typed_statements,
-        type_info: Module {
+        type_info: ModuleInterface {
             name,
             types,
             types_constructors,
@@ -229,7 +233,7 @@ pub fn register_import(
     environment: &mut Environment<'_>,
 ) -> Result<(), Error> {
     // Determine local alias of imported module
-    let module_name = import.variable_name();
+    let module_name = import.used_name();
 
     let Import {
         module,
@@ -287,7 +291,7 @@ pub fn register_import(
             .insert(imported_name.clone(), *location);
 
         // Register the unqualified import if it is a value
-        if let Some(value) = module_info.values.get(name) {
+        if let Some(value) = module_info.get_public_value(name) {
             environment.insert_variable(
                 imported_name.clone(),
                 value.variant.clone(),
@@ -299,7 +303,7 @@ pub fn register_import(
         }
 
         // Register the unqualified import if it is a type constructor
-        if let Some(typ) = module_info.types.get(name) {
+        if let Some(typ) = module_info.get_public_type(name) {
             let typ_info = TypeConstructor {
                 origin: *location,
                 ..typ.clone()
@@ -340,8 +344,8 @@ pub fn register_import(
                 location: *location,
                 name: name.clone(),
                 module_name: module.clone(),
-                value_constructors: module_info.values.keys().cloned().collect(),
-                type_constructors: module_info.types.keys().cloned().collect(),
+                value_constructors: module_info.public_value_names(),
+                type_constructors: module_info.public_type_names(),
             });
         }
     }
@@ -377,7 +381,7 @@ pub fn register_import(
 }
 
 fn validate_module_name(name: &SmolStr) -> Result<(), Error> {
-    if name == "gleam" {
+    if is_prelude_module(name) {
         return Err(Error::ReservedModuleName { name: name.clone() });
     };
     for segment in name.split('/') {
@@ -576,16 +580,14 @@ fn register_values_from_custom_type(
             module: module_name.clone(),
         };
 
-        if !opaque {
-            environment.insert_module_value(
-                constructor.name.clone(),
-                ValueConstructor {
-                    public: *public,
-                    type_: typ.clone(),
-                    variant: constructor_info.clone(),
-                },
-            );
-        }
+        environment.insert_module_value(
+            constructor.name.clone(),
+            ValueConstructor {
+                public: *public && !opaque,
+                type_: typ.clone(),
+                variant: constructor_info.clone(),
+            },
+        );
 
         if !public {
             environment.init_usage(
@@ -875,6 +877,7 @@ fn infer_custom_type(
     let CustomType {
         documentation: doc,
         location,
+        end_position,
         public,
         opaque,
         name,
@@ -941,6 +944,7 @@ fn infer_custom_type(
     Ok(ModuleStatement::CustomType(CustomType {
         documentation: doc,
         location,
+        end_position,
         public,
         opaque,
         name,

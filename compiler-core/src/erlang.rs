@@ -6,6 +6,7 @@ mod pattern;
 #[cfg(test)]
 mod tests;
 
+use crate::type_::is_prelude_module;
 use crate::{
     ast::{
         CustomType, ExternalFunction, ExternalType, Function, Import, ModuleConstant, TypeAlias, *,
@@ -1928,7 +1929,7 @@ impl<'a> TypePrinter<'a> {
 
             Type::App {
                 name, module, args, ..
-            } if module.is_empty() => self.print_prelude_type(name, args),
+            } if is_prelude_module(module) => self.print_prelude_type(name, args),
 
             Type::App {
                 name, module, args, ..

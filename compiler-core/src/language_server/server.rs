@@ -291,17 +291,16 @@ where
                 let engine::Response {
                     result,
                     warnings,
-                    compiled_modules,
+                    compilation,
                 } = handler(&mut project.engine);
-                let modules = compiled_modules.into_iter();
                 match result {
                     Ok(value) => {
-                        let feedback = project.feedback.response(modules, warnings);
+                        let feedback = project.feedback.response(compilation, warnings);
                         let json = serde_json::to_value(value).expect("response to json");
                         (json, feedback)
                     }
                     Err(e) => {
-                        let feedback = project.feedback.build_with_error(e, modules, warnings);
+                        let feedback = project.feedback.build_with_error(e, compilation, warnings);
                         (Json::Null, feedback)
                     }
                 }
@@ -366,7 +365,9 @@ where
 
     fn completion(&mut self, params: lsp::CompletionParams) -> (Json, Feedback) {
         let path = path(&params.text_document_position.text_document.uri);
-        self.respond_with_engine(path, |engine| engine.completion(params))
+        self.respond_with_engine(path, |engine| {
+            engine.completion(params.text_document_position)
+        })
     }
 
     /// A file opened in the editor may be unsaved, so store a copy of the
@@ -452,7 +453,7 @@ fn initialisation_handshake(connection: &lsp_server::Connection) -> InitializePa
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(lsp::CompletionOptions {
             resolve_provider: None,
-            trigger_characters: Some(vec![".".into(), " ".into()]),
+            trigger_characters: Some(vec![" ".into()]),
             all_commit_characters: None,
             work_done_progress_options: lsp::WorkDoneProgressOptions {
                 work_done_progress: None,

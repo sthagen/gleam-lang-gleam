@@ -1,3 +1,4 @@
+use crate::type_::PRELUDE_MODULE_NAME;
 use crate::{
     ast::{SrcSpan, TypedModule, UntypedModule},
     build::{
@@ -90,7 +91,7 @@ where
     pub fn compile(
         mut self,
         warnings: &WarningEmitter,
-        existing_modules: &mut im::HashMap<SmolStr, type_::Module>,
+        existing_modules: &mut im::HashMap<SmolStr, type_::ModuleInterface>,
         already_defined_modules: &mut im::HashMap<SmolStr, PathBuf>,
     ) -> Result<Vec<Module>, Error> {
         let span = tracing::info_span!("compile", package = %self.config.name.as_str());
@@ -365,7 +366,7 @@ fn analyse(
     target: Target,
     ids: &UniqueIdGenerator,
     mut parsed_modules: Vec<UncompiledModule>,
-    module_types: &mut im::HashMap<SmolStr, type_::Module>,
+    module_types: &mut im::HashMap<SmolStr, type_::ModuleInterface>,
     warnings: &WarningEmitter,
 ) -> Result<Vec<Module>, Error> {
     let mut modules = Vec::with_capacity(parsed_modules.len() + 1);
@@ -375,7 +376,7 @@ fn analyse(
     // TODO: Currently we do this here and also in the tests. It would be better
     // to have one place where we create all this required state for use in each
     // place.
-    let _ = module_types.insert("gleam".into(), type_::build_prelude(ids));
+    let _ = module_types.insert(PRELUDE_MODULE_NAME.into(), type_::build_prelude(ids));
 
     for UncompiledModule {
         name,
@@ -607,7 +608,7 @@ impl CacheMetadata {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Loaded {
     pub to_compile: Vec<UncompiledModule>,
-    pub cached: Vec<type_::Module>,
+    pub cached: Vec<type_::ModuleInterface>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

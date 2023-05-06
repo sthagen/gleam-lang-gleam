@@ -13,11 +13,11 @@ pub struct Environment<'a> {
     /// Names of types or values that have been imported an unqualified fashion
     /// from other modules. Used to prevent multiple imports using the same name.
     pub unqualified_imported_names: HashMap<SmolStr, SrcSpan>,
-    pub importable_modules: &'a im::HashMap<SmolStr, Module>,
+    pub importable_modules: &'a im::HashMap<SmolStr, ModuleInterface>,
 
     /// Modules that have been imported by the current module, along with the
     /// location of the import statement where they were imported.
-    pub imported_modules: HashMap<SmolStr, (SrcSpan, &'a Module)>,
+    pub imported_modules: HashMap<SmolStr, (SrcSpan, &'a ModuleInterface)>,
     pub unused_modules: HashMap<SmolStr, SrcSpan>,
     pub imported_types: HashSet<SmolStr>,
 
@@ -55,11 +55,11 @@ impl<'a> Environment<'a> {
     pub fn new(
         ids: UniqueIdGenerator,
         current_module: &'a str,
-        importable_modules: &'a im::HashMap<SmolStr, Module>,
+        importable_modules: &'a im::HashMap<SmolStr, ModuleInterface>,
         warnings: &'a TypeWarningEmitter,
     ) -> Self {
         let prelude = importable_modules
-            .get("gleam")
+            .get(PRELUDE_MODULE_NAME)
             .expect("Unable to find prelude in importable modules");
         Self {
             previous_id: ids.next(),
@@ -223,7 +223,7 @@ impl<'a> Environment<'a> {
         let location = info.origin;
         match self.module_types.insert(type_name, info) {
             None => Ok(()),
-            Some(prelude_type) if prelude_type.module.is_empty() => Ok(()),
+            Some(prelude_type) if is_prelude_module(&prelude_type.module) => Ok(()),
             Some(previous) => Err(Error::DuplicateTypeName {
                 name,
                 location,
@@ -270,7 +270,7 @@ impl<'a> Environment<'a> {
                     .ok_or_else(|| UnknownTypeConstructorError::ModuleType {
                         name: name.clone(),
                         module_name: module.name.clone(),
-                        type_constructors: module.types.keys().cloned().collect(),
+                        type_constructors: module.public_type_names(),
                     })
             }
         }
@@ -303,7 +303,7 @@ impl<'a> Environment<'a> {
                     UnknownTypeConstructorError::ModuleType {
                         name: name.clone(),
                         module_name: module.name.clone(),
-                        type_constructors: module.types.keys().cloned().collect(),
+                        type_constructors: module.public_type_names(),
                     }
                 })
             }
@@ -334,14 +334,13 @@ impl<'a> Environment<'a> {
                     }
                 })?;
                 let _ = self.unused_modules.remove(module_name);
-                module
-                    .values
-                    .get(name)
-                    .ok_or_else(|| UnknownValueConstructorError::ModuleValue {
+                module.get_public_value(name).ok_or_else(|| {
+                    UnknownValueConstructorError::ModuleValue {
                         name: name.clone(),
                         module_name: module.name.clone(),
-                        value_constructors: module.values.keys().cloned().collect(),
-                    })
+                        value_constructors: module.public_value_names(),
+                    }
+                })
             }
         }
     }

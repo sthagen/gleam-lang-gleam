@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The language server will now provide autocomplete suggestions for types and
+  values either imported or defined at the top level of the current module.
 - Fixed a bug where record patterns using the spread operator (`..`) to discard
   unwanted arguments would not type check correctly when the record had no
   labelled fields.
@@ -10,6 +12,14 @@
 - A warning is now emitted for double unary negation on ints (`--`) and bools
   (`!!`) as this does nothing but return the original value.
 - The errors emitted when a name is reused in a module have been made clearer.
+- Fixed an incorrect URL in the error message for failing to parse a let binding
+  with a type annotation.
+- Fixed a bug where shadowing a prelude type name could result in incorrect
+  errors in exhaustiveness checking.
+- Fixed a bug where the language server would in some scenarios not remove an
+  error diagnostic after it becomes outdated.
+- Fixed a bug where the formatter would incorrectly format blocks with a comment
+  before them that were the only argument to a function call.
 - Running a module now uses the dependency's target and runtime in its `gleam.toml`.
 
 ## v0.28.3 - 2023-04-17
