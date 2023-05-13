@@ -104,7 +104,7 @@ where
         let _lock_guard = self.locker.lock_for_build();
 
         if !self.dependencies_compiled {
-            // TODO: store compiled module info
+            tracing::info!("compiling_dependencies");
             self.project_compiler.compile_dependencies()?;
             self.dependencies_compiled = true;
             self.checkpoint_state = None;
