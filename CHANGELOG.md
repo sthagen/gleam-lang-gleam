@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The `gleam lsp` command is no longer hidden from the help output.
+
+## v0.29.0-rc1 - 2023-05-16
+
 - The language server will now provide autocomplete suggestions for types and
   values either imported or defined at the top level of the current module.
 - Fixed a bug where record patterns using the spread operator (`..`) to discard
@@ -11,6 +15,9 @@
   JavaScript.
 - A warning is now emitted for double unary negation on ints (`--`) and bools
   (`!!`) as this does nothing but return the original value.
+- Previously the build tool would discard the entire build directory when dependencies
+  were changed. Now it will only discard the build artefacts for removed
+  dependencies.
 - The errors emitted when a name is reused in a module have been made clearer.
 - Fixed an incorrect URL in the error message for failing to parse a let binding
   with a type annotation.
@@ -20,7 +27,9 @@
   error diagnostic after it becomes outdated.
 - Fixed a bug where the formatter would incorrectly format blocks with a comment
   before them that were the only argument to a function call.
-- New Gleam projects are created with `erlef/setup-beam@1.15.4` in their GitHub
+- Fixed a bug where the language server would not reset the build directory when
+  it was created by a different version of Gleam.
+- New Gleam projects are created with `erlef/setup-beam@v1.15.4` in their GitHub
   actions CI configuration.
 - Running a module now uses the dependency's target and runtime in its `gleam.toml`.
 
