@@ -35,6 +35,7 @@ Thank you to our sponsors! Gleam would not be possible without you.
 
  - [Aaron Gunderson](https://github.com/agundy)
  - [Adam Brodzinski](https://github.com/AdamBrodzinski)
+ - [Adam Mokan](https://github.com/amokan)
  - [Adi Iyengar](https://github.com/thebugcatcher)
  - [Alembic](https://alembic.com.au)
  - [Alex Manning](https://github.com/rawhat)
@@ -45,6 +46,7 @@ Thank you to our sponsors! Gleam would not be possible without you.
  - [Anthony Khong](https://github.com/anthony-khong)
  - [Anthony Scotti](https://github.com/amscotti)
  - [Arnaud Berthomier](https://github.com/oz)
+ - [Barry Moore](https://github.com/chiroptical)
  - [Ben Marx](https://github.com/bgmarx)
  - [Ben Myles](https://github.com/benmyles)
  - [Benjamin Peinhardt](https://github.com/bcpeinhardt)

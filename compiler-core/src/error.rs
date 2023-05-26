@@ -131,7 +131,10 @@ pub enum Error {
     InvalidModuleName { module: String },
 
     #[error("{module} is not module")]
-    ModuleDoesNotExist { module: SmolStr },
+    ModuleDoesNotExist {
+        module: SmolStr,
+        suggestion: Option<SmolStr>,
+    },
 
     #[error("{module} does not have a main function")]
     ModuleDoesNotHaveMainFunction { module: SmolStr },
@@ -433,34 +436,44 @@ This prefix is intended for official Gleam packages only.",
                     "`{module}` is not a valid module name.
 Module names can only contain lowercase letters, underscore, and
 forward slash and must not end with a slash."
-            ),
+                ),
                 level: Level::Error,
                 location: None,
                 hint: None,
             },
 
-            Error::ModuleDoesNotExist { module } => Diagnostic {
-                title: "Module does not exist".into(),
-                text: format!("Module `{module}` was not found"),
-                level: Level::Error,
-                location: None,
-                hint: Some(
-                    format!("Try creating the file `src/{}.gleam`.",
-                    module)
-                ),
-            },
+            Error::ModuleDoesNotExist { module, suggestion } => {
+                let hint = match suggestion {
+                    Some(suggestion) => format!("Did you mean `{}`?", suggestion),
+                    None => format!("Try creating the file `src/{}.gleam`.", module),
+                };
+                Diagnostic {
+                    title: "Module does not exist".into(),
+                    text: format!("Module `{module}` was not found"),
+                    level: Level::Error,
+                    location: None,
+                    hint: Some(hint),
+                }
+            }
 
             Error::ModuleDoesNotHaveMainFunction { module } => Diagnostic {
                 title: "Module does not have a main function".into(),
-                text: format!("`{module}` does not have a main function so the module can not be run."),
+                text: format!(
+                    "`{module}` does not have a main function so the module can not be run."
+                ),
                 level: Level::Error,
                 location: None,
-                hint: Some(format!("Add a function with the singature `pub fn main() {{}}` to `src/{module}.gleam`")),
+                hint: Some(format!(
+                    "Add a function with the singature `pub fn main() {{}}` \
+to `src/{module}.gleam`"
+                )),
             },
 
             Error::MainFunctionHasWrongArity { module, arity } => Diagnostic {
                 title: "Main function has wrong arity".into(),
-                text: format!("`{module}:main` should have an arity of 0 to be run but its arity is {arity}."),
+                text: format!(
+                    "`{module}:main` should have an arity of 0 to be run but its arity is {arity}."
+                ),
                 level: Level::Error,
                 location: None,
                 hint: Some("Change the function signature of main to `pub fn main() {}`".into()),
@@ -744,11 +757,14 @@ Second: {}",
                     test_module,
                 } => {
                     let text = wrap_format!(
-                    "The application module `{}` is importing the test module `{}`.
+                        "The application module `{}` is importing the test module `{}`.
 
-Test modules are not included in production builds so test modules cannot import them. Perhaps move the `{}` module to the src directory.",
-                    src_module, test_module, test_module,
-                );
+Test modules are not included in production builds so test \
+modules cannot import them. Perhaps move the `{}` module to the src directory.",
+                        src_module,
+                        test_module,
+                        test_module,
+                    );
 
                     Diagnostic {
                         title: "App importing test module".into(),
@@ -904,7 +920,7 @@ Names in a Gleam module must be unique so one will need to be renamed."
                     ..
                 } => {
                     let (first_location, second_location) = if location_a.start < location_b.start {
-                      (location_a, location_b)
+                        (location_a, location_b)
                     } else {
                         (location_b, location_a)
                     };
@@ -1573,8 +1589,9 @@ Each clause must have a pattern for every subject value.",
                 }
 
                 TypeError::NonLocalClauseGuardVariable { location, name } => {
-                    let text=wrap_format!(
-                        "Variables used in guards must be either defined in the function, or be an argument to the function. The variable `{}` is not defined locally.",
+                    let text = wrap_format!(
+                        "Variables used in guards must be either defined in the \
+function, or be an argument to the function. The variable `{}` is not defined locally.",
                         name
                     );
                     Diagnostic {
@@ -1824,7 +1841,8 @@ function and try again."
 
                         bit_string::ErrorType::InvalidEndianness => (
                             "This option is invalid here.",
-                            vec![wrap("Hint: signed and unsigned can only be used with int, float, utf16 and utf32 types.")],
+                                vec![wrap("Hint: signed and unsigned can only be used with \
+int, float, utf16 and utf32 types.")],
                         ),
 
                         bit_string::ErrorType::OptionNotAllowedInValue => (
@@ -1842,7 +1860,8 @@ function and try again."
                         ),
                         bit_string::ErrorType::TypeDoesNotAllowUnit { typ } => (
                             "Unit cannot be specified here",
-                            vec![wrap(&format!("Hint: {typ} segments are sized based on their value and cannot have a unit."))],
+                            vec![wrap(&format!("Hint: {typ} segments are sized based on their value \
+and cannot have a unit."))],
                         ),
                         bit_string::ErrorType::VariableUtfSegmentInPattern => (
                             "This cannot be a variable",
@@ -1850,7 +1869,8 @@ function and try again."
                         ),
                         bit_string::ErrorType::SegmentMustHaveSize => (
                             "This segment has no size",
-                            vec![wrap("Hint: Bit string segments without a size are only allowed at the end of a bin pattern.")],
+                            vec![wrap("Hint: Bit string segments without a size are only \
+allowed at the end of a bin pattern.")],
                         ),
                         bit_string::ErrorType::UnitMustHaveSize => (
                             "This needs an explicit size",
@@ -2011,6 +2031,30 @@ value, or use `assert` rather than `let`."
                         extra_labels: vec![],
                     }),
                 },
+
+                TypeError::RecursiveTypeAlias { location, cycle } => {
+                    let mut text = "This type alias is defined in terms of itself.\n".into();
+                    write_cycle(&mut text, cycle);
+                    text.push_str(
+                        "If we tried to compile this recursive type it would expand forever
+in a loop, and we'd never get the final type.",
+                    );
+                    Diagnostic {
+                        title: "Type cycle".into(),
+                        text,
+                        hint: None,
+                        level: Level::Error,
+                        location: Some(Location {
+                            label: Label {
+                                text: None,
+                                span: *location,
+                            },
+                            path: path.clone(),
+                            src: src.clone(),
+                            extra_labels: vec![],
+                        }),
+                    }
+                }
             },
 
             Error::Parse { path, src, error } => {
@@ -2047,7 +2091,7 @@ value, or use `assert` rather than `let`."
                 let mut text = "The import statements for these modules form a cycle:
 "
                 .into();
-                import_cycle(&mut text, modules);
+                write_cycle(&mut text, modules);
                 text.push_str(
                     "Gleam doesn't support dependency cycles like these, please break the
 cycle to continue.",
@@ -2065,7 +2109,7 @@ cycle to continue.",
                 let mut text = "The dependencies for these packages form a cycle:
 "
                 .into();
-                import_cycle(&mut text, packages);
+                write_cycle(&mut text, packages);
                 text.push_str(
                     "Gleam doesn't support dependency cycles like these, please break the
 cycle to continue.",
@@ -2088,7 +2132,8 @@ cycle to continue.",
                     modules,
                 } = details.as_ref();
                 let text = wrap(&format!(
-                    "The module `{module}` is trying to import the module `{import}`, but it cannot be found."
+                    "The module `{module}` is trying to import the module `{import}`, \
+but it cannot be found."
                 ));
                 Diagnostic {
                     title: "Unknown import".into(),
@@ -2373,16 +2418,16 @@ fn std_io_error_kind_text(kind: &std::io::ErrorKind) -> String {
     }
 }
 
-fn import_cycle(buffer: &mut String, modules: &[SmolStr]) {
+fn write_cycle(buffer: &mut String, cycle: &[SmolStr]) {
     buffer.push_str(
         "
     ┌─────┐\n",
     );
-    for (index, name) in modules.iter().enumerate() {
+    for (index, name) in cycle.iter().enumerate() {
         if index != 0 {
             buffer.push_str("    │     ↓\n");
         }
-        buffer.push_str("    │    ");
+        buffer.push_str("    │     ");
         buffer.push_str(name);
         buffer.push('\n');
     }
@@ -2421,7 +2466,10 @@ fn hint_numeric_message(alt: &str, type_: &str) -> String {
 }
 
 fn hint_string_message() -> String {
-    wrap("Strings can be joined using the `append` or `concat` functions from the `gleam/string` module")
+    wrap(
+        "Strings can be joined using the `append` or `concat` \
+functions from the `gleam/string` module",
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
