@@ -691,6 +691,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 unify(left.type_(), right.type_())
                     .map_err(|e| convert_unify_error(e, right.location()))?;
 
+                self.check_for_inefficient_empty_list_check(name, &left, &right, location);
+
                 return Ok(TypedExpr::BinOp {
                     location,
                     name,
@@ -732,6 +734,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 .into_error(right.type_defining_location())
         })?;
 
+        self.check_for_inefficient_empty_list_check(name, &left, &right, location);
+
         Ok(TypedExpr::BinOp {
             location,
             name,
@@ -739,6 +743,62 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             left: Box::new(left),
             right: Box::new(right),
         })
+    }
+
+    /// Checks for inefficient usage of `list.length` for checking for the empty list.
+    ///
+    /// If we find one of these usages, emit a warning to use `list.is_empty` instead.
+    fn check_for_inefficient_empty_list_check(
+        &mut self,
+        binop: BinOp,
+        left: &TypedExpr,
+        right: &TypedExpr,
+        location: SrcSpan,
+    ) {
+        // Look for a call expression as either of the binary operands.
+        let fun = match (&left, &right) {
+            (TypedExpr::Call { fun, .. }, _) | (_, TypedExpr::Call { fun, .. }) => fun,
+            _ => return,
+        };
+
+        // Extract the module information from the call expression.
+        let (module_name, module_alias, label) = match fun.as_ref() {
+            TypedExpr::ModuleSelect {
+                module_name,
+                module_alias,
+                label,
+                ..
+            } => (module_name, module_alias, label),
+            _ => return,
+        };
+
+        // Check if we have a `list.length` call from `gleam/list`.
+        if module_name != "gleam/list" || label != "length" {
+            return;
+        }
+
+        // Resolve the module against the imported modules we have available.
+        let list_module = match self.environment.imported_modules.get(module_alias) {
+            Some((_, list_module)) => list_module,
+            None => return,
+        };
+
+        // Check that we're actually using `list.length` from the standard library.
+        if list_module.package != crate::STDLIB_PACKAGE_NAME {
+            return;
+        }
+
+        // Check the kind of the empty list check so we know whether to recommend
+        // `list.is_empty` or `!list.is_empty` as a replacement.
+        let kind = match get_empty_list_check_kind(binop, left, right) {
+            Some(kind) => kind,
+            None => return,
+        };
+
+        // If we've gotten this far, go ahead and emit the warning.
+        self.environment
+            .warnings
+            .emit(Warning::InefficientEmptyListCheck { location, kind });
     }
 
     fn infer_assignment(
@@ -2100,6 +2160,42 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 location,
             })
         })
+    }
+}
+
+/// Returns the kind of an empty list check.
+///
+/// Based on the binary operator being used and the position of the operands we
+/// can categorize an empty list check in one of two ways:
+///   - Checking for the empty list
+///   - Checking for a non-empty list
+fn get_empty_list_check_kind<'a>(
+    binop: BinOp,
+    left: &'a TypedExpr,
+    right: &'a TypedExpr,
+) -> Option<EmptyListCheckKind> {
+    match (&left, &right) {
+        // For `==` and `!=` we don't care which side each of the operands are on.
+        (_, TypedExpr::Int { value, .. }) | (TypedExpr::Int { value, .. }, _)
+            if binop == BinOp::Eq || binop == BinOp::NotEq =>
+        {
+            match (binop, value.as_str()) {
+                (BinOp::Eq, "0" | "-0") => Some(EmptyListCheckKind::Empty),
+                (BinOp::NotEq, "0" | "-0") => Some(EmptyListCheckKind::NonEmpty),
+                _ => None,
+            }
+        }
+        (_, TypedExpr::Int { value, .. }) => match (binop, value.as_str()) {
+            (BinOp::LtEqInt, "0" | "-0") | (BinOp::LtInt, "1") => Some(EmptyListCheckKind::Empty),
+            _ => None,
+        },
+        (TypedExpr::Int { value, .. }, _) => match (binop, value.as_str()) {
+            (BinOp::GtEqInt, "0" | "-0") | (BinOp::GtInt, "1") => {
+                Some(EmptyListCheckKind::NonEmpty)
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 

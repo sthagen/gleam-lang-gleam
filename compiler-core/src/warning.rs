@@ -412,6 +412,36 @@ expression.",
                         extra_labels: Vec::new(),
                     }),
                 },
+                type_::Warning::InefficientEmptyListCheck { location, kind } => {
+                    use type_::error::EmptyListCheckKind;
+                    let text = "The `list.length` function has to iterate across the whole
+list to calculate the length, which is wasteful if you only
+need to know if the list is empty or not.
+"
+                    .into();
+                    let hint = Some(match kind {
+                        EmptyListCheckKind::Empty => "You can use `the_list == []` instead.".into(),
+                        EmptyListCheckKind::NonEmpty => {
+                            "You can use `the_list != []` instead.".into()
+                        }
+                    });
+
+                    Diagnostic {
+                        title: "Inefficient use of list.length".into(),
+                        text,
+                        hint,
+                        level: diagnostic::Level::Warning,
+                        location: Some(Location {
+                            src: src.clone(),
+                            path: path.to_path_buf(),
+                            label: diagnostic::Label {
+                                text: None,
+                                span: *location,
+                            },
+                            extra_labels: Vec::new(),
+                        }),
+                    }
+                }
             },
         }
     }

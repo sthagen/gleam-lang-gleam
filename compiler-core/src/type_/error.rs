@@ -265,6 +265,12 @@ pub enum PatternMatchKind {
     Assignment,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyListCheckKind {
+    Empty,
+    NonEmpty,
+}
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Warning {
     Todo {
@@ -332,6 +338,11 @@ pub enum Warning {
 
     UnnecessaryDoubleBoolNegation {
         location: SrcSpan,
+    },
+
+    InefficientEmptyListCheck {
+        location: SrcSpan,
+        kind: EmptyListCheckKind,
     },
 }
 

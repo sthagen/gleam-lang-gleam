@@ -2,11 +2,17 @@
 
 ## Unreleased
 
+- Dependencies can now be loaded from paths. Path dependencies currently use
+  the same semantics as hex dependencies, and must be updated using the command
+  `gleam deps update` to load changes.
+- Blockquotes are now styled in rendered HTML documentation.
 - Type aliases can now refer to type aliases defined later in the same module.
 - Fixed a bug where unapplied record constructors in constant expressions would
   generate invalid Erlang.
 - Fixed a bug where `gleam docs build` would print an incorrect path upon
   completion.
+- A warning is now emitted when using `list.length` to check for the empty list,
+  which is slow compared to checking for equality or pattern matching (#2180).
 
 ## v0.29.0 - 2023-05-23
 

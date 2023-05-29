@@ -57,6 +57,7 @@ pub mod bit_string;
 pub mod build;
 pub mod codegen;
 pub mod config;
+pub mod dependency;
 pub mod diagnostic;
 pub mod docs;
 pub mod erlang;
@@ -72,6 +73,7 @@ pub mod metadata;
 pub mod parse;
 pub mod paths;
 pub mod pretty;
+pub mod requirement;
 pub mod type_;
 pub mod uid;
 pub mod version;
@@ -83,6 +85,8 @@ pub(crate) mod graph;
 
 pub use error::{Error, Result};
 pub use warning::Warning;
+
+const STDLIB_PACKAGE_NAME: &str = "gleam_stdlib";
 
 mod schema_capnp {
     #![allow(dead_code, unused_qualifications)]
