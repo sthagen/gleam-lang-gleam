@@ -4,8 +4,7 @@
     clippy::dbg_macro,
     clippy::todo,
     clippy::mem_forget,
-    // TODO: enable once the false positive bug is solved
-    // clippy::use_self,
+    clippy::use_self,
     clippy::filter_map_next,
     clippy::needless_continue,
     clippy::needless_borrow,
@@ -30,7 +29,8 @@
     trivial_numeric_casts,
     nonstandard_style,
     unused_import_braces,
-    unused_qualifications,
+    // TODO: re-enable this once the false positive bug is solved
+    // unused_qualifications,
 )]
 #![deny(
     clippy::await_holding_lock,
@@ -67,6 +67,7 @@ mod lsp;
 mod new;
 mod panic;
 mod publish;
+mod remove;
 mod run;
 mod shell;
 
@@ -207,6 +208,13 @@ enum Command {
         dev: bool,
     },
 
+    /// Remove project dependencies
+    Remove {
+        /// The names of packages to remove
+        #[clap(required = true)]
+        packages: Vec<String>,
+    },
+
     /// Clean build artifacts
     Clean,
 
@@ -324,7 +332,11 @@ enum Hex {
 #[derive(Subcommand, Debug)]
 enum Docs {
     /// Render HTML docs locally
-    Build,
+    Build {
+        /// Opens the docs in a browser after rendering
+        #[clap(long)]
+        open: bool,
+    },
 
     /// Publish HTML docs to HexDocs
     ///
@@ -366,7 +378,7 @@ fn main() {
 
         Command::Check => command_check(),
 
-        Command::Docs(Docs::Build) => docs::build(),
+        Command::Docs(Docs::Build { open }) => docs::build(docs::BuildOptions { open }),
 
         Command::Docs(Docs::Publish) => docs::publish(),
 
@@ -419,6 +431,8 @@ fn main() {
         }
 
         Command::Add { packages, dev } => add::command(packages, dev),
+
+        Command::Remove { packages } => remove::command(packages),
 
         Command::Update => dependencies::update(),
 

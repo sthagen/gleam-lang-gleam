@@ -2,9 +2,12 @@
 
 ## Unreleased
 
+- Adding a new dependency unlocks the target package.
 - Dependencies can now be loaded from paths. Path dependencies currently use
   the same semantics as hex dependencies, and must be updated using the command
   `gleam deps update` to load changes.
+- The `javascript.deno.unstable` field in `gleam.toml` can now be used to
+  enable Deno's unstable APIs when targeting JavaScript.
 - Blockquotes are now styled in rendered HTML documentation.
 - Type aliases can now refer to type aliases defined later in the same module.
 - Fixed a bug where unapplied record constructors in constant expressions would
@@ -13,6 +16,10 @@
   completion.
 - A warning is now emitted when using `list.length` to check for the empty list,
   which is slow compared to checking for equality or pattern matching (#2180).
+- The new `gleam remove <package_name>` can be used to remove dependencies
+  from a Gleam project.
+- The `gleam docs build` command gains the `--open` flag to open the docs after they are generated (#2188).
+- Updated font loading in generated HTML documentation to fix an issue with fonts not loading properly in some browsers (#2209).
 
 ## v0.29.0 - 2023-05-23
 

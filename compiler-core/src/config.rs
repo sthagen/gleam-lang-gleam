@@ -221,11 +221,14 @@ impl<'a> StalePackageRemover<'a> {
             .packages
             .iter()
             .filter(|package| {
+                let new = requirements.contains_key(package.name.as_str())
+                    && !manifest.requirements.contains_key(package.name.as_str());
                 let fresh = self.fresh.contains(package.name.as_str());
-                if !fresh {
+                let locked = !new && fresh;
+                if !locked {
                     tracing::info!(name = package.name.as_str(), "unlocking_stale_package");
                 }
-                fresh
+                locked
             })
             .map(|package| (package.name.clone(), package.version.clone()))
             .collect()
@@ -410,6 +413,35 @@ fn locked_nested_are_removed_too() {
         ]
         .into()
     );
+}
+
+// https://github.com/gleam-lang/gleam/issues/1754
+#[test]
+fn locked_unlock_new() {
+    let mut config = PackageConfig::default();
+    config.dependencies = [
+        ("1".into(), Requirement::hex("~> 1.0")),
+        ("2".into(), Requirement::hex("~> 1.0")),
+        ("3".into(), Requirement::hex("~> 3.0")), // Does not match manifest
+    ]
+    .into();
+    config.dev_dependencies = [].into();
+    let manifest = Manifest {
+        requirements: [
+            ("1".into(), Requirement::hex("~> 1.0")),
+            ("2".into(), Requirement::hex("~> 1.0")),
+        ]
+        .into(),
+        packages: vec![
+            manifest_package("1", "1.1.0", &["3"]),
+            manifest_package("2", "1.1.0", &["3"]),
+            manifest_package("3", "1.1.0", &[]),
+        ],
+    };
+    assert_eq!(
+        config.locked(Some(&manifest)).unwrap(),
+        [locked_version("1", "1.1.0"), locked_version("2", "1.1.0"),].into()
+    )
 }
 
 #[test]
@@ -646,6 +678,8 @@ pub struct DenoConfig {
     pub allow_write: DenoFlag,
     #[serde(default)]
     pub allow_all: bool,
+    #[serde(default)]
+    pub unstable: bool,
 }
 
 #[derive(Deserialize, Debug, PartialEq, Eq, Clone)]

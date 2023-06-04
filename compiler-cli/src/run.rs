@@ -187,6 +187,11 @@ fn run_javascript_deno(
     // Run the main function.
     args.push("run".into());
 
+    // Enable unstable features and APIs
+    if config.javascript.deno.unstable {
+        args.push("--unstable".into())
+    }
+
     // Set deno permissions
     if config.javascript.deno.allow_all {
         // Allow all
