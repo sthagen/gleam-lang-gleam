@@ -2,6 +2,7 @@ use crate::error::{FileIoAction, FileKind};
 use crate::io::FileSystemReader;
 use crate::manifest::Manifest;
 use crate::requirement::Requirement;
+use crate::version::COMPILER_VERSION;
 use crate::{Error, Result};
 use globset::{Glob, GlobSetBuilder};
 use hexpm::version::Version;
@@ -72,6 +73,8 @@ pub struct PackageConfig {
     pub name: SmolStr,
     #[serde(default = "default_version")]
     pub version: Version,
+    #[serde(default, rename = "gleam")]
+    pub gleam_version: Option<SmolStr>,
     #[serde(default, alias = "licenses")]
     pub licences: Vec<SpdxLicense>,
     #[serde(default)]
@@ -121,12 +124,13 @@ impl PackageConfig {
         fs: &FS,
     ) -> Result<PackageConfig, Error> {
         let toml = fs.read(path.as_ref())?;
-        toml::from_str(&toml).map_err(|e| Error::FileIo {
+        let config: PackageConfig = toml::from_str(&toml).map_err(|e| Error::FileIo {
             action: FileIoAction::Parse,
             kind: FileKind::File,
             path: path.as_ref().to_path_buf(),
             err: Some(e.to_string()),
-        })
+        })?;
+        Ok(config)
     }
 
     /// Get the locked packages for the current config and a given (optional)
@@ -172,6 +176,29 @@ impl PackageConfig {
         }
         .expect("internal module globs")
         .is_match(module)
+    }
+
+    // Checks to see if the gleam version specified in the config is compatable
+    // with the current compiler version
+    pub fn check_gleam_compatability(&self) -> Result<(), Error> {
+        if let Some(required_version) = &self.gleam_version {
+            let compiler_version = hexpm::version::Version::parse(COMPILER_VERSION)
+                .expect("Parse compiler semantic version");
+            let range = hexpm::version::Range::new(required_version.to_string())
+                .to_pubgrub()
+                .map_err(|error| Error::InvalidVersionFormat {
+                    input: required_version.to_string(),
+                    error: error.to_string(),
+                })?;
+            if !range.contains(&compiler_version) {
+                return Err(Error::IncompatibleCompilerVersion {
+                    package: self.name.to_string(),
+                    required_version: required_version.to_string(),
+                    gleam_version: COMPILER_VERSION.to_string(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -574,6 +601,7 @@ impl Default for PackageConfig {
         Self {
             name: Default::default(),
             version: default_version(),
+            gleam_version: Default::default(),
             description: Default::default(),
             documentation: Default::default(),
             dependencies: Default::default(),

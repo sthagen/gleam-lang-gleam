@@ -57,17 +57,18 @@ mod token;
 use crate::analyse::Inferred;
 use crate::ast::{
     Arg, ArgNames, AssignName, Assignment, AssignmentKind, BinOp, BitStringSegment,
-    BitStringSegmentOption, CallArg, Clause, ClauseGuard, Constant, CustomType, ExternalFnArg,
-    ExternalFunction, ExternalType, Function, HasLocation, Import, Module, ModuleConstant,
-    ModuleStatement, Pattern, RecordConstructor, RecordConstructorArg, RecordUpdateSpread, SrcSpan,
-    Statement, TargetGroup, TodoKind, TypeAlias, TypeAst, UnqualifiedImport, UntypedArg,
-    UntypedClause, UntypedClauseGuard, UntypedConstant, UntypedExpr, UntypedExternalFnArg,
-    UntypedModule, UntypedModuleStatement, UntypedPattern, UntypedRecordUpdateArg,
-    UntypedStatement, Use, UseAssignment, CAPTURE_VARIABLE,
+    BitStringSegmentOption, CallArg, Clause, ClauseGuard, Constant, CustomType, Definition,
+    ExternalFnArg, ExternalFunction, Function, HasLocation, Import, Module, ModuleConstant,
+    Pattern, RecordConstructor, RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement,
+    TargettedDefinition, TodoKind, TypeAlias, TypeAst, UnqualifiedImport, UntypedArg,
+    UntypedClause, UntypedClauseGuard, UntypedConstant, UntypedDefinition, UntypedExpr,
+    UntypedExternalFnArg, UntypedModule, UntypedPattern, UntypedRecordUpdateArg, UntypedStatement,
+    Use, UseAssignment, CAPTURE_VARIABLE,
 };
 use crate::build::Target;
 use crate::parse::extra::ModuleExtra;
 use error::{LexicalError, ParseError, ParseErrorType};
+use itertools::Itertools;
 use lexer::{LexResult, Spanned};
 use smol_str::SmolStr;
 use std::cmp::Ordering;
@@ -79,14 +80,35 @@ use vec1::{vec1, Vec1};
 #[cfg(test)]
 mod tests;
 
+#[derive(Debug)]
+pub struct Parsed {
+    pub module: UntypedModule,
+    pub extra: ModuleExtra,
+    pub warnings: Vec<Warning>,
+}
+
+#[derive(Debug, Default)]
+struct Attributes {
+    external_erlang: Option<(SmolStr, SmolStr)>,
+    external_javascript: Option<(SmolStr, SmolStr)>,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum Warning {
+    DeprecatedIf { location: SrcSpan, target: Target },
+    DeprecatedExternalType { location: SrcSpan, name: SmolStr },
+}
+
 //
 // Public Interface
 //
-pub fn parse_module(src: &str) -> Result<(UntypedModule, ModuleExtra), ParseError> {
+pub fn parse_module(src: &str) -> Result<Parsed, ParseError> {
     let lex = lexer::make_tokenizer(src);
     let mut parser = Parser::new(lex);
-    let module = parser.parse_module()?;
-    Ok((module, parser.extra))
+    let mut parsed = parser.parse_module()?;
+    parsed.extra = parser.extra;
+    parsed.warnings = parser.warnings;
+    Ok(parsed)
 }
 
 //
@@ -116,6 +138,7 @@ pub struct Parser<T: Iterator<Item = LexResult>> {
     tok1: Option<Spanned>,
     extra: ModuleExtra,
     doc_comments: VecDeque<(u32, String)>,
+    warnings: Vec<Warning>,
 }
 impl<T> Parser<T>
 where
@@ -129,20 +152,27 @@ where
             tok1: None,
             extra: ModuleExtra::new(),
             doc_comments: VecDeque::new(),
+            warnings: vec![],
         };
         let _ = parser.next_tok();
         let _ = parser.next_tok();
         parser
     }
 
-    fn parse_module(&mut self) -> Result<UntypedModule, ParseError> {
-        let statements = Parser::series_of(self, &Parser::parse_target_group, None);
-        let statements = self.ensure_no_errors_or_remaining_input(statements)?;
-        Ok(Module {
+    fn parse_module(&mut self) -> Result<Parsed, ParseError> {
+        let definitions = Parser::series_of(self, &Parser::parse_target_group, None);
+        let definitions = self.ensure_no_errors_or_remaining_input(definitions)?;
+        let definitions = definitions.into_iter().flatten().collect_vec();
+        let module = Module {
             name: "".into(),
             documentation: vec![],
             type_info: (),
-            statements,
+            definitions,
+        };
+        Ok(Parsed {
+            module,
+            extra: Default::default(),
+            warnings: Default::default(),
         })
     }
 
@@ -192,34 +222,72 @@ where
         }
     }
 
-    fn parse_target_group(&mut self) -> Result<Option<TargetGroup>, ParseError> {
+    /// Parse conditional compilation blocks.
+    fn parse_target_group(&mut self) -> Result<Option<Vec<TargettedDefinition>>, ParseError> {
         match &self.tok0 {
-            Some((_, Token::If, _)) => {
+            // Attribute-syntax
+            Some((_, Token::At, _)) => match &self.tok1 {
+                Some((_, Token::Name { name }, _)) if name == "target" => {
+                    let _ = self.next_tok();
+                    let _ = self.next_tok();
+                    let _ = self.expect_one(&Token::LeftParen)?;
+                    let target = self.expect_target()?;
+                    let _ = self.expect_one(&Token::RightParen)?;
+                    let definition = self.expect_definition()?;
+                    Ok(Some(vec![TargettedDefinition::Only(target, definition)]))
+                }
+                _ => {
+                    let definition = self.expect_definition()?;
+                    Ok(Some(vec![TargettedDefinition::Any(definition)]))
+                }
+            },
+
+            // If-syntax
+            Some((start, Token::If, _)) => {
+                let start = *start;
                 let _ = self.next_tok();
                 let target = self.expect_target()?;
-                let _ = self.expect_one(&Token::LeftBrace)?;
-                let statements = self.expect_module_statements()?;
+                let (_, end) = self.expect_one(&Token::LeftBrace)?;
+                self.warnings.push(Warning::DeprecatedIf {
+                    target,
+                    location: SrcSpan::new(start, end),
+                });
+                let statements = self.expect_definitions()?;
                 let (_, _) = self.expect_one(&Token::RightBrace)?;
-                Ok(Some(TargetGroup::Only(target, statements)))
+                let statements = statements
+                    .into_iter()
+                    .map(|s| TargettedDefinition::Only(target, s))
+                    .collect();
+                Ok(Some(statements))
             }
-            Some(_) => {
-                let statements = self.expect_module_statements()?;
-                if statements.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(TargetGroup::Any(statements)))
-                }
-            }
+
+            Some(_) => Ok(self
+                .parse_definition()?
+                .map(|d| vec![TargettedDefinition::Any(d)])),
+
             None => Ok(None),
         }
     }
 
-    fn expect_module_statements(&mut self) -> Result<Vec<UntypedModuleStatement>, ParseError> {
-        let statements = Parser::series_of(self, &Parser::parse_module_statement, None);
+    fn expect_definition(&mut self) -> Result<UntypedDefinition, ParseError> {
+        match self.parse_definition()? {
+            None => parse_error(
+                ParseErrorType::ExpectedStatement,
+                SrcSpan { start: 0, end: 0 },
+            ),
+            Some(statement) => self.ensure_no_errors(Ok(statement)),
+        }
+    }
+
+    fn expect_definitions(&mut self) -> Result<Vec<UntypedDefinition>, ParseError> {
+        let statements = Parser::series_of(self, &Parser::parse_definition, None);
         self.ensure_no_errors(statements)
     }
 
-    fn parse_module_statement(&mut self) -> Result<Option<UntypedModuleStatement>, ParseError> {
+    fn parse_definition(&mut self) -> Result<Option<UntypedDefinition>, ParseError> {
+        let mut attributes = Attributes::default();
+        self.parse_attributes(&mut attributes)?;
+
         match (self.tok0.take(), self.tok1.as_ref()) {
             // Imports
             (Some((_, Token::Import, _)), _) => {
@@ -260,15 +328,15 @@ where
                 }
             }
 
-            // function
+            // Function
             (Some((start, Token::Fn, _)), _) => {
                 let _ = self.next_tok();
-                self.parse_function(start, false, false)
+                self.parse_function(start, false, false, attributes)
             }
             (Some((start, Token::Pub, _)), Some((_, Token::Fn, _))) => {
                 let _ = self.next_tok();
                 let _ = self.next_tok();
-                self.parse_function(start, true, false)
+                self.parse_function(start, true, false, attributes)
             }
 
             // Custom Types, and Type Aliases
@@ -504,8 +572,8 @@ where
             }
             Some((start, Token::Fn, _)) => {
                 let _ = self.next_tok();
-                match self.parse_function(start, false, true)? {
-                    Some(ModuleStatement::Function(Function {
+                match self.parse_function(start, false, true, Attributes::default())? {
+                    Some(Definition::Function(Function {
                         location,
                         arguments: args,
                         body,
@@ -750,7 +818,7 @@ where
             location: SrcSpan { start, end: start },
         })?;
 
-        let annotation = self.parse_type_annotation(&Token::Colon, false)?;
+        let annotation = self.parse_type_annotation(&Token::Colon)?;
         let end = match annotation {
             Some(ref a) => a.location().end,
             None => pattern.location().end,
@@ -777,7 +845,7 @@ where
             // DUPE: 62884
             return self.next_tok_unexpected(vec!["A pattern".into()])?;
         };
-        let annotation = self.parse_type_annotation(&Token::Colon, false)?;
+        let annotation = self.parse_type_annotation(&Token::Colon)?;
         let (eq_s, eq_e) = self.maybe_one(&Token::Equal).ok_or(ParseError {
             error: ParseErrorType::ExpectedEqual,
             location: SrcSpan {
@@ -1366,7 +1434,8 @@ where
         start: u32,
         public: bool,
         is_anon: bool,
-    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
+        attributes: Attributes,
+    ) -> Result<Option<UntypedDefinition>, ParseError> {
         let documentation = if is_anon {
             None
         } else {
@@ -1384,32 +1453,46 @@ where
             Some(&Token::Comma),
         )?;
         let (_, rpar_e) = self.expect_one(&Token::RightParen)?;
-        let return_annotation = self.parse_type_annotation(&Token::RArrow, false)?;
-        let _ = self.expect_one(&Token::LeftBrace)?;
-        let some_body = self.parse_statement_seq()?;
-        let (_, rbr_e) = self.expect_one(&Token::RightBrace)?;
-        let end = return_annotation
-            .as_ref()
-            .map(|l| l.location().end)
-            .unwrap_or_else(|| if is_anon { rbr_e } else { rpar_e });
-        let body = match some_body {
-            None => vec1![Statement::Expression(UntypedExpr::Todo {
-                kind: TodoKind::EmptyFunction,
-                location: SrcSpan { start, end },
-                label: None,
-            })],
-            Some((body, _)) => body,
+        let return_annotation = self.parse_type_annotation(&Token::RArrow)?;
+
+        let (body, end, end_position) = match self.maybe_one(&Token::LeftBrace) {
+            Some(_) => {
+                let some_body = self.parse_statement_seq()?;
+                let (_, rbr_e) = self.expect_one(&Token::RightBrace)?;
+                let end = return_annotation
+                    .as_ref()
+                    .map(|l| l.location().end)
+                    .unwrap_or_else(|| if is_anon { rbr_e } else { rpar_e });
+                let body = match some_body {
+                    None => vec1![Statement::Expression(UntypedExpr::Todo {
+                        kind: TodoKind::EmptyFunction,
+                        location: SrcSpan { start, end },
+                        label: None,
+                    })],
+                    Some((body, _)) => body,
+                };
+                (body, end, rbr_e)
+            }
+            None => {
+                let body = vec1![Statement::Expression(UntypedExpr::Placeholder {
+                    location: SrcSpan::new(start, rpar_e)
+                })];
+                (body, rpar_e, rpar_e)
+            }
         };
-        Ok(Some(ModuleStatement::Function(Function {
+
+        Ok(Some(Definition::Function(Function {
             documentation,
             location: SrcSpan { start, end },
-            end_position: rbr_e,
+            end_position,
             public,
             name,
             arguments: args,
             body,
             return_type: (),
             return_annotation,
+            external_erlang: attributes.external_erlang,
+            external_javascript: attributes.external_javascript,
         })))
     }
 
@@ -1422,20 +1505,20 @@ where
         &mut self,
         start: u32,
         public: bool,
-    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
+    ) -> Result<Option<UntypedDefinition>, ParseError> {
         let documentation = self.take_documentation(start);
         let (_, name, _) = self.expect_name()?;
         let _ = self.expect_one(&Token::LeftParen)?;
         let args = Parser::series_of(self, &Parser::parse_external_fn_param, Some(&Token::Comma))?;
         let _ = self.expect_one(&Token::RightParen)?;
         let (arr_s, arr_e) = self.expect_one(&Token::RArrow)?;
-        let return_annotation = self.parse_type(false)?;
+        let return_annotation = self.parse_type()?;
         let _ = self.expect_one(&Token::Equal)?;
         let (_, module, _) = self.expect_string()?;
         let (_, fun, end) = self.expect_string()?;
 
         if let Some(retrn) = return_annotation {
-            Ok(Some(ModuleStatement::ExternalFunction(ExternalFunction {
+            Ok(Some(Definition::ExternalFunction(ExternalFunction {
                 documentation,
                 location: SrcSpan { start, end },
                 public,
@@ -1480,7 +1563,7 @@ where
                 self.tok1 = t1;
             }
         };
-        match (&label, self.parse_type(false)?) {
+        match (&label, self.parse_type()?) {
             (None, None) => Ok(None),
             (Some(_), None) => {
                 parse_error(ParseErrorType::ExpectedType, SrcSpan { start: end, end })
@@ -1571,7 +1654,7 @@ where
                 return Ok(None);
             }
         };
-        let annotation = if let Some(a) = self.parse_type_annotation(&Token::Colon, false)? {
+        let annotation = if let Some(a) = self.parse_type_annotation(&Token::Colon)? {
             end = a.location().end;
             Some(a)
         } else {
@@ -1650,15 +1733,23 @@ where
         &mut self,
         start: u32,
         public: bool,
-    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
+    ) -> Result<Option<UntypedDefinition>, ParseError> {
         let documentation = self.take_documentation(start);
-        let (_, name, args, end) = self.expect_type_name()?;
-        Ok(Some(ModuleStatement::ExternalType(ExternalType {
+        let (_, name, parameters, end) = self.expect_type_name()?;
+        self.warnings.push(Warning::DeprecatedExternalType {
+            location: SrcSpan::new(start, end),
+            name: name.clone(),
+        });
+        Ok(Some(Definition::CustomType(CustomType {
             location: SrcSpan { start, end },
             public,
             name,
-            arguments: args,
+            parameters,
             documentation,
+            end_position: end,
+            constructors: vec![],
+            opaque: false,
+            typed_parameters: vec![],
         })))
     }
 
@@ -1676,10 +1767,10 @@ where
         start: u32,
         public: bool,
         opaque: bool,
-    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
+    ) -> Result<Option<UntypedDefinition>, ParseError> {
         let documentation = self.take_documentation(start);
         let (_, name, parameters, end) = self.expect_type_name()?;
-        if self.maybe_one(&Token::LeftBrace).is_some() {
+        let (constructors, end_position) = if self.maybe_one(&Token::LeftBrace).is_some() {
             // Custom Type
             let constructors = Parser::series_of(
                 self,
@@ -1702,54 +1793,41 @@ where
                 None,
             )?;
             let (_, close_end) = self.expect_one(&Token::RightBrace)?;
-            if constructors.is_empty() {
-                parse_error(ParseErrorType::NoConstructors, SrcSpan { start, end })
-            } else {
-                Ok(Some(ModuleStatement::CustomType(CustomType {
-                    documentation,
-                    location: SrcSpan { start, end },
-                    end_position: close_end,
-                    public,
-                    opaque,
-                    name,
-                    parameters,
-                    constructors,
-                    typed_parameters: vec![],
-                })))
-            }
+            (constructors, close_end)
         } else if let Some((eq_s, eq_e)) = self.maybe_one(&Token::Equal) {
             // Type Alias
-            if !opaque {
-                if let Some(t) = self.parse_type(false)? {
-                    let type_end = t.location().end;
-                    Ok(Some(ModuleStatement::TypeAlias(TypeAlias {
-                        documentation,
-                        location: SrcSpan {
-                            start,
-                            end: type_end,
-                        },
-                        public,
-                        alias: name,
-                        parameters,
-                        type_ast: t,
-                        type_: (),
-                    })))
-                } else {
-                    parse_error(
-                        ParseErrorType::ExpectedType,
-                        SrcSpan {
-                            start: eq_s,
-                            end: eq_e,
-                        },
-                    )
-                }
+            if opaque {
+                return parse_error(ParseErrorType::OpaqueTypeAlias, SrcSpan { start, end });
+            }
+
+            if let Some(t) = self.parse_type()? {
+                let type_end = t.location().end;
+                return Ok(Some(Definition::TypeAlias(TypeAlias {
+                    documentation,
+                    location: SrcSpan::new(start, type_end),
+                    public,
+                    alias: name,
+                    parameters,
+                    type_ast: t,
+                    type_: (),
+                })));
             } else {
-                parse_error(ParseErrorType::OpaqueTypeAlias, SrcSpan { start, end })
+                return parse_error(ParseErrorType::ExpectedType, SrcSpan::new(eq_s, eq_e));
             }
         } else {
-            // Stared defining a custom type or type alias, didn't supply any {} or =
-            parse_error(ParseErrorType::NoConstructors, SrcSpan { start, end })
-        }
+            (vec![], end)
+        };
+        Ok(Some(Definition::CustomType(CustomType {
+            documentation,
+            location: SrcSpan { start, end },
+            end_position,
+            public,
+            opaque,
+            name,
+            parameters,
+            constructors,
+            typed_parameters: vec![],
+        })))
     }
 
     // examples:
@@ -1782,7 +1860,7 @@ where
                     (Some((start, Token::Name { name }, _)), Some((_, Token::Colon, end))) => {
                         let _ = Parser::next_tok(p);
                         let _ = Parser::next_tok(p);
-                        match Parser::parse_type(p, false)? {
+                        match Parser::parse_type(p)? {
                             Some(type_ast) => Ok(Some(RecordConstructorArg {
                                 label: Some(name),
                                 ast: type_ast,
@@ -1798,7 +1876,7 @@ where
                     (t0, t1) => {
                         p.tok0 = t0;
                         p.tok1 = t1;
-                        match Parser::parse_type(p, false)? {
+                        match Parser::parse_type(p)? {
                             Some(type_ast) => {
                                 let type_location = type_ast.location();
                                 Ok(Some(RecordConstructorArg {
@@ -1831,13 +1909,9 @@ where
     //   :Int
     //   :Result(a, _)
     //   :Result(Result(a, e), #(_, String))
-    fn parse_type_annotation(
-        &mut self,
-        start_tok: &Token,
-        for_const: bool,
-    ) -> Result<Option<TypeAst>, ParseError> {
+    fn parse_type_annotation(&mut self, start_tok: &Token) -> Result<Option<TypeAst>, ParseError> {
         if let Some((start, end)) = self.maybe_one(start_tok) {
-            match self.parse_type(for_const) {
+            match self.parse_type() {
                 Ok(None) => parse_error(ParseErrorType::ExpectedType, SrcSpan { start, end }),
                 other => other,
             }
@@ -1847,7 +1921,7 @@ where
     }
 
     // Parse the type part of a type annotation, same as `parse_type_annotation` minus the ":"
-    fn parse_type(&mut self, for_const: bool) -> Result<Option<TypeAst>, ParseError> {
+    fn parse_type(&mut self) -> Result<Option<TypeAst>, ParseError> {
         match self.tok0.take() {
             // Type hole
             Some((start, Token::DiscardName { name }, end)) => {
@@ -1862,7 +1936,7 @@ where
             Some((start, Token::Hash, end)) => {
                 let _ = self.next_tok();
                 let _ = self.expect_one(&Token::LeftParen)?;
-                let elems = self.parse_types(for_const)?;
+                let elems = self.parse_types()?;
                 let _ = self.expect_one(&Token::RightParen)?;
                 Ok(Some(TypeAst::Tuple {
                     location: SrcSpan { start, end },
@@ -1874,14 +1948,11 @@ where
             Some((start, Token::Fn, _)) => {
                 let _ = self.next_tok();
                 let _ = self.expect_one(&Token::LeftParen)?;
-                let args = Parser::series_of(
-                    self,
-                    &|x| Parser::parse_type(x, for_const),
-                    Some(&Token::Comma),
-                )?;
+                let args =
+                    Parser::series_of(self, &|x| Parser::parse_type(x), Some(&Token::Comma))?;
                 let _ = self.expect_one(&Token::RightParen)?;
                 let (arr_s, arr_e) = self.expect_one(&Token::RArrow)?;
-                let retrn = self.parse_type(for_const)?;
+                let retrn = self.parse_type()?;
                 if let Some(retrn) = retrn {
                     Ok(Some(TypeAst::Fn {
                         location: SrcSpan {
@@ -1905,7 +1976,7 @@ where
             // Constructor function
             Some((start, Token::UpName { name }, end)) => {
                 let _ = self.next_tok();
-                self.parse_type_name_finish(for_const, start, None, name, end)
+                self.parse_type_name_finish(start, None, name, end)
             }
 
             // Constructor Module or type Variable
@@ -1913,9 +1984,7 @@ where
                 let _ = self.next_tok();
                 if self.maybe_one(&Token::Dot).is_some() {
                     let (_, upname, upname_e) = self.expect_upname()?;
-                    self.parse_type_name_finish(for_const, start, Some(mod_name), upname, upname_e)
-                } else if for_const {
-                    parse_error(ParseErrorType::NotConstType, SrcSpan { start, end })
+                    self.parse_type_name_finish(start, Some(mod_name), upname, upname_e)
                 } else {
                     Ok(Some(TypeAst::Var {
                         location: SrcSpan { start, end },
@@ -1934,14 +2003,13 @@ where
     // Parse the '( ... )' of a type name
     fn parse_type_name_finish(
         &mut self,
-        for_const: bool,
         start: u32,
         module: Option<SmolStr>,
         name: SmolStr,
         end: u32,
     ) -> Result<Option<TypeAst>, ParseError> {
         if self.maybe_one(&Token::LeftParen).is_some() {
-            let args = self.parse_types(for_const)?;
+            let args = self.parse_types()?;
             let (_, par_e) = self.expect_one(&Token::RightParen)?;
             Ok(Some(TypeAst::Constructor {
                 location: SrcSpan { start, end: par_e },
@@ -1960,12 +2028,8 @@ where
     }
 
     // For parsing a comma separated "list" of types, for tuple, constructor, and function
-    fn parse_types(&mut self, for_const: bool) -> Result<Vec<TypeAst>, ParseError> {
-        let elems = Parser::series_of(
-            self,
-            &|p| Parser::parse_type(p, for_const),
-            Some(&Token::Comma),
-        )?;
+    fn parse_types(&mut self) -> Result<Vec<TypeAst>, ParseError> {
+        let elems = Parser::series_of(self, &|p| Parser::parse_type(p), Some(&Token::Comma))?;
         Ok(elems)
     }
 
@@ -1978,7 +2042,7 @@ where
     //   import a/b
     //   import a/b.{c}
     //   import a/b.{c as d} as e
-    fn parse_import(&mut self) -> Result<Option<UntypedModuleStatement>, ParseError> {
+    fn parse_import(&mut self) -> Result<Option<UntypedDefinition>, ParseError> {
         let mut start = 0;
         let mut end;
         let mut module = String::new();
@@ -2029,7 +2093,7 @@ where
             end = e;
         }
 
-        Ok(Some(ModuleStatement::Import(Import {
+        Ok(Some(Definition::Import(Import {
             documentation,
             location: SrcSpan { start, end },
             unqualified,
@@ -2102,15 +2166,15 @@ where
     fn parse_module_const(
         &mut self,
         public: bool,
-    ) -> Result<Option<UntypedModuleStatement>, ParseError> {
+    ) -> Result<Option<UntypedDefinition>, ParseError> {
         let (start, name, end) = self.expect_name()?;
         let documentation = self.take_documentation(start);
 
-        let annotation = self.parse_type_annotation(&Token::Colon, true)?;
+        let annotation = self.parse_type_annotation(&Token::Colon)?;
 
         let (eq_s, eq_e) = self.expect_one(&Token::Equal)?;
         if let Some(value) = self.parse_const_value()? {
-            Ok(Some(ModuleStatement::ModuleConstant(ModuleConstant {
+            Ok(Some(Definition::ModuleConstant(ModuleConstant {
                 documentation,
                 location: SrcSpan { start, end },
                 public,
@@ -2755,6 +2819,62 @@ where
             None
         } else {
             Some(content.into())
+        }
+    }
+
+    fn parse_attributes(&mut self, attributes: &mut Attributes) -> Result<(), ParseError> {
+        while let Some((start, _)) = self.maybe_one(&Token::At) {
+            self.parse_attribute(start, attributes)?;
+        }
+        Ok(())
+    }
+
+    fn parse_attribute(
+        &mut self,
+        start: u32,
+        attributes: &mut Attributes,
+    ) -> Result<(), ParseError> {
+        let duplicate_attribute_error =
+            |end| parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
+
+        // Parse the name of the attribute. Later this will be a name token, but
+        // for now we parse `external`, which is currently a keyword.
+        let (_, end) = self.expect_one(&Token::External)?;
+
+        // And now we parse the arguments to the attribute.
+        let _ = self.expect_one(&Token::LeftParen)?;
+        let (_, name, _) = self.expect_name()?;
+
+        match name.as_str() {
+            "erlang" => {
+                let _ = self.expect_one(&Token::Comma)?;
+                let (_, module, _) = self.expect_string()?;
+                let _ = self.expect_one(&Token::Comma)?;
+                let (_, function, _) = self.expect_string()?;
+                let _ = self.maybe_one(&Token::Comma);
+                let (_, end) = self.expect_one(&Token::RightParen)?;
+                if attributes.external_erlang.is_some() {
+                    return duplicate_attribute_error(end);
+                }
+                attributes.external_erlang = Some((module, function));
+                Ok(())
+            }
+
+            "javascript" => {
+                let _ = self.expect_one(&Token::Comma)?;
+                let (_, module, _) = self.expect_string()?;
+                let _ = self.expect_one(&Token::Comma)?;
+                let (_, function, _) = self.expect_string()?;
+                let _ = self.maybe_one(&Token::Comma);
+                let _ = self.expect_one(&Token::RightParen)?;
+                if attributes.external_javascript.is_some() {
+                    return duplicate_attribute_error(end);
+                }
+                attributes.external_javascript = Some((module, function));
+                Ok(())
+            }
+
+            _ => parse_error(ParseErrorType::UnknownAttribute, SrcSpan::new(start, end)),
         }
     }
 }

@@ -2,10 +2,8 @@
 mod tests;
 
 use crate::{
-    ast::{
-        CustomType, ExternalFunction, ExternalType, Function, Import, ModuleConstant, TypeAlias,
-        Use, *,
-    },
+    ast::{CustomType, ExternalFunction, Function, Import, ModuleConstant, TypeAlias, Use, *},
+    build::Target,
     docvec,
     io::Utf8Writer,
     parse::extra::{Comment, ModuleExtra},
@@ -21,14 +19,14 @@ use vec1::Vec1;
 const INDENT: isize = 2;
 
 pub fn pretty(writer: &mut impl Utf8Writer, src: &SmolStr, path: &Path) -> Result<()> {
-    let (module, extra) = crate::parse::parse_module(src).map_err(|error| Error::Parse {
+    let parsed = crate::parse::parse_module(src).map_err(|error| Error::Parse {
         path: path.to_path_buf(),
         src: src.clone(),
         error,
     })?;
-    let intermediate = Intermediate::from_extra(&extra, src);
+    let intermediate = Intermediate::from_extra(&parsed.extra, src);
     Formatter::with_comments(&intermediate)
-        .module(&module)
+        .module(&parsed.module)
         .pretty_print(80, writer)
 }
 
@@ -130,60 +128,42 @@ impl<'comments> Formatter<'comments> {
         end != 0
     }
 
-    fn target_group<'a>(&mut self, target_group: &'a TargetGroup) -> Document<'a> {
-        let mut has_imports = false;
-        let mut has_declarations = false;
-        let mut imports = Vec::new();
-        let mut declarations = Vec::with_capacity(target_group.len());
-
-        for statement in target_group.statements_ref() {
-            let start = statement.location().start;
-            match statement {
-                ModuleStatement::Import(Import { .. }) => {
-                    has_imports = true;
-                    let comments = self.pop_comments(start);
-                    let statement = self.module_statement(statement);
-                    imports.push(commented(statement, comments))
-                }
-
-                _other => {
-                    has_declarations = true;
-                    let comments = self.pop_comments(start);
-                    let declaration = self.documented_statement(statement);
-                    declarations.push(commented(declaration, comments))
-                }
-            }
-        }
-
-        let imports = join(imports.into_iter(), line());
-        let declarations = join(declarations.into_iter(), lines(2));
-
-        let sep = if has_imports && has_declarations {
-            lines(2)
-        } else {
-            nil()
+    fn targetted_definition<'a>(&mut self, definition: &'a TargettedDefinition) -> Document<'a> {
+        let target = definition.target();
+        let definition = definition.inner();
+        let start = definition.location().start;
+        let comments = self.pop_comments(start);
+        let document = self.documented_definition(definition);
+        let document = match target {
+            None => document,
+            Some(Target::Erlang) => docvec!["@target(erlang)", line(), document],
+            Some(Target::JavaScript) => docvec!["@target(javascript)", line(), document],
         };
-
-        match target_group {
-            TargetGroup::Any(_) => docvec![imports, sep, declarations],
-            TargetGroup::Only(target, _) => docvec![
-                "if ",
-                Document::String(target.to_string()),
-                " {",
-                docvec![line(), imports, sep, declarations].nest(INDENT),
-                line(),
-                "}"
-            ],
-        }
+        commented(document, comments)
     }
 
     pub(crate) fn module<'a>(&mut self, module: &'a UntypedModule) -> Document<'a> {
-        let groups = join(
-            module.statements.iter().map(|t| self.target_group(t)),
-            lines(2),
-        );
+        let mut documents = vec![];
+        let mut previous_was_import = false;
 
-        // Now that `groups` has been collected, only freestanding comments (//)
+        for definition in &module.definitions {
+            let is_import = definition.inner().is_import();
+
+            if documents.is_empty() {
+                // We don't insert empty lines before the first definition
+            } else if previous_was_import && is_import {
+                documents.push(lines(1));
+            } else {
+                documents.push(lines(2));
+            };
+
+            documents.push(self.targetted_definition(definition));
+            previous_was_import = is_import;
+        }
+
+        let definitions = concat(documents);
+
+        // Now that definitions has been collected, only freestanding comments (//)
         // and doc comments (///) remain. Freestanding comments aren't associated
         // with any statement, and are moved to the bottom of the module.
         let doc_comments = join(
@@ -211,26 +191,18 @@ impl<'comments> Formatter<'comments> {
             nil()
         };
 
-        let non_empty = vec![module_comments, groups, doc_comments, comments]
+        let non_empty = vec![module_comments, definitions, doc_comments, comments]
             .into_iter()
             .filter(|doc| !doc.is_empty());
 
         join(non_empty, line()).append(line())
     }
 
-    fn module_statement<'a>(&mut self, statement: &'a UntypedModuleStatement) -> Document<'a> {
+    fn definition<'a>(&mut self, statement: &'a UntypedDefinition) -> Document<'a> {
         match statement {
-            ModuleStatement::Function(Function {
-                name,
-                arguments: args,
-                body,
-                public,
-                return_annotation,
-                end_position,
-                ..
-            }) => self.statement_fn(public, name, args, return_annotation, body, *end_position),
+            Definition::Function(function) => self.statement_fn(function),
 
-            ModuleStatement::TypeAlias(TypeAlias {
+            Definition::TypeAlias(TypeAlias {
                 alias,
                 parameters: args,
                 type_ast: resolved_type,
@@ -238,7 +210,7 @@ impl<'comments> Formatter<'comments> {
                 ..
             }) => self.type_alias(*public, alias, args, resolved_type),
 
-            ModuleStatement::CustomType(CustomType {
+            Definition::CustomType(CustomType {
                 name,
                 parameters,
                 public,
@@ -248,7 +220,7 @@ impl<'comments> Formatter<'comments> {
                 ..
             }) => self.custom_type(*public, *opaque, name, parameters, constructors, location),
 
-            ModuleStatement::ExternalFunction(ExternalFunction {
+            Definition::ExternalFunction(ExternalFunction {
                 public,
                 arguments: args,
                 name,
@@ -266,14 +238,7 @@ impl<'comments> Formatter<'comments> {
                 .append(fun.as_str())
                 .append("\""),
 
-            ModuleStatement::ExternalType(ExternalType {
-                public,
-                name,
-                arguments: args,
-                ..
-            }) => self.external_type(*public, name, args),
-
-            ModuleStatement::Import(Import {
+            Definition::Import(Import {
                 module,
                 as_name,
                 unqualified,
@@ -304,7 +269,7 @@ impl<'comments> Formatter<'comments> {
                     nil()
                 }),
 
-            ModuleStatement::ModuleConstant(ModuleConstant {
+            Definition::ModuleConstant(ModuleConstant {
                 public,
                 name,
                 annotation,
@@ -428,9 +393,9 @@ impl<'comments> Formatter<'comments> {
             .append(self.const_expr(value))
     }
 
-    fn documented_statement<'a>(&mut self, s: &'a UntypedModuleStatement) -> Document<'a> {
+    fn documented_definition<'a>(&mut self, s: &'a UntypedDefinition) -> Document<'a> {
         let comments = self.doc_comments(s.location().start);
-        comments.append(self.module_statement(s).group()).group()
+        comments.append(self.definition(s).group()).group()
     }
 
     fn doc_comments<'a>(&mut self, limit: u32) -> Document<'a> {
@@ -529,33 +494,46 @@ impl<'comments> Formatter<'comments> {
         commented(doc, comments)
     }
 
-    fn statement_fn<'a>(
-        &mut self,
-        public: &'a bool,
-        name: &'a str,
-        args: &'a [UntypedArg],
-        return_annotation: &'a Option<TypeAst>,
-        body: &'a Vec1<UntypedStatement>,
-        end_location: u32,
-    ) -> Document<'a> {
+    fn statement_fn<'a>(&mut self, function: &'a Function<(), UntypedExpr>) -> Document<'a> {
+        let doc = docvec![];
+
+        // Attributes
+        let external = |t: &'static str, m: &'a str, f: &'a str| {
+            docvec!["@external(", t, ", \"", m, "\", \"", f, "\")", line()]
+        };
+        let doc = match function.external_erlang.as_ref() {
+            Some((m, f)) => doc.append(external("erlang", m, f)),
+            None => doc,
+        };
+        let doc = match function.external_javascript.as_ref() {
+            Some((m, f)) => doc.append(external("javascript", m, f)),
+            None => doc,
+        };
+
         // Fn name and args
-        let head = pub_(*public)
+        let head = doc
+            .append(pub_(function.public))
             .append("fn ")
-            .append(name)
-            .append(wrap_args(args.iter().map(|e| self.fn_arg(e))));
+            .append(&function.name)
+            .append(wrap_args(function.arguments.iter().map(|e| self.fn_arg(e))));
 
         // Add return annotation
-        let head = match return_annotation {
+        let head = match &function.return_annotation {
             Some(anno) => head.append(" -> ").append(self.type_ast(anno)),
             None => head,
         }
         .group();
 
+        let body = &function.body;
+        if body.len() == 1 && body.first().is_placeholder() {
+            return head;
+        }
+
         // Format body
         let body = self.statements(body);
 
         // Add any trailing comments
-        let body = match printed_comments(self.pop_comments(end_location), false) {
+        let body = match printed_comments(self.pop_comments(function.end_position), false) {
             Some(comments) => body.append(line()).append(comments),
             None => body,
         };
@@ -657,6 +635,8 @@ impl<'comments> Formatter<'comments> {
         let comments = self.pop_comments(expr.start_byte_index());
 
         let document = match expr {
+            UntypedExpr::Placeholder { .. } => panic!("Placeholders should not be formatted"),
+
             UntypedExpr::Panic { .. } => "panic".to_doc(),
 
             UntypedExpr::Todo { label: None, .. } => "todo".to_doc(),
@@ -865,6 +845,8 @@ impl<'comments> Formatter<'comments> {
 
     fn call<'a>(&mut self, fun: &'a UntypedExpr, args: &'a [CallArg<UntypedExpr>]) -> Document<'a> {
         let expr = match fun {
+            UntypedExpr::Placeholder { .. } => panic!("Placeholders should not be formatted"),
+
             UntypedExpr::PipeLine { .. } => break_block(self.expr(fun)),
 
             UntypedExpr::BinOp { .. }
@@ -1115,7 +1097,7 @@ impl<'comments> Formatter<'comments> {
         location: &'a SrcSpan,
     ) -> Document<'a> {
         let _ = self.pop_empty_lines(location.start);
-        pub_(public)
+        let doc = pub_(public)
             .to_doc()
             .append(if opaque { "opaque type " } else { "type " })
             .append(if args.is_empty() {
@@ -1124,8 +1106,13 @@ impl<'comments> Formatter<'comments> {
                 name.to_doc()
                     .append(wrap_args(args.iter().map(|e| e.to_doc())))
                     .group()
-            })
-            .append(" {")
+            });
+
+        if constructors.is_empty() {
+            return doc;
+        }
+
+        doc.append(" {")
             .append(concat(constructors.iter().map(|c| {
                 if self.pop_empty_lines(c.location.start) {
                     lines(2)
@@ -1288,22 +1275,6 @@ impl<'comments> Formatter<'comments> {
         }
         .append(" ->")
         .append(self.case_clause_value(&clause.then))
-    }
-
-    pub fn external_type<'a>(
-        &mut self,
-        public: bool,
-        name: &'a str,
-        args: &'a [SmolStr],
-    ) -> Document<'a> {
-        pub_(public)
-            .append("external type ")
-            .append(name)
-            .append(if args.is_empty() {
-                nil()
-            } else {
-                wrap_args(args.iter().map(|e| e.to_doc()))
-            })
     }
 
     fn list<'a>(
@@ -1568,6 +1539,8 @@ impl<'comments> Formatter<'comments> {
 
     fn bit_string_segment_expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
         match expr {
+            UntypedExpr::Placeholder { .. } => panic!("Placeholders should not be formatted"),
+
             UntypedExpr::BinOp { .. } => wrap_block(self.expr(expr)),
 
             UntypedExpr::Int { .. }
@@ -1752,9 +1725,10 @@ fn printed_comments<'a, 'comments>(
 
     let mut doc = Vec::new();
     while let Some(c) = comments.next() {
-        // There will never be consecutive empty lines (None values),
-        // and whenever we peek a None, we advance past it.
-        let c = c.expect("no consecutive empty lines");
+        let c = match c {
+            Some(c) => c,
+            None => continue,
+        };
         doc.push("//".to_doc().append(Document::String(c.to_string())));
         match comments.peek() {
             // Next line is a comment

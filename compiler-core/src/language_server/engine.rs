@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Import, ModuleStatement, TypedExpr, TypedModuleStatement, TypedPattern},
+    ast::{Definition, Import, TypedDefinition, TypedExpr, TypedPattern},
     build::{Located, Module},
     config::PackageConfig,
     io::{CommandExecutor, FileSystemReader, FileSystemWriter},
@@ -195,7 +195,7 @@ where
                     Some(this.completion_values(module))
                 }
 
-                Located::ModuleStatement(ModuleStatement::Function(function)) => {
+                Located::ModuleStatement(Definition::Function(function)) => {
                     // The location of a function refers to the head, not the body
                     if function.location.contains(byte_index) {
                         Some(this.completion_types(module))
@@ -205,16 +205,14 @@ where
                 }
 
                 Located::ModuleStatement(
-                    ModuleStatement::ExternalFunction(_)
-                    | ModuleStatement::TypeAlias(_)
-                    | ModuleStatement::CustomType(_),
+                    Definition::ExternalFunction(_)
+                    | Definition::TypeAlias(_)
+                    | Definition::CustomType(_),
                 ) => Some(this.completion_types(module)),
 
-                Located::ModuleStatement(
-                    ModuleStatement::Import(_)
-                    | ModuleStatement::ExternalType(_)
-                    | ModuleStatement::ModuleConstant(_),
-                ) => None,
+                Located::ModuleStatement(Definition::Import(_) | Definition::ModuleConstant(_)) => {
+                    None
+                }
             };
 
             Ok(completions)
@@ -320,7 +318,7 @@ where
         }
 
         // Imported modules
-        for import in module.ast.statements.iter().filter_map(get_import) {
+        for import in module.ast.definitions.iter().filter_map(get_import) {
             let alias = import.used_name();
 
             // The module may not be known of yet if it has not previously
@@ -359,7 +357,7 @@ where
         }
 
         // Imported modules
-        for import in module.ast.statements.iter().filter_map(get_import) {
+        for import in module.ast.definitions.iter().filter_map(get_import) {
             let alias = import.used_name();
 
             // The module may not be known of yet if it has not previously
@@ -450,9 +448,9 @@ fn value_completion(
     }
 }
 
-fn get_import(statement: &TypedModuleStatement) -> Option<&Import<SmolStr>> {
+fn get_import(statement: &TypedDefinition) -> Option<&Import<SmolStr>> {
     match statement {
-        ModuleStatement::Import(import) => Some(import),
+        Definition::Import(import) => Some(import),
         _ => None,
     }
 }

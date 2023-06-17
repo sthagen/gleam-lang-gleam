@@ -9,9 +9,7 @@ use std::path::Path;
 
 use crate::type_::PRELUDE_MODULE_NAME;
 use crate::{
-    ast::{
-        CustomType, ExternalFunction, ExternalType, Function, Import, ModuleConstant, TypeAlias, *,
-    },
+    ast::{CustomType, ExternalFunction, Function, Import, ModuleConstant, TypeAlias, *},
     docvec,
     line_numbers::LineNumbers,
     pretty::*,
@@ -61,7 +59,7 @@ impl<'a> Generator<'a> {
         // Generate JavaScript code for each statement
         let statements = self.collect_definitions().into_iter().chain(
             self.module
-                .statements
+                .definitions
                 .iter()
                 .flat_map(|s| self.statement(s)),
         );
@@ -156,33 +154,33 @@ impl<'a> Generator<'a> {
         imports.register_module(path, [], [member]);
     }
 
-    pub fn statement(&mut self, statement: &'a TypedModuleStatement) -> Vec<Output<'a>> {
+    pub fn statement(&mut self, statement: &'a TypedDefinition) -> Vec<Output<'a>> {
         match statement {
-            ModuleStatement::TypeAlias(TypeAlias { .. })
-            | ModuleStatement::ExternalType(ExternalType { .. }) => vec![],
+            Definition::TypeAlias(TypeAlias { .. }) => vec![],
 
             // Handled in collect_imports
-            ModuleStatement::Import(Import { .. }) => vec![],
+            Definition::Import(Import { .. }) => vec![],
 
             // Handled in collect_definitions
-            ModuleStatement::CustomType(CustomType { .. }) => vec![],
+            Definition::CustomType(CustomType { .. }) => vec![],
 
-            ModuleStatement::ModuleConstant(ModuleConstant {
+            Definition::ModuleConstant(ModuleConstant {
                 public,
                 name,
                 value,
                 ..
             }) => vec![self.module_constant(*public, name, value)],
 
-            ModuleStatement::Function(Function {
+            Definition::Function(Function {
                 arguments,
                 name,
                 body,
                 public,
+                external_javascript: None,
                 ..
             }) => vec![self.module_function(*public, name, arguments, body)],
 
-            ModuleStatement::ExternalFunction(ExternalFunction {
+            Definition::ExternalFunction(ExternalFunction {
                 public,
                 name,
                 arguments,
@@ -193,7 +191,7 @@ impl<'a> Generator<'a> {
                 self.global_external_function(*public, name, arguments, fun)
             )],
 
-            ModuleStatement::ExternalFunction(ExternalFunction { .. }) => vec![],
+            Definition::Function(_) | Definition::ExternalFunction(_) => vec![],
         }
     }
 
@@ -203,6 +201,11 @@ impl<'a> Generator<'a> {
         public: bool,
         opaque: bool,
     ) -> Vec<Output<'a>> {
+        // If there's no constructors then there's nothing to do here.
+        if constructors.is_empty() {
+            return vec![];
+        }
+
         self.tracker.custom_type_used = true;
         constructors
             .iter()
@@ -266,22 +269,21 @@ impl<'a> Generator<'a> {
 
     fn collect_definitions(&mut self) -> Vec<Output<'a>> {
         self.module
-            .statements
+            .definitions
             .iter()
             .flat_map(|statement| match statement {
-                ModuleStatement::CustomType(CustomType {
+                Definition::CustomType(CustomType {
                     public,
                     constructors,
                     opaque,
                     ..
                 }) => self.custom_type_definition(constructors, *public, *opaque),
 
-                ModuleStatement::Function(Function { .. })
-                | ModuleStatement::TypeAlias(TypeAlias { .. })
-                | ModuleStatement::ExternalFunction(ExternalFunction { .. })
-                | ModuleStatement::ExternalType(ExternalType { .. })
-                | ModuleStatement::Import(Import { .. })
-                | ModuleStatement::ModuleConstant(ModuleConstant { .. }) => vec![],
+                Definition::Function(Function { .. })
+                | Definition::TypeAlias(TypeAlias { .. })
+                | Definition::ExternalFunction(ExternalFunction { .. })
+                | Definition::Import(Import { .. })
+                | Definition::ModuleConstant(ModuleConstant { .. }) => vec![],
             })
             .collect()
     }
@@ -289,17 +291,12 @@ impl<'a> Generator<'a> {
     fn collect_imports(&mut self) -> Imports<'a> {
         let mut imports = Imports::new();
 
-        for statement in &self.module.statements {
+        for statement in &self.module.definitions {
             match statement {
-                ModuleStatement::Function(Function { .. })
-                | ModuleStatement::TypeAlias(TypeAlias { .. })
-                | ModuleStatement::CustomType(CustomType { .. })
-                | ModuleStatement::ExternalType(ExternalType { .. })
-                | ModuleStatement::ModuleConstant(ModuleConstant { .. }) => (),
-                ModuleStatement::ExternalFunction(ExternalFunction { module, .. })
+                Definition::ExternalFunction(ExternalFunction { module, .. })
                     if module.is_empty() => {}
 
-                ModuleStatement::ExternalFunction(ExternalFunction {
+                Definition::ExternalFunction(ExternalFunction {
                     public,
                     name,
                     module,
@@ -307,7 +304,7 @@ impl<'a> Generator<'a> {
                     ..
                 }) => self.register_external_function(&mut imports, *public, name, module, fun),
 
-                ModuleStatement::Import(Import {
+                Definition::Import(Import {
                     module,
                     as_name,
                     unqualified,
@@ -316,6 +313,20 @@ impl<'a> Generator<'a> {
                 }) => {
                     self.register_import(&mut imports, package, module, as_name, unqualified);
                 }
+
+                Definition::Function(Function {
+                    name,
+                    public,
+                    external_javascript: Some((module, function)),
+                    ..
+                }) => {
+                    self.register_external_function(&mut imports, *public, name, module, function);
+                }
+
+                Definition::Function(Function { .. })
+                | Definition::TypeAlias(TypeAlias { .. })
+                | Definition::CustomType(CustomType { .. })
+                | Definition::ModuleConstant(ModuleConstant { .. }) => (),
             }
         }
 
@@ -478,19 +489,18 @@ impl<'a> Generator<'a> {
     }
 
     fn register_module_definitions_in_scope(&mut self) {
-        for statement in self.module.statements.iter() {
+        for statement in self.module.definitions.iter() {
             match statement {
-                ModuleStatement::ExternalFunction(ExternalFunction { name, .. })
-                | ModuleStatement::ModuleConstant(ModuleConstant { name, .. })
-                | ModuleStatement::Function(Function { name, .. }) => self.register_in_scope(name),
+                Definition::ExternalFunction(ExternalFunction { name, .. })
+                | Definition::ModuleConstant(ModuleConstant { name, .. })
+                | Definition::Function(Function { name, .. }) => self.register_in_scope(name),
 
-                ModuleStatement::Import(Import { unqualified, .. }) => unqualified
+                Definition::Import(Import { unqualified, .. }) => unqualified
                     .iter()
                     .for_each(|unq_import| self.register_in_scope(unq_import.variable_name())),
 
-                ModuleStatement::TypeAlias(TypeAlias { .. })
-                | ModuleStatement::CustomType(CustomType { .. })
-                | ModuleStatement::ExternalType(ExternalType { .. }) => (),
+                Definition::TypeAlias(TypeAlias { .. })
+                | Definition::CustomType(CustomType { .. }) => (),
             }
         }
     }

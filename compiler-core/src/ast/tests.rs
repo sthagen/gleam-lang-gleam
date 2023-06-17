@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::build::Target;
 use crate::type_::PRELUDE_MODULE_NAME;
 use crate::{
     ast::{SrcSpan, TypedExpr},
@@ -16,7 +17,8 @@ use super::{Statement, TypedModule, TypedStatement};
 
 fn compile_module(src: &str) -> TypedModule {
     use crate::type_::build_prelude;
-    let (ast, _) = crate::parse::parse_module(src).expect("syntax error");
+    let parsed = crate::parse::parse_module(src).expect("syntax error");
+    let ast = parsed.module;
     let ids = UniqueIdGenerator::new();
     let mut modules = im::HashMap::new();
     // DUPE: preludeinsertion
@@ -25,7 +27,7 @@ fn compile_module(src: &str) -> TypedModule {
     // place.
     let _ = modules.insert(PRELUDE_MODULE_NAME.into(), build_prelude(&ids));
     crate::analyse::infer_module(
-        crate::build::Target::Erlang,
+        Target::Erlang,
         &ids,
         ast,
         crate::build::Origin::Src,
@@ -56,7 +58,7 @@ fn compile_expression(src: &str) -> TypedStatement {
     // place.
     let _ = modules.insert(PRELUDE_MODULE_NAME.into(), type_::build_prelude(&ids));
     let emitter = TypeWarningEmitter::null();
-    let mut environment = Environment::new(ids, "mymod", &modules, &emitter);
+    let mut environment = Environment::new(ids, "mymod", Target::Erlang, &modules, &emitter);
 
     // Insert a cat record to use in the tests
     let cat_type = Arc::new(Type::App {

@@ -1,4 +1,4 @@
-use crate::assert_erl;
+use crate::{assert_erl, assert_module_error};
 
 #[test]
 fn integration_test1_3() {
@@ -74,5 +74,133 @@ pub fn main() {
   make(\"ok\")
 }
 "
+    );
+}
+
+#[test]
+fn attribute_erlang() {
+    assert_erl!(
+        r#"
+@external(erlang, "one", "one")
+pub fn one(x: Int) -> Int {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn attribute_javascript() {
+    assert_erl!(
+        r#"
+@external(javascript, "./one.mjs", "one")
+pub fn one(x: Int) -> Int {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn erlang_and_javascript() {
+    assert_erl!(
+        r#"
+@external(erlang, "one", "one")
+@external(javascript, "./one.mjs", "one")
+pub fn one(x: Int) -> Int {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn no_type_annotation_for_parameter() {
+    assert_module_error!(
+        r#"
+@external(erlang, "one", "one")
+pub fn one(x: Int, y) -> Int {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn no_type_annotation_for_return() {
+    assert_module_error!(
+        r#"
+@external(erlang, "one", "one")
+pub fn one(x: Int) {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn hole_parameter_erlang() {
+    assert_module_error!(
+        r#"
+@external(erlang, "one", "one")
+pub fn one(x: List(_)) -> Int {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn hole_return_erlang() {
+    assert_module_error!(
+        r#"
+@external(erlang, "one", "one")
+pub fn one(x: List(Int)) -> List(_) {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn hole_parameter_javascript() {
+    assert_module_error!(
+        r#"
+@external(javascript, "one", "one")
+pub fn one(x: List(_)) -> Int {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn hole_return_javascript() {
+    assert_module_error!(
+        r#"
+@external(javascript, "one", "one")
+pub fn one(x: List(Int)) -> List(_) {
+  todo
+}
+"#
+    );
+}
+
+#[test]
+fn no_body() {
+    assert_erl!(
+        r#"
+@external(erlang, "one", "one")
+pub fn one(x: Int) -> Int
+"#
+    );
+}
+
+#[test]
+fn no_body_or_implementation() {
+    assert_module_error!(
+        r#"
+pub fn one(x: Int) -> Int
+"#
     );
 }

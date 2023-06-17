@@ -257,6 +257,26 @@ pub enum Error {
         location: SrcSpan,
         cycle: Vec<SmolStr>,
     },
+
+    /// A function has been given an external implementation but not all the
+    /// type annotations have been given. The annotations are required as we
+    /// cannot infer the types of external implementations.
+    ExternalMissingAnnotation {
+        location: SrcSpan,
+        kind: MissingAnnotation,
+    },
+
+    // A function has been given without either a Gleam implementation or an
+    // external one.
+    NoImplementation {
+        location: SrcSpan,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingAnnotation {
+    Parameter,
+    Return,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

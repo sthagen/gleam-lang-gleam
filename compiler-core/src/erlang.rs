@@ -8,9 +8,7 @@ mod tests;
 
 use crate::type_::is_prelude_module;
 use crate::{
-    ast::{
-        CustomType, ExternalFunction, ExternalType, Function, Import, ModuleConstant, TypeAlias, *,
-    },
+    ast::{CustomType, ExternalFunction, Function, Import, ModuleConstant, TypeAlias, *},
     docvec,
     line_numbers::LineNumbers,
     pretty::*,
@@ -87,10 +85,10 @@ impl<'env> Env<'env> {
 
 pub fn records(module: &TypedModule) -> Vec<(&str, String)> {
     module
-        .statements
+        .definitions
         .iter()
         .filter_map(|s| match s {
-            ModuleStatement::CustomType(CustomType {
+            Definition::CustomType(CustomType {
                 public: true,
                 constructors,
                 ..
@@ -162,7 +160,7 @@ fn module_document<'a>(
         .append(").")
         .append(line());
 
-    for s in &module.statements {
+    for s in &module.definitions {
         register_imports(
             s,
             &mut exports,
@@ -218,7 +216,7 @@ fn module_document<'a>(
 
     let statements = concat(Itertools::intersperse(
         module
-            .statements
+            .definitions
             .iter()
             .flat_map(|s| module_statement(&module.name, s, &module.name, line_numbers)),
         lines(2),
@@ -234,66 +232,28 @@ fn module_document<'a>(
 }
 
 fn register_imports(
-    s: &TypedModuleStatement,
+    s: &TypedDefinition,
     exports: &mut Vec<Document<'_>>,
     type_exports: &mut Vec<Document<'_>>,
     type_defs: &mut Vec<Document<'_>>,
     module_name: &str,
 ) {
     match s {
-        ModuleStatement::Function(Function {
+        Definition::Function(Function {
             public: true,
             name,
             arguments: args,
             ..
         }) => exports.push(atom(name.to_string()).append("/").append(args.len())),
 
-        ModuleStatement::ExternalFunction(ExternalFunction {
+        Definition::ExternalFunction(ExternalFunction {
             public: true,
             name,
             arguments: args,
             ..
         }) => exports.push(atom(name.to_string()).append("/").append(args.len())),
 
-        ModuleStatement::ExternalType(ExternalType {
-            name,
-            arguments: args,
-            ..
-        }) => {
-            // Type Exports
-            type_exports.push(
-                Document::String(erl_safe_type_name(name.to_snake_case()))
-                    .append("/")
-                    .append(args.len()),
-            );
-            // phantom variant
-            let phantom = if args.is_empty() {
-                nil()
-            } else {
-                " | ".to_doc().append(tuple(
-                    std::iter::once("gleam_phantom".to_doc())
-                        .chain(args.iter().map(|a| Document::String(variable_name(a)))),
-                ))
-            };
-
-            // Type definition
-            let args = concat(Itertools::intersperse(
-                args.iter().map(|p| Document::String(variable_name(p))),
-                ", ".to_doc(),
-            ));
-
-            let doc = "-type "
-                .to_doc()
-                .append(Document::String(erl_safe_type_name(name.to_snake_case())))
-                .append("(")
-                .append(args)
-                .append(") :: any()")
-                .append(phantom)
-                .append(".");
-            type_defs.push(doc);
-        }
-
-        ModuleStatement::CustomType(CustomType {
+        Definition::CustomType(CustomType {
             name,
             constructors,
             typed_parameters,
@@ -314,6 +274,7 @@ fn register_imports(
             let phantom_vars: Vec<_> = type_var_usages
                 .keys()
                 .filter(|&id| !constructor_var_usages.contains_key(id))
+                .sorted()
                 .map(|&id| Type::Var {
                     type_: Arc::new(std::cell::RefCell::new(TypeVar::Generic { id })),
                 })
@@ -334,8 +295,12 @@ fn register_imports(
                     .append(typed_parameters.len()),
             );
             // Type definitions
-            let constructors = concat(Itertools::intersperse(
-                constructors
+            let definition = if constructors.is_empty() {
+                let constructors =
+                    std::iter::once("any()".to_doc()).chain(phantom_vars_constructor);
+                concat(Itertools::intersperse(constructors, break_(" |", " | ")))
+            } else {
+                let constructors = constructors
                     .iter()
                     .map(|c| {
                         let name = atom(c.name.to_snake_case());
@@ -347,12 +312,10 @@ fn register_imports(
                             tuple(std::iter::once(name).chain(args))
                         }
                     })
-                    .chain(phantom_vars_constructor),
-                break_(" |", " | "),
-            ))
-            .nest(INDENT)
-            .group()
-            .append(".");
+                    .chain(phantom_vars_constructor);
+                concat(Itertools::intersperse(constructors, break_(" |", " | ")))
+            }
+            .nest(INDENT);
             let type_printer = TypePrinter::new(module_name);
             let params = concat(Itertools::intersperse(
                 typed_parameters.iter().map(|a| type_printer.print(a)),
@@ -364,41 +327,36 @@ fn register_imports(
                 .append("(")
                 .append(params)
                 .append(") :: ")
-                .append(constructors);
+                .append(definition)
+                .group()
+                .append(".");
             type_defs.push(doc);
         }
 
-        ModuleStatement::Function(Function { .. })
-        | ModuleStatement::Import(Import { .. })
-        | ModuleStatement::TypeAlias(TypeAlias { .. })
-        | ModuleStatement::ExternalFunction(ExternalFunction { .. })
-        | ModuleStatement::ModuleConstant(ModuleConstant { .. }) => (),
+        Definition::Function(Function { .. })
+        | Definition::Import(Import { .. })
+        | Definition::TypeAlias(TypeAlias { .. })
+        | Definition::ExternalFunction(ExternalFunction { .. })
+        | Definition::ModuleConstant(ModuleConstant { .. }) => (),
     }
 }
 
 fn module_statement<'a>(
     current_module: &'a str,
-    statement: &'a TypedModuleStatement,
+    statement: &'a TypedDefinition,
     module: &'a str,
     line_numbers: &'a LineNumbers,
 ) -> Vec<Document<'a>> {
     match statement {
-        ModuleStatement::TypeAlias(TypeAlias { .. })
-        | ModuleStatement::CustomType(CustomType { .. })
-        | ModuleStatement::Import(Import { .. })
-        | ModuleStatement::ExternalType(ExternalType { .. })
-        | ModuleStatement::ModuleConstant(ModuleConstant { .. })
-        | ModuleStatement::ExternalFunction(ExternalFunction { public: false, .. }) => vec![],
+        Definition::TypeAlias(TypeAlias { .. })
+        | Definition::CustomType(CustomType { .. })
+        | Definition::Import(Import { .. })
+        | Definition::ModuleConstant(ModuleConstant { .. })
+        | Definition::ExternalFunction(ExternalFunction { public: false, .. }) => vec![],
 
-        ModuleStatement::Function(Function {
-            arguments: args,
-            name,
-            body,
-            return_type,
-            ..
-        }) => vec![mod_fun(name, args, body, module, return_type, line_numbers)],
+        Definition::Function(function) => vec![module_function(function, module, line_numbers)],
 
-        ModuleStatement::ExternalFunction(ExternalFunction {
+        Definition::ExternalFunction(ExternalFunction {
             fun,
             module,
             arguments: args,
@@ -416,33 +374,35 @@ fn module_statement<'a>(
     }
 }
 
-fn mod_fun<'a>(
-    name: &'a str,
-    args: &'a [TypedArg],
-    body: &'a [TypedStatement],
+fn module_function<'a>(
+    function: &'a TypedFunction,
     module: &'a str,
-    return_type: &'a Arc<Type>,
     line_numbers: &'a LineNumbers,
 ) -> Document<'a> {
-    let mut env = Env::new(module, name, line_numbers);
+    let mut env = Env::new(module, &function.name, line_numbers);
     let var_usages = collect_type_var_usages(
         HashMap::new(),
-        std::iter::once(return_type).chain(args.iter().map(|a| &a.type_)),
+        std::iter::once(&function.return_type).chain(function.arguments.iter().map(|a| &a.type_)),
     );
     let type_printer = TypePrinter::new(module).with_var_usages(&var_usages);
-    let args_spec = args.iter().map(|a| type_printer.print(&a.type_));
-    let return_spec = type_printer.print(return_type);
-    let spec = fun_spec(name, args_spec, return_spec);
+    let args_spec = function
+        .arguments
+        .iter()
+        .map(|a| type_printer.print(&a.type_));
+    let return_spec = type_printer.print(&function.return_type);
+    let spec = fun_spec(&function.name, args_spec, return_spec);
+    let arguments = fun_args(&function.arguments, &mut env);
 
-    spec.append(atom(name.to_string()))
-        .append(fun_args(args, &mut env))
+    let body = function
+        .external_erlang
+        .as_ref()
+        .map(|(module, function)| docvec![module, ":", function, arguments.clone()])
+        .unwrap_or_else(|| statement_sequence(&function.body, &mut env));
+
+    spec.append(atom(function.name.to_string()))
+        .append(arguments)
         .append(" ->")
-        .append(
-            line()
-                .append(statement_sequence(body, &mut env))
-                .nest(INDENT)
-                .group(),
-        )
+        .append(line().append(body).nest(INDENT).group())
         .append(".")
 }
 
@@ -1359,9 +1319,10 @@ fn docs_args_call<'a>(
             }
         }
 
-        TypedExpr::Call { .. }
-        | TypedExpr::Fn { .. }
+        TypedExpr::Fn { .. }
+        | TypedExpr::Call { .. }
         | TypedExpr::Todo { .. }
+        | TypedExpr::Panic { .. }
         | TypedExpr::RecordAccess { .. }
         | TypedExpr::TupleIndex { .. } => {
             let args = wrap_args(args);
@@ -1861,42 +1822,43 @@ fn erl_safe_type_name(mut name: String) -> String {
     if matches!(
         name.as_str(),
         "any"
+            | "arity"
             | "atom"
-            | "none"
-            | "pid"
-            | "port"
-            | "reference"
-            | "float"
-            | "integer"
-            | "list"
-            | "nonempty_improper_list"
-            | "tuple"
-            | "term"
             | "binary"
             | "bitstring"
             | "boolean"
             | "byte"
             | "char"
-            | "nil"
-            | "number"
-            | "maybe_improper_list"
-            | "nonempty_list"
-            | "string"
-            | "nonempty_string"
+            | "dynamic"
+            | "float"
+            | "function"
+            | "identifier"
+            | "integer"
             | "iodata"
             | "iolist"
+            | "list"
             | "map"
-            | "function"
-            | "module"
+            | "maybe_improper_list"
             | "mfa"
-            | "arity"
-            | "identifier"
-            | "node"
-            | "timeout"
-            | "no_return"
-            | "non_neg_integer"
-            | "pos_integer"
+            | "module"
             | "neg_integer"
+            | "nil"
+            | "no_return"
+            | "node"
+            | "non_neg_integer"
+            | "none"
+            | "nonempty_improper_list"
+            | "nonempty_list"
+            | "nonempty_string"
+            | "number"
+            | "pid"
+            | "port"
+            | "pos_integer"
+            | "reference"
+            | "string"
+            | "term"
+            | "timeout"
+            | "tuple"
     ) {
         name.push('_');
         name

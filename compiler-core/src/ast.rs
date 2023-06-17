@@ -31,45 +31,43 @@ pub trait HasLocation {
     fn location(&self) -> SrcSpan;
 }
 
-pub type TypedModule = Module<type_::ModuleInterface, TypedModuleStatement>;
+pub type TypedModule = Module<type_::ModuleInterface, TypedDefinition>;
 
-pub type UntypedModule = Module<(), TargetGroup>;
+pub type UntypedModule = Module<(), TargettedDefinition>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module<Info, Statements> {
     pub name: SmolStr,
     pub documentation: Vec<SmolStr>,
     pub type_info: Info,
-    pub statements: Vec<Statements>,
+    pub definitions: Vec<Statements>,
 }
 
 impl TypedModule {
     pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
-        self.statements
+        self.definitions
             .iter()
             .find_map(|statement| statement.find_node(byte_index))
     }
 }
 
-/// An if is a grouping of statements that will only be compiled if
-/// compiling to the specified target. e.g.
+/// The `@target(erlang)` and `@target(javascript)` attributes can be used to
+/// mark a definition as only being for a specific target.
 ///
 /// ```gleam
 /// const x: Int = 1
 ///
-/// if erlang {
-///   pub external fn display(a) -> Bool = "erlang" "display"
-/// }
+/// @target(erlang)
+/// pub external fn display(a) -> Bool = "erlang" "display"
 /// ```
-/// Outside an if block is `Any`, inside is an `Only`.
 ///
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TargetGroup {
-    Any(Vec<UntypedModuleStatement>),
-    Only(Target, Vec<UntypedModuleStatement>),
+pub enum TargettedDefinition {
+    Any(UntypedDefinition),
+    Only(Target, UntypedDefinition),
 }
 
-impl TargetGroup {
+impl TargettedDefinition {
     pub fn is_for(&self, target: Target) -> bool {
         match self {
             Self::Any(_) => true,
@@ -77,26 +75,25 @@ impl TargetGroup {
         }
     }
 
-    pub fn statements(self) -> Vec<UntypedModuleStatement> {
+    pub fn into_inner(self) -> UntypedDefinition {
         match self {
             Self::Any(s) => s,
             Self::Only(_, s) => s,
         }
     }
 
-    pub fn statements_ref(&self) -> &[UntypedModuleStatement] {
+    pub fn inner(&self) -> &UntypedDefinition {
         match self {
             Self::Any(s) => s,
             Self::Only(_, s) => s,
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.statements_ref().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    pub fn target(&self) -> Option<Target> {
+        match self {
+            Self::Any(_) => None,
+            Self::Only(t, _) => Some(*t),
+        }
     }
 }
 
@@ -104,7 +101,7 @@ impl UntypedModule {
     pub fn dependencies(&self, target: Target) -> Vec<(SmolStr, SrcSpan)> {
         self.iter_statements(target)
             .flat_map(|s| match s {
-                ModuleStatement::Import(Import {
+                Definition::Import(Import {
                     module, location, ..
                 }) => Some((module.clone(), *location)),
                 _ => None,
@@ -112,33 +109,31 @@ impl UntypedModule {
             .collect()
     }
 
-    pub fn iter_statements(&self, target: Target) -> impl Iterator<Item = &UntypedModuleStatement> {
-        self.statements
+    pub fn iter_statements(&self, target: Target) -> impl Iterator<Item = &UntypedDefinition> {
+        self.definitions
             .iter()
             .filter(move |group| group.is_for(target))
-            .flat_map(|group| group.statements_ref())
+            .map(|group| group.inner())
     }
 
-    pub fn into_iter_statements(
-        self,
-        target: Target,
-    ) -> impl Iterator<Item = UntypedModuleStatement> {
-        self.statements
+    pub fn into_iter_statements(self, target: Target) -> impl Iterator<Item = UntypedDefinition> {
+        self.definitions
             .into_iter()
             .filter(move |group| group.is_for(target))
-            .flat_map(|group| group.statements())
+            .map(|group| group.into_inner())
     }
 }
 
 #[test]
 fn module_dependencies_test() {
-    let (module, _) = crate::parse::parse_module(
+    let parsed = crate::parse::parse_module(
         "import one 
          if erlang { import two } 
          if javascript { import three } 
          import four",
     )
     .expect("syntax error");
+    let module = parsed.module;
 
     assert_eq!(
         vec![
@@ -407,7 +402,11 @@ pub struct Function<T, Expr> {
     pub return_annotation: Option<TypeAst>,
     pub return_type: T,
     pub documentation: Option<SmolStr>,
+    pub external_erlang: Option<(SmolStr, SmolStr)>,
+    pub external_javascript: Option<(SmolStr, SmolStr)>,
 }
+
+pub type TypedFunction = Function<Arc<Type>, TypedExpr>;
 
 impl<T, E> Function<T, E> {
     fn full_location(&self) -> SrcSpan {
@@ -485,11 +484,14 @@ pub struct CustomType<T> {
     pub location: SrcSpan,
     pub end_position: u32,
     pub name: SmolStr,
-    pub parameters: Vec<SmolStr>,
     pub public: bool,
     pub constructors: Vec<RecordConstructor<T>>,
     pub documentation: Option<SmolStr>,
     pub opaque: bool,
+    /// The names of the type parameters.
+    pub parameters: Vec<SmolStr>,
+    /// Once type checked this field will contain the type information for the
+    /// type parameters.
     pub typed_parameters: Vec<T>,
 }
 
@@ -500,24 +502,6 @@ impl<T> CustomType<T> {
     pub fn full_location(&self) -> SrcSpan {
         SrcSpan::new(self.location.start, self.end_position)
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Import a type defined in another language.
-/// Nothing is known about the runtime characteristics of the type, we only
-/// know that it exists and that we have given it this name.
-///
-/// # Example(s)
-///
-/// ```gleam
-/// pub external type Queue(a)
-/// ```
-pub struct ExternalType {
-    pub location: SrcSpan,
-    pub public: bool,
-    pub name: SmolStr,
-    pub arguments: Vec<SmolStr>,
-    pub documentation: Option<SmolStr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -539,11 +523,11 @@ pub struct TypeAlias<T> {
     pub documentation: Option<SmolStr>,
 }
 
-pub type TypedModuleStatement = ModuleStatement<Arc<Type>, TypedExpr, SmolStr, SmolStr>;
-pub type UntypedModuleStatement = ModuleStatement<(), UntypedExpr, (), ()>;
+pub type TypedDefinition = Definition<Arc<Type>, TypedExpr, SmolStr, SmolStr>;
+pub type UntypedDefinition = Definition<(), UntypedExpr, (), ()>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModuleStatement<T, Expr, ConstantRecordTag, PackageName> {
+pub enum Definition<T, Expr, ConstantRecordTag, PackageName> {
     Function(Function<T, Expr>),
 
     TypeAlias(TypeAlias<T>),
@@ -552,17 +536,15 @@ pub enum ModuleStatement<T, Expr, ConstantRecordTag, PackageName> {
 
     ExternalFunction(ExternalFunction<T>),
 
-    ExternalType(ExternalType),
-
     Import(Import<PackageName>),
 
     ModuleConstant(ModuleConstant<T, ConstantRecordTag>),
 }
 
-impl TypedModuleStatement {
+impl TypedDefinition {
     pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
         match self {
-            ModuleStatement::Function(function) => {
+            Definition::Function(function) => {
                 if let Some(found) = function.body.iter().find_map(|s| s.find_node(byte_index)) {
                     return Some(found);
                 };
@@ -576,7 +558,7 @@ impl TypedModuleStatement {
                 }
             }
 
-            ModuleStatement::CustomType(custom) => {
+            Definition::CustomType(custom) => {
                 // Note that the custom type `.location` covers the function
                 // head, not the entire statement.
                 if custom.full_location().contains(byte_index) {
@@ -586,11 +568,10 @@ impl TypedModuleStatement {
                 }
             }
 
-            ModuleStatement::TypeAlias(_)
-            | ModuleStatement::ExternalFunction(_)
-            | ModuleStatement::ExternalType(_)
-            | ModuleStatement::Import(_)
-            | ModuleStatement::ModuleConstant(_) => {
+            Definition::TypeAlias(_)
+            | Definition::ExternalFunction(_)
+            | Definition::Import(_)
+            | Definition::ModuleConstant(_) => {
                 if self.location().contains(byte_index) {
                     Some(Located::ModuleStatement(self))
                 } else {
@@ -598,6 +579,27 @@ impl TypedModuleStatement {
                 }
             }
         }
+    }
+}
+
+impl<A, B, C, E> Definition<A, B, C, E> {
+    pub fn location(&self) -> SrcSpan {
+        match self {
+            Definition::Function(Function { location, .. })
+            | Definition::Import(Import { location, .. })
+            | Definition::TypeAlias(TypeAlias { location, .. })
+            | Definition::CustomType(CustomType { location, .. })
+            | Definition::ExternalFunction(ExternalFunction { location, .. })
+            | Definition::ModuleConstant(ModuleConstant { location, .. }) => *location,
+        }
+    }
+
+    /// Returns `true` if the definition is [`Import`].
+    ///
+    /// [`Import`]: Definition::Import
+    #[must_use]
+    pub fn is_import(&self) -> bool {
+        matches!(self, Self::Import(..))
     }
 
     /// Returns `true` if the module statement is [`Function`].
@@ -607,40 +609,24 @@ impl TypedModuleStatement {
     pub fn is_function(&self) -> bool {
         matches!(self, Self::Function(..))
     }
-}
-
-impl<A, B, C, E> ModuleStatement<A, B, C, E> {
-    pub fn location(&self) -> SrcSpan {
-        match self {
-            ModuleStatement::Function(Function { location, .. })
-            | ModuleStatement::Import(Import { location, .. })
-            | ModuleStatement::TypeAlias(TypeAlias { location, .. })
-            | ModuleStatement::CustomType(CustomType { location, .. })
-            | ModuleStatement::ExternalFunction(ExternalFunction { location, .. })
-            | ModuleStatement::ExternalType(ExternalType { location, .. })
-            | ModuleStatement::ModuleConstant(ModuleConstant { location, .. }) => *location,
-        }
-    }
 
     pub fn put_doc(&mut self, new_doc: SmolStr) {
         match self {
-            ModuleStatement::Import(Import { .. }) => (),
-            ModuleStatement::Function(Function {
+            Definition::Import(Import { .. }) => (),
+
+            Definition::Function(Function {
                 documentation: doc, ..
             })
-            | ModuleStatement::TypeAlias(TypeAlias {
+            | Definition::TypeAlias(TypeAlias {
                 documentation: doc, ..
             })
-            | ModuleStatement::CustomType(CustomType {
+            | Definition::CustomType(CustomType {
                 documentation: doc, ..
             })
-            | ModuleStatement::ExternalFunction(ExternalFunction {
+            | Definition::ExternalFunction(ExternalFunction {
                 documentation: doc, ..
             })
-            | ModuleStatement::ExternalType(ExternalType {
-                documentation: doc, ..
-            })
-            | ModuleStatement::ModuleConstant(ModuleConstant {
+            | Definition::ModuleConstant(ModuleConstant {
                 documentation: doc, ..
             }) => {
                 let _ = std::mem::replace(doc, Some(new_doc));
@@ -1496,12 +1482,11 @@ pub struct GroupedStatements {
     pub constants: Vec<UntypedModuleConstant>,
     pub custom_types: Vec<CustomType<()>>,
     pub imports: Vec<Import<()>>,
-    pub external_types: Vec<ExternalType>,
     pub type_aliases: Vec<TypeAlias<()>>,
 }
 
 impl GroupedStatements {
-    pub fn new(statements: impl IntoIterator<Item = UntypedModuleStatement>) -> Self {
+    pub fn new(statements: impl IntoIterator<Item = UntypedDefinition>) -> Self {
         let mut this = Self::default();
 
         for statement in statements {
@@ -1522,27 +1507,24 @@ impl GroupedStatements {
             external_functions,
             constants,
             imports,
-            external_types,
             type_aliases,
         } = self;
         functions.len()
             + constants.len()
             + imports.len()
-            + external_types.len()
             + custom_types.len()
             + type_aliases.len()
             + external_functions.len()
     }
 
-    fn add(&mut self, statement: UntypedModuleStatement) {
+    fn add(&mut self, statement: UntypedDefinition) {
         match statement {
-            ModuleStatement::Import(i) => self.imports.push(i),
-            ModuleStatement::Function(f) => self.functions.push(f),
-            ModuleStatement::TypeAlias(t) => self.type_aliases.push(t),
-            ModuleStatement::CustomType(c) => self.custom_types.push(c),
-            ModuleStatement::ExternalType(t) => self.external_types.push(t),
-            ModuleStatement::ModuleConstant(c) => self.constants.push(c),
-            ModuleStatement::ExternalFunction(f) => self.external_functions.push(f),
+            Definition::Import(i) => self.imports.push(i),
+            Definition::Function(f) => self.functions.push(f),
+            Definition::TypeAlias(t) => self.type_aliases.push(t),
+            Definition::CustomType(c) => self.custom_types.push(c),
+            Definition::ModuleConstant(c) => self.constants.push(c),
+            Definition::ExternalFunction(f) => self.external_functions.push(f),
         }
     }
 }
@@ -1607,6 +1589,13 @@ impl UntypedStatement {
             Statement::Expression(expression) => expression.start_byte_index(),
             Statement::Assignment(assignment) => assignment.location.start,
             Statement::Use(use_) => use_.location.start,
+        }
+    }
+
+    pub fn is_placeholder(&self) -> bool {
+        match self {
+            Statement::Expression(expression) => expression.is_placeholder(),
+            Statement::Assignment(_) | Statement::Use(_) => false,
         }
     }
 }

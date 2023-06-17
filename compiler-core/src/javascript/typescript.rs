@@ -13,16 +13,15 @@
 
 use std::{collections::HashMap, ops::Deref, sync::Arc};
 
-use heck::ToUpperCamelCase;
 use itertools::Itertools;
 use smol_str::SmolStr;
 
 use crate::type_::{is_prelude_module, PRELUDE_MODULE_NAME};
 use crate::{
     ast::{
-        CustomType, ExternalFunction, ExternalType, Function, Import, ModuleConstant,
-        ModuleStatement, TypeAlias, TypedArg, TypedConstant, TypedExternalFnArg, TypedModule,
-        TypedModuleStatement, TypedRecordConstructor,
+        CustomType, Definition, ExternalFunction, Function, Import, ModuleConstant, TypeAlias,
+        TypedArg, TypedConstant, TypedDefinition, TypedExternalFnArg, TypedModule,
+        TypedRecordConstructor,
     },
     docvec,
     pretty::{break_, Document, Documentable},
@@ -203,7 +202,7 @@ impl<'a> TypeScriptGenerator<'a> {
         let mut imports = self.collect_imports();
         let statements = self
             .module
-            .statements
+            .definitions
             .iter()
             .flat_map(|s| self.statement(s));
 
@@ -233,16 +232,15 @@ impl<'a> TypeScriptGenerator<'a> {
     fn collect_imports(&mut self) -> Imports<'a> {
         let mut imports = Imports::new();
 
-        for statement in &self.module.statements {
+        for statement in &self.module.definitions {
             match statement {
-                ModuleStatement::Function(Function { .. })
-                | ModuleStatement::TypeAlias(TypeAlias { .. })
-                | ModuleStatement::CustomType(CustomType { .. })
-                | ModuleStatement::ExternalType(ExternalType { .. })
-                | ModuleStatement::ExternalFunction(ExternalFunction { .. })
-                | ModuleStatement::ModuleConstant(ModuleConstant { .. }) => (),
+                Definition::Function(Function { .. })
+                | Definition::TypeAlias(TypeAlias { .. })
+                | Definition::CustomType(CustomType { .. })
+                | Definition::ExternalFunction(ExternalFunction { .. })
+                | Definition::ModuleConstant(ModuleConstant { .. }) => (),
 
-                ModuleStatement::Import(Import {
+                Definition::Import(Import {
                     module,
                     package,
                     as_name,
@@ -291,27 +289,19 @@ impl<'a> TypeScriptGenerator<'a> {
         }
     }
 
-    fn statement(&mut self, statement: &'a TypedModuleStatement) -> Vec<Output<'a>> {
+    fn statement(&mut self, statement: &'a TypedDefinition) -> Vec<Output<'a>> {
         match statement {
-            ModuleStatement::TypeAlias(TypeAlias {
+            Definition::TypeAlias(TypeAlias {
                 alias,
                 public,
                 type_,
                 ..
             }) if *public => vec![self.type_alias(alias, type_)],
-            ModuleStatement::TypeAlias(TypeAlias { .. }) => vec![],
+            Definition::TypeAlias(TypeAlias { .. }) => vec![],
 
-            ModuleStatement::ExternalType(ExternalType {
-                public,
-                name,
-                arguments,
-                ..
-            }) if *public => vec![self.external_type(name, arguments)],
-            ModuleStatement::ExternalType(ExternalType { .. }) => vec![],
+            Definition::Import(Import { .. }) => vec![],
 
-            ModuleStatement::Import(Import { .. }) => vec![],
-
-            ModuleStatement::CustomType(CustomType {
+            Definition::CustomType(CustomType {
                 public,
                 constructors,
                 opaque,
@@ -321,50 +311,33 @@ impl<'a> TypeScriptGenerator<'a> {
             }) if *public => {
                 self.custom_type_definition(name, typed_parameters, constructors, *opaque)
             }
-            ModuleStatement::CustomType(CustomType { .. }) => vec![],
+            Definition::CustomType(CustomType { .. }) => vec![],
 
-            ModuleStatement::ModuleConstant(ModuleConstant {
+            Definition::ModuleConstant(ModuleConstant {
                 public,
                 name,
                 value,
                 ..
             }) if *public => vec![self.module_constant(name, value)],
-            ModuleStatement::ModuleConstant(ModuleConstant { .. }) => vec![],
+            Definition::ModuleConstant(ModuleConstant { .. }) => vec![],
 
-            ModuleStatement::Function(Function {
+            Definition::Function(Function {
                 arguments,
                 name,
                 public,
                 return_type,
                 ..
             }) if *public => vec![self.module_function(name, arguments, return_type)],
-            ModuleStatement::Function(Function { .. }) => vec![],
+            Definition::Function(Function { .. }) => vec![],
 
-            ModuleStatement::ExternalFunction(ExternalFunction {
+            Definition::ExternalFunction(ExternalFunction {
                 public,
                 name,
                 arguments,
                 return_type,
                 ..
             }) if *public => vec![self.external_function(name, arguments, return_type)],
-            ModuleStatement::ExternalFunction(ExternalFunction { .. }) => vec![],
-        }
-    }
-
-    fn external_type(&self, name: &str, args: &'a [SmolStr]) -> Output<'a> {
-        let doc_name = Document::String(format!("{}$", ts_safe_type_name(name.to_string())));
-        if args.is_empty() {
-            Ok(docvec!["export type ", doc_name, " = any;"])
-        } else {
-            Ok(docvec![
-                "export type ",
-                doc_name,
-                wrap_generic_args(
-                    args.iter()
-                        .map(|x| Document::String(x.to_upper_camel_case()))
-                ),
-                " = any;",
-            ])
+            Definition::ExternalFunction(ExternalFunction { .. }) => vec![],
         }
     }
 
@@ -398,17 +371,23 @@ impl<'a> TypeScriptGenerator<'a> {
             .map(|constructor| Ok(self.record_definition(constructor, opaque)))
             .collect();
 
+        let definition = if constructors.is_empty() {
+            "any".to_doc()
+        } else {
+            let constructors = constructors.iter().map(|x| {
+                name_with_generics(
+                    super::maybe_escape_identifier_doc(&x.name),
+                    x.arguments.iter().map(|a| &a.type_),
+                )
+            });
+            concat(Itertools::intersperse(constructors, break_("| ", " | ")))
+        };
+
         definitions.push(Ok(docvec![
             "export type ",
             name_with_generics(Document::String(format!("{name}$")), typed_parameters),
             " = ",
-            concat(Itertools::intersperse(
-                constructors.iter().map(|x| name_with_generics(
-                    super::maybe_escape_identifier_doc(&x.name),
-                    x.arguments.iter().map(|a| &a.type_)
-                )),
-                break_("| ", " | "),
-            )),
+            definition,
             ";",
         ]));
 

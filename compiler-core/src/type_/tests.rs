@@ -120,6 +120,7 @@ fn get_warnings(src: &str, deps: Vec<DependencyModule<'_>>) -> Vec<Warning> {
         .into_iter()
         .map(|warning| match warning {
             crate::Warning::Type { warning, .. } => warning,
+            crate::Warning::Parse { .. } => panic!("Unexpected parse warning"),
         })
         .collect_vec()
 }
@@ -193,6 +194,7 @@ fn compile_statement_sequence(src: &str) -> Result<Vec1<TypedStatement>, crate::
     crate::type_::ExprTyper::new(&mut crate::type_::Environment::new(
         ids,
         "themodule",
+        Target::Erlang,
         &modules,
         &TypeWarningEmitter::null(),
     ))
@@ -256,7 +258,8 @@ pub fn compile_module(
     let _ = modules.insert(PRELUDE_MODULE_NAME.into(), build_prelude(&ids));
 
     for (package, name, module_src) in dep {
-        let (mut ast, _) = crate::parse::parse_module(module_src).expect("syntax error");
+        let parsed = crate::parse::parse_module(module_src).expect("syntax error");
+        let mut ast = parsed.module;
         ast.name = name.into();
         let module = crate::analyse::infer_module(
             Target::Erlang,
@@ -271,7 +274,8 @@ pub fn compile_module(
         let _ = modules.insert(name.into(), module.type_info);
     }
 
-    let (ast, _) = crate::parse::parse_module(src).expect("syntax error");
+    let parsed = crate::parse::parse_module(src).expect("syntax error");
+    let ast = parsed.module;
     crate::analyse::infer_module(
         Target::Erlang,
         &ids,
@@ -440,7 +444,7 @@ fn infer_module_type_retention_test() {
     let module: UntypedModule = crate::ast::Module {
         documentation: vec![],
         name: "ok".into(),
-        statements: vec![],
+        definitions: vec![],
         type_info: (),
     };
     let ids = UniqueIdGenerator::new();

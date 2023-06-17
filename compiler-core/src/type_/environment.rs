@@ -1,5 +1,6 @@
 use crate::{
-    analyse::Inferred, ast::PIPE_VARIABLE, uid::UniqueIdGenerator, warning::TypeWarningEmitter,
+    analyse::Inferred, ast::PIPE_VARIABLE, build::Target, uid::UniqueIdGenerator,
+    warning::TypeWarningEmitter,
 };
 
 use super::*;
@@ -8,6 +9,7 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub struct Environment<'a> {
     pub current_module: &'a str,
+    pub target: Target,
     pub ids: UniqueIdGenerator,
     previous_id: u64,
     /// Names of types or values that have been imported an unqualified fashion
@@ -39,11 +41,6 @@ pub struct Environment<'a> {
     /// Warnings
     pub warnings: &'a TypeWarningEmitter,
 
-    /// Functions that have not yet been inferred then generalised.
-    /// We use this to determine whether functions that call this one
-    /// can safely be generalised.
-    pub ungeneralised_functions: HashSet<SmolStr>,
-
     /// entity_usages is a stack of scopes. When an entity is created it is
     /// added to the top scope. When an entity is used we crawl down the scope
     /// stack for an entity with that name and mark it as used.
@@ -55,6 +52,7 @@ impl<'a> Environment<'a> {
     pub fn new(
         ids: UniqueIdGenerator,
         current_module: &'a str,
+        target: Target,
         importable_modules: &'a im::HashMap<SmolStr, ModuleInterface>,
         warnings: &'a TypeWarningEmitter,
     ) -> Self {
@@ -64,7 +62,7 @@ impl<'a> Environment<'a> {
         Self {
             previous_id: ids.next(),
             ids,
-            ungeneralised_functions: HashSet::new(),
+            target,
             module_types: prelude.types.clone(),
             module_types_constructors: prelude.types_constructors.clone(),
             module_values: HashMap::new(),

@@ -2,13 +2,27 @@
 
 ## Unreleased
 
-- Adding a new dependency unlocks the target package.
+- The new `gleam shell-completions` command can be used to generate
+  completions for zsh, bash, fish, powershell and elvish.
+- The new `@target(erlang)` and `@target(javascript)` attribute syntax has been
+  added for conditional compilation. The existing `if` conditional compilation
+  syntax has been deprecated. Run `gleam format` to update your code.
+- The new `type TypeName` syntax syntax replaces the `external type TypeName`
+  syntax. The existing external type syntax has been deprecated. Run `gleam format`
+  to update your code.
+- Adding a new dependency now unlocks the target package. This helps avoid
+  failing to find a suitable version for the package due to already being
+  locked.
+- Types named `Dynamic` are now called `dynamic_` in Erlang to avoid a clash
+  with the new Erlang `dynamic` type introduced in OTP26.
 - Dependencies can now be loaded from paths. Path dependencies currently use
   the same semantics as hex dependencies, and must be updated using the command
   `gleam deps update` to load changes.
 - The `javascript.deno.unstable` field in `gleam.toml` can now be used to
   enable Deno's unstable APIs when targeting JavaScript.
 - Blockquotes are now styled in rendered HTML documentation.
+- The `gleam` property can be set in `gleam.toml` can be set to a version
+  requirement to specify the version of Gleam required to build the project.
 - Type aliases can now refer to type aliases defined later in the same module.
 - Fixed a bug where unapplied record constructors in constant expressions would
   generate invalid Erlang.
@@ -18,8 +32,14 @@
   which is slow compared to checking for equality or pattern matching (#2180).
 - The new `gleam remove <package_name>` can be used to remove dependencies
   from a Gleam project.
-- The `gleam docs build` command gains the `--open` flag to open the docs after they are generated (#2188).
-- Updated font loading in generated HTML documentation to fix an issue with fonts not loading properly in some browsers (#2209).
+- Fixed a bug where the formatter could crash.
+- Fixed a bug where invalid Erlang would be generated when piping into `panic`.
+- The `gleam docs build` command gains the `--open` flag to open the docs after
+  they are generated (#2188).
+- Fixed a bug where type annotations for constants could not be written with
+  type annotations.
+- Updated font loading in generated HTML documentation to fix an issue with
+  fonts not loading properly in some browsers (#2209).
 
 ## v0.29.0 - 2023-05-23
 

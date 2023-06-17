@@ -1,13 +1,15 @@
 #[cfg(test)]
 mod tests;
 
+use crate::ast::{UntypedArg, UntypedStatement};
 use crate::dep_tree;
+use crate::type_::error::MissingAnnotation;
 use crate::{
     ast::{
-        self, BitStringSegmentOption, CustomType, DefinitionLocation, ExternalFunction,
-        ExternalType, Function, GroupedStatements, Import, Layer, ModuleConstant, ModuleFunction,
-        ModuleStatement, RecordConstructor, RecordConstructorArg, SrcSpan, TypeAlias, TypeAst,
-        TypedModule, TypedModuleStatement, UnqualifiedImport, UntypedModule,
+        self, BitStringSegmentOption, CustomType, Definition, DefinitionLocation, ExternalFunction,
+        Function, GroupedStatements, Import, Layer, ModuleConstant, ModuleFunction,
+        RecordConstructor, RecordConstructorArg, SrcSpan, TypeAlias, TypeAst, TypedDefinition,
+        TypedModule, UnqualifiedImport, UntypedModule,
     },
     build::{Origin, Target},
     call_graph::into_dependency_order,
@@ -28,6 +30,7 @@ use crate::{
 use itertools::Itertools;
 use smol_str::SmolStr;
 use std::{collections::HashMap, sync::Arc};
+use vec1::Vec1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inferred<T> {
@@ -76,12 +79,12 @@ pub fn infer_module(
 ) -> Result<TypedModule, Error> {
     let name = module.name.clone();
     let documentation = std::mem::take(&mut module.documentation);
-    let mut env = Environment::new(ids.clone(), &name, modules, warnings);
+    let mut env = Environment::new(ids.clone(), &name, target, modules, warnings);
     validate_module_name(&name)?;
 
-    let mut type_names = HashMap::with_capacity(module.statements.len());
-    let mut value_names = HashMap::with_capacity(module.statements.len());
-    let mut hydrators = HashMap::with_capacity(module.statements.len());
+    let mut type_names = HashMap::with_capacity(module.definitions.len());
+    let mut value_names = HashMap::with_capacity(module.definitions.len());
+    let mut hydrators = HashMap::with_capacity(module.definitions.len());
 
     let statements = GroupedStatements::new(module.into_iter_statements(target));
     let statements_count = statements.len();
@@ -96,10 +99,6 @@ pub fn infer_module(
 
     // Register types so they can be used in constructors and functions
     // earlier in the module.
-    // TODO: Extract a TypeRegistrar class to perform all this.
-    for t in &statements.external_types {
-        register_types_from_external_type(t, &mut type_names, &mut env, &name)?;
-    }
     for t in &statements.custom_types {
         register_types_from_custom_type(t, &mut type_names, &mut env, &name, &mut hydrators)?;
     }
@@ -131,10 +130,6 @@ pub fn infer_module(
     }
     for t in statements.custom_types {
         let statement = infer_custom_type(t, &mut env)?;
-        typed_statements.push(statement);
-    }
-    for t in statements.external_types {
-        let statement = hydrate_external_type(t, &mut env)?;
         typed_statements.push(statement);
     }
     for t in statements.type_aliases {
@@ -213,7 +208,7 @@ pub fn infer_module(
     Ok(ast::Module {
         documentation,
         name: name.clone(),
-        statements: typed_statements,
+        definitions: typed_statements,
         type_info: ModuleInterface {
             name,
             types,
@@ -473,44 +468,6 @@ fn register_types_from_custom_type<'a>(
     Ok(())
 }
 
-fn register_types_from_external_type(
-    t: &ExternalType,
-    names: &mut HashMap<SmolStr, SrcSpan>,
-    environment: &mut Environment<'_>,
-    module: &SmolStr,
-) -> Result<(), Error> {
-    let ExternalType {
-        name,
-        public,
-        arguments: args,
-        location,
-        ..
-    } = t;
-    assert_unique_type_name(names, name, *location)?;
-    let mut hydrator = Hydrator::new();
-    let parameters = make_type_vars(args, location, &mut hydrator, environment)?;
-    let typ = Arc::new(Type::App {
-        public: *public,
-        module: module.as_str().into(),
-        name: name.clone(),
-        args: parameters.clone(),
-    });
-    environment.insert_type_constructor(
-        name.clone(),
-        TypeConstructor {
-            origin: *location,
-            module: module.clone(),
-            public: *public,
-            parameters,
-            typ,
-        },
-    )?;
-    if !public {
-        environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
-    };
-    Ok(())
-}
-
 fn register_values_from_custom_type(
     t: &CustomType<()>,
     hydrators: &mut HashMap<SmolStr, Hydrator>,
@@ -680,17 +637,22 @@ fn register_value_from_function(
         return_annotation,
         public,
         documentation,
+        external_erlang,
+        external_javascript,
         ..
     } = f;
     assert_unique_name(names, name, *location)?;
-    let _ = environment.ungeneralised_functions.insert(name.clone());
     let mut builder = FieldMapBuilder::new(args.len() as u32);
     for arg in args.iter() {
         builder.add(arg.names.get_label(), arg.location)?;
     }
     let field_map = builder.finish();
     let mut hydrator = Hydrator::new();
-    hydrator.permit_holes(true);
+
+    // When external implementations are present then the type annotations
+    // must be given in full, so we disallow holes in the annotations.
+    hydrator.permit_holes(external_erlang.is_none() && external_javascript.is_none());
+
     let arg_types = args
         .iter()
         .map(|arg| hydrator.type_from_option_ast(&arg.annotation, environment))
@@ -722,16 +684,18 @@ fn infer_function(
     environment: &mut Environment<'_>,
     hydrators: &mut HashMap<SmolStr, Hydrator>,
     module_name: &SmolStr,
-) -> Result<TypedModuleStatement, Error> {
+) -> Result<TypedDefinition, Error> {
     let Function {
         documentation: doc,
         location,
         name,
         public,
-        arguments: args,
+        arguments,
         body,
         return_annotation,
         end_position: end_location,
+        external_erlang,
+        external_javascript,
         ..
     } = f;
     let preregistered_fn = environment
@@ -743,9 +707,30 @@ fn infer_function(
         .fn_types()
         .expect("Preregistered type for fn was not a fn");
 
+    // Find the external implementation for the current target, if one has been given.
+    let external = match environment.target {
+        Target::Erlang => &external_erlang,
+        Target::JavaScript => &external_javascript,
+    };
+    let (impl_module, impl_function) = match external {
+        // There was no external implementation, so a Gleam one must be given.
+        None => {
+            ensure_body_given(&body, location)?;
+            (module_name.clone(), name.clone())
+        }
+        // There was an external implementation, so type annotations are
+        // mandatory as the Gleam implementation may be absent, and because we
+        // think you should always specify types for external functions for
+        // clarity + to avoid accidental mistakes.
+        Some((m, f)) => {
+            ensure_annotations_present(&arguments, return_annotation.as_ref(), location)?;
+            (m.clone(), f.clone())
+        }
+    };
+
     // Infer the type using the preregistered args + return types as a starting point
-    let (type_, args, body, safe_to_generalise) = environment.in_new_scope(|environment| {
-        let args = args
+    let (type_, args, body) = environment.in_new_scope(|environment| {
+        let args_types = arguments
             .into_iter()
             .zip(&args_types)
             .map(|(a, t)| a.set_type(t.clone()))
@@ -754,39 +739,29 @@ fn infer_function(
         expr_typer.hydrator = hydrators
             .remove(&name)
             .expect("Could not find hydrator for fn");
-        let (args, body) = expr_typer.infer_fn_with_known_types(args, body, Some(return_type))?;
+
+        let (args, body) =
+            expr_typer.infer_fn_with_known_types(args_types, body, Some(return_type))?;
         let args_types = args.iter().map(|a| a.type_.clone()).collect();
         let typ = fn_(args_types, body.last().type_());
-        let safe_to_generalise = !expr_typer.ungeneralised_function_used;
-        Ok((typ, args, body, safe_to_generalise))
+        Ok((typ, args, body))
     })?;
 
     // Assert that the inferred type matches the type of any recursive call
     unify(preregistered_type, type_.clone()).map_err(|e| convert_unify_error(e, location))?;
 
-    // Generalise the function if safe to do so
-    let type_ = if safe_to_generalise {
-        let _ = environment.ungeneralised_functions.remove(&name);
-        let type_ = type_::generalise(type_);
-        environment.insert_variable(
-            name.clone(),
-            ValueConstructorVariant::ModuleFn {
-                documentation: doc.clone(),
-                name: name.clone(),
-                field_map,
-                module: module_name.clone(),
-                arity: args.len(),
-                location,
-            },
-            type_.clone(),
-            public,
-        );
-        type_
-    } else {
-        type_
+    let type_ = type_::generalise(type_);
+    let variant = ValueConstructorVariant::ModuleFn {
+        documentation: doc.clone(),
+        name: impl_function,
+        field_map,
+        module: impl_module,
+        arity: args.len(),
+        location,
     };
+    environment.insert_variable(name.clone(), variant, type_.clone(), public);
 
-    Ok(ModuleStatement::Function(Function {
+    Ok(Definition::Function(Function {
         documentation: doc,
         location,
         name,
@@ -798,13 +773,45 @@ fn infer_function(
             .return_type()
             .expect("Could not find return type for fn"),
         body,
+        external_erlang,
+        external_javascript,
     }))
+}
+
+fn ensure_body_given(body: &Vec1<UntypedStatement>, location: SrcSpan) -> Result<(), Error> {
+    if body.first().is_placeholder() {
+        Err(Error::NoImplementation { location })
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_annotations_present(
+    arguments: &[UntypedArg],
+    return_annotation: Option<&TypeAst>,
+    location: SrcSpan,
+) -> Result<(), Error> {
+    for arg in arguments {
+        if arg.annotation.is_none() {
+            return Err(Error::ExternalMissingAnnotation {
+                location: arg.location,
+                kind: MissingAnnotation::Parameter,
+            });
+        }
+    }
+    if return_annotation.is_none() {
+        return Err(Error::ExternalMissingAnnotation {
+            location,
+            kind: MissingAnnotation::Return,
+        });
+    }
+    Ok(())
 }
 
 fn infer_external_function(
     f: ExternalFunction<()>,
     environment: &mut Environment<'_>,
-) -> Result<TypedModuleStatement, Error> {
+) -> Result<TypedDefinition, Error> {
     let ExternalFunction {
         documentation: doc,
         location,
@@ -828,7 +835,7 @@ fn infer_external_function(
         .zip(&args_types)
         .map(|(a, t)| a.set_type(t.clone()))
         .collect();
-    Ok(ModuleStatement::ExternalFunction(ExternalFunction {
+    Ok(Definition::ExternalFunction(ExternalFunction {
         return_type,
         documentation: doc,
         location,
@@ -844,7 +851,7 @@ fn infer_external_function(
 fn insert_type_alias(
     t: TypeAlias<()>,
     environment: &mut Environment<'_>,
-) -> Result<TypedModuleStatement, Error> {
+) -> Result<TypedDefinition, Error> {
     let TypeAlias {
         documentation: doc,
         location,
@@ -859,7 +866,7 @@ fn insert_type_alias(
         .expect("Could not find existing type for type alias")
         .typ
         .clone();
-    Ok(ModuleStatement::TypeAlias(TypeAlias {
+    Ok(Definition::TypeAlias(TypeAlias {
         documentation: doc,
         location,
         public,
@@ -873,7 +880,7 @@ fn insert_type_alias(
 fn infer_custom_type(
     t: CustomType<()>,
     environment: &mut Environment<'_>,
-) -> Result<TypedModuleStatement, Error> {
+) -> Result<TypedDefinition, Error> {
     let CustomType {
         documentation: doc,
         location,
@@ -941,7 +948,7 @@ fn infer_custom_type(
         .parameters
         .clone();
 
-    Ok(ModuleStatement::CustomType(CustomType {
+    Ok(Definition::CustomType(CustomType {
         documentation: doc,
         location,
         end_position,
@@ -954,39 +961,10 @@ fn infer_custom_type(
     }))
 }
 
-fn hydrate_external_type(
-    t: ExternalType,
-    environment: &mut Environment<'_>,
-) -> Result<TypedModuleStatement, Error> {
-    let ExternalType {
-        documentation: doc,
-        location,
-        public,
-        name,
-        arguments: args,
-    } = t;
-    // Check contained types are valid
-    let mut hydrator = Hydrator::new();
-    for arg in &args {
-        let var = TypeAst::Var {
-            location,
-            name: arg.clone(),
-        };
-        let _ = hydrator.type_from_ast(&var, environment)?;
-    }
-    Ok(ModuleStatement::ExternalType(ExternalType {
-        documentation: doc,
-        location,
-        public,
-        name,
-        arguments: args,
-    }))
-}
-
 fn record_imported_items_for_use_detection(
     i: Import<()>,
     environment: &mut Environment<'_>,
-) -> Result<TypedModuleStatement, Error> {
+) -> Result<TypedDefinition, Error> {
     let Import {
         documentation,
         location,
@@ -1012,7 +990,7 @@ fn record_imported_items_for_use_detection(
             import.layer = Layer::Type;
         }
     }
-    Ok(ModuleStatement::Import(Import {
+    Ok(Definition::Import(Import {
         documentation,
         location,
         module,
@@ -1026,7 +1004,7 @@ fn infer_module_constant(
     c: ModuleConstant<(), ()>,
     environment: &mut Environment<'_>,
     module_name: &SmolStr,
-) -> Result<TypedModuleStatement, Error> {
+) -> Result<TypedDefinition, Error> {
     let ModuleConstant {
         documentation: doc,
         location,
@@ -1056,7 +1034,7 @@ fn infer_module_constant(
         environment.init_usage(name.clone(), EntityKind::PrivateConstant, location);
     }
 
-    Ok(ModuleStatement::ModuleConstant(ModuleConstant {
+    Ok(Definition::ModuleConstant(ModuleConstant {
         documentation: doc,
         location,
         name,
@@ -1136,21 +1114,18 @@ where
 }
 
 fn generalise_statement(
-    s: TypedModuleStatement,
+    s: TypedDefinition,
     module_name: &SmolStr,
     environment: &mut Environment<'_>,
-) -> TypedModuleStatement {
+) -> TypedDefinition {
     match s {
-        ModuleStatement::Function(function) => {
-            generalise_function(function, environment, module_name)
-        }
+        Definition::Function(function) => generalise_function(function, environment, module_name),
 
-        statement @ (ModuleStatement::TypeAlias(TypeAlias { .. })
-        | ModuleStatement::CustomType(CustomType { .. })
-        | ModuleStatement::ExternalFunction(ExternalFunction { .. })
-        | ModuleStatement::ExternalType(ExternalType { .. })
-        | ModuleStatement::Import(Import { .. })
-        | ModuleStatement::ModuleConstant(ModuleConstant { .. })) => statement,
+        statement @ (Definition::TypeAlias(TypeAlias { .. })
+        | Definition::CustomType(CustomType { .. })
+        | Definition::ExternalFunction(ExternalFunction { .. })
+        | Definition::Import(Import { .. })
+        | Definition::ModuleConstant(ModuleConstant { .. })) => statement,
     }
 }
 
@@ -1158,7 +1133,7 @@ fn generalise_function(
     function: Function<Arc<Type>, ast::TypedExpr>,
     environment: &mut Environment<'_>,
     module_name: &SmolStr,
-) -> TypedModuleStatement {
+) -> TypedDefinition {
     let Function {
         documentation: doc,
         location,
@@ -1169,6 +1144,8 @@ fn generalise_function(
         return_annotation,
         end_position: end_location,
         return_type,
+        external_erlang,
+        external_javascript,
     } = function;
 
     // Lookup the inferred function information
@@ -1178,12 +1155,7 @@ fn generalise_function(
     let field_map = function.field_map().cloned();
     let typ = function.type_.clone();
 
-    // Generalise the function if not already done so
-    let typ = if environment.ungeneralised_functions.remove(&name) {
-        type_::generalise(typ)
-    } else {
-        typ
-    };
+    let typ = type_::generalise(typ);
 
     // Insert the function into the module's interface
     environment.insert_module_value(
@@ -1202,7 +1174,7 @@ fn generalise_function(
         },
     );
 
-    ModuleStatement::Function(Function {
+    Definition::Function(Function {
         documentation: doc,
         location,
         name,
@@ -1212,6 +1184,8 @@ fn generalise_function(
         return_annotation,
         return_type,
         body,
+        external_erlang,
+        external_javascript,
     })
 }
 

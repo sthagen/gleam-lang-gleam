@@ -4,8 +4,8 @@ use std::{path::PathBuf, time::SystemTime};
 
 use crate::{
     ast::{
-        CustomType, ExternalFunction, ExternalType, Function, ModuleConstant, ModuleStatement,
-        TypeAlias, TypedModuleStatement,
+        CustomType, Definition, ExternalFunction, Function, ModuleConstant, TypeAlias,
+        TypedDefinition,
     },
     build::Module,
     config::{DocsPage, PackageConfig},
@@ -15,6 +15,7 @@ use crate::{
     io::OutputFile,
     paths::ProjectPaths,
     pretty,
+    version::COMPILER_VERSION,
 };
 use askama::Template;
 use itertools::Itertools;
@@ -23,7 +24,6 @@ use serde_json::to_string as serde_to_string;
 use smol_str::SmolStr;
 
 const MAX_COLUMNS: isize = 65;
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn generate_html(
     paths: &ProjectPaths,
@@ -98,7 +98,7 @@ pub fn generate_html(
         };
 
         let temp = PageTemplate {
-            gleam_version: VERSION,
+            gleam_version: COMPILER_VERSION,
             links: &links,
             pages: &pages,
             modules: &modules_links,
@@ -137,7 +137,7 @@ pub fn generate_html(
 
         let functions: Vec<DocsFunction<'_>> = module
             .ast
-            .statements
+            .definitions
             .iter()
             .flat_map(|statement| function(&source_links, statement))
             .sorted()
@@ -145,7 +145,7 @@ pub fn generate_html(
 
         let types: Vec<Type<'_>> = module
             .ast
-            .statements
+            .definitions
             .iter()
             .flat_map(|statement| type_(&source_links, statement))
             .sorted()
@@ -153,7 +153,7 @@ pub fn generate_html(
 
         let constants: Vec<Constant<'_>> = module
             .ast
-            .statements
+            .definitions
             .iter()
             .flat_map(|statement| constant(&source_links, statement))
             .sorted()
@@ -227,7 +227,7 @@ pub fn generate_html(
         let page_meta_description = "";
 
         let template = ModuleTemplate {
-            gleam_version: VERSION,
+            gleam_version: COMPILER_VERSION,
             unnest,
             links: &links,
             pages: &pages,
@@ -474,12 +474,12 @@ fn import_synonyms(parent: &str, child: &str) -> String {
 
 fn function<'a>(
     source_links: &SourceLinker,
-    statement: &'a TypedModuleStatement,
+    statement: &'a TypedDefinition,
 ) -> Option<DocsFunction<'a>> {
     let mut formatter = format::Formatter::new();
 
     match statement {
-        ModuleStatement::ExternalFunction(ExternalFunction {
+        Definition::ExternalFunction(ExternalFunction {
             public: true,
             name,
             documentation: doc,
@@ -495,7 +495,7 @@ fn function<'a>(
             source_url: source_links.url(location),
         }),
 
-        ModuleStatement::Function(Function {
+        Definition::Function(Function {
             public: true,
             name,
             documentation: doc,
@@ -536,26 +536,11 @@ fn render_markdown(text: &str) -> String {
     s
 }
 
-fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedModuleStatement) -> Option<Type<'a>> {
+fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedDefinition) -> Option<Type<'a>> {
     let mut formatter = format::Formatter::new();
 
     match statement {
-        ModuleStatement::ExternalType(ExternalType {
-            public: true,
-            name,
-            documentation: doc,
-            arguments: args,
-            location,
-        }) => Some(Type {
-            name,
-            definition: print(formatter.external_type(true, name, args)),
-            documentation: markdown_documentation(doc),
-            text_documentation: text_documentation(doc),
-            constructors: vec![],
-            source_url: source_links.url(location),
-        }),
-
-        ModuleStatement::CustomType(CustomType {
+        Definition::CustomType(CustomType {
             public: true,
             opaque: false,
             name,
@@ -593,7 +578,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedModuleStatement) -
             source_url: source_links.url(location),
         }),
 
-        ModuleStatement::CustomType(CustomType {
+        Definition::CustomType(CustomType {
             public: true,
             opaque: true,
             name,
@@ -610,7 +595,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedModuleStatement) -
             source_url: source_links.url(location),
         }),
 
-        ModuleStatement::TypeAlias(TypeAlias {
+        Definition::TypeAlias(TypeAlias {
             public: true,
             alias: name,
             type_ast: typ,
@@ -633,11 +618,11 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedModuleStatement) -
 
 fn constant<'a>(
     source_links: &SourceLinker,
-    statement: &'a TypedModuleStatement,
+    statement: &'a TypedDefinition,
 ) -> Option<Constant<'a>> {
     let mut formatter = format::Formatter::new();
     match statement {
-        ModuleStatement::ModuleConstant(ModuleConstant {
+        Definition::ModuleConstant(ModuleConstant {
             public: true,
             documentation: doc,
             name,
