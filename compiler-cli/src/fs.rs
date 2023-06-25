@@ -46,13 +46,13 @@ impl FileSystemReader for ProjectIO {
             return vec![];
         }
         let dir = dir.to_path_buf();
-        walkdir::WalkDir::new(dir.clone())
+        walkdir::WalkDir::new(dir)
             .follow_links(true)
             .into_iter()
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|d| d.into_path())
-            .filter(move |d| is_gleam_path(d, dir.clone()))
+            .filter(move |d| d.extension() == Some(OsStr::new("gleam")))
             .collect()
     }
 

@@ -35,11 +35,6 @@ impl VectorWarningEmitterIO {
         std::mem::take(&mut *warnings)
     }
 
-    pub fn drain(&mut self) -> Vec<Warning> {
-        let mut warnings = self.write_lock();
-        std::mem::take(&mut *warnings)
-    }
-
     fn write_lock(&self) -> std::sync::RwLockWriteGuard<'_, Vec<Warning>> {
         self.warnings.write().expect("Vector lock poisoned")
     }
@@ -86,6 +81,12 @@ impl WarningEmitter {
         _ = self.count.fetch_add(1, Ordering::Relaxed);
         self.emitter.emit_warning(warning);
     }
+
+    pub fn vector() -> (Self, Arc<VectorWarningEmitterIO>) {
+        let io = Arc::new(VectorWarningEmitterIO::default());
+        let emitter = Self::new(io.clone());
+        (emitter, Arc::clone(&io))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -128,11 +129,13 @@ pub enum Warning {
         src: SmolStr,
         warning: crate::type_::Warning,
     },
-
     Parse {
         path: PathBuf,
         src: SmolStr,
         warning: crate::parse::Warning,
+    },
+    InvalidSource {
+        path: PathBuf,
     },
 }
 
@@ -186,6 +189,16 @@ impl Warning {
                 }
             },
 
+            Warning::InvalidSource { path } => Diagnostic {
+                title: "Invalid module name.".into(),
+                text: "Module names must begin with a lowercase letter and contain only lowercase alphanumeric characters or underscores.".into(),
+                level: diagnostic::Level::Warning,
+                location: None,
+                hint: Some(format!(
+                    "Rename `{}` to be valid, or remove this file from the project source.",
+                    path.to_string_lossy()
+                )),
+            },
             Self::Type { path, warning, src } => match warning {
                 type_::Warning::Todo {
                     kind,

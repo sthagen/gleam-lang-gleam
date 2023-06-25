@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-- The new `gleam shell-completions` command can be used to generate
-  completions for zsh, bash, fish, powershell and elvish.
 - The new `@target(erlang)` and `@target(javascript)` attribute syntax has been
   added for conditional compilation. The existing `if` conditional compilation
   syntax has been deprecated. Run `gleam format` to update your code.
@@ -28,6 +26,9 @@
   generate invalid Erlang.
 - Fixed a bug where `gleam docs build` would print an incorrect path upon
   completion.
+- Warnings from dependency packages are no longer surfaced in the language
+  server.
+- A warning is now emitted when a Gleam file is found with an invalid name.
 - A warning is now emitted when using `list.length` to check for the empty list,
   which is slow compared to checking for equality or pattern matching (#2180).
 - The new `gleam remove <package_name>` can be used to remove dependencies
