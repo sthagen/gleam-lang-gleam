@@ -346,15 +346,15 @@ fn module_statement<'a>(
     statement: &'a TypedDefinition,
     module: &'a str,
     line_numbers: &'a LineNumbers,
-) -> Vec<Document<'a>> {
+) -> Option<Document<'a>> {
     match statement {
         Definition::TypeAlias(TypeAlias { .. })
         | Definition::CustomType(CustomType { .. })
         | Definition::Import(Import { .. })
         | Definition::ModuleConstant(ModuleConstant { .. })
-        | Definition::ExternalFunction(ExternalFunction { public: false, .. }) => vec![],
+        | Definition::ExternalFunction(ExternalFunction { public: false, .. }) => None,
 
-        Definition::Function(function) => vec![module_function(function, module, line_numbers)],
+        Definition::Function(function) => module_function(function, module, line_numbers),
 
         Definition::ExternalFunction(ExternalFunction {
             fun,
@@ -363,14 +363,14 @@ fn module_statement<'a>(
             name,
             return_type,
             ..
-        }) => vec![external_fun(
+        }) => Some(external_fun(
             current_module,
             name,
             module,
             fun,
             args,
             return_type,
-        )],
+        )),
     }
 }
 
@@ -378,7 +378,13 @@ fn module_function<'a>(
     function: &'a TypedFunction,
     module: &'a str,
     line_numbers: &'a LineNumbers,
-) -> Document<'a> {
+) -> Option<Document<'a>> {
+    // Private external functions don't need to render anything, the underlying
+    // Erlang implementation is used directly at the call site.
+    if function.external_erlang.is_some() && !function.public {
+        return None;
+    }
+
     let mut env = Env::new(module, &function.name, line_numbers);
     let var_usages = collect_type_var_usages(
         HashMap::new(),
@@ -399,11 +405,13 @@ fn module_function<'a>(
         .map(|(module, function)| docvec![module, ":", function, arguments.clone()])
         .unwrap_or_else(|| statement_sequence(&function.body, &mut env));
 
-    spec.append(atom(function.name.to_string()))
+    let doc = spec
+        .append(atom(function.name.to_string()))
         .append(arguments)
         .append(" ->")
         .append(line().append(body).nest(INDENT).group())
-        .append(".")
+        .append(".");
+    Some(doc)
 }
 
 fn fun_args<'a>(args: &'a [TypedArg], env: &mut Env<'a>) -> Document<'a> {
@@ -806,7 +814,7 @@ fn bin_op<'a>(
     }
 }
 
-fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) -> Document<'a> {
+fn let_assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) -> Document<'a> {
     let mut vars: Vec<&str> = vec![];
     let body = maybe_block_expr(value, env);
     let (subject_var, subject_definition) = if value.is_var() {
@@ -829,7 +837,7 @@ fn assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>) ->
         docvec![
             line(),
             erlang_error(
-                "assert",
+                "let_assert",
                 "Assertion pattern match failed",
                 pat.location(),
                 vec![("value", env.local_var_name(ASSERT_FAIL_VARIABLE))],
@@ -1403,8 +1411,9 @@ fn todo<'a>(message: &'a Option<SmolStr>, location: SrcSpan, env: &mut Env<'a>) 
     erlang_error("todo", message, location, vec![], env)
 }
 
-fn panic<'a>(location: SrcSpan, env: &mut Env<'a>) -> Document<'a> {
-    erlang_error("panic", "panic expression evaluated", location, vec![], env)
+fn panic<'a>(location: SrcSpan, message: Option<&'a str>, env: &mut Env<'a>) -> Document<'a> {
+    let message = message.unwrap_or("panic expression evaluated");
+    erlang_error("panic", message, location, vec![], env)
 }
 
 fn erlang_error<'a>(
@@ -1453,10 +1462,14 @@ fn erlang_error<'a>(
 fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
     match expression {
         TypedExpr::Todo {
-            label, location, ..
+            message: label,
+            location,
+            ..
         } => todo(label, *location, env),
 
-        TypedExpr::Panic { location, .. } => panic(*location, env),
+        TypedExpr::Panic {
+            location, message, ..
+        } => panic(*location, message.as_deref(), env),
 
         TypedExpr::Int { value, .. } => int(value),
         TypedExpr::Float { value, .. } => float(value),
@@ -1551,7 +1564,7 @@ fn pipeline<'a>(
 fn assignment<'a>(assignment: &'a TypedAssignment, env: &mut Env<'a>) -> Document<'a> {
     match assignment.kind {
         AssignmentKind::Let => let_(&assignment.value, &assignment.pattern, env),
-        AssignmentKind::Assert => assert(&assignment.value, &assignment.pattern, env),
+        AssignmentKind::Assert => let_assert(&assignment.value, &assignment.pattern, env),
     }
 }
 

@@ -3208,6 +3208,16 @@ fn expr_panic() {
 }
 
 #[test]
+fn expr_panic_as() {
+    assert_format!(
+        r#"fn main() {
+  panic as "panicking"
+}
+"#
+    );
+}
+
+#[test]
 fn expr_todo() {
     assert_format!(
         "fn main() {
@@ -3221,7 +3231,21 @@ fn expr_todo() {
 fn expr_todo_with_label() {
     assert_format!(
         r#"fn main() {
+  todo as "todo with a label"
+}
+"#
+    );
+}
+
+#[test]
+fn todo_old() {
+    assert_format_rewrite!(
+        r#"fn main() {
   todo("todo with a label")
+}
+"#,
+        r#"fn main() {
+  todo as "todo with a label"
 }
 "#
     );

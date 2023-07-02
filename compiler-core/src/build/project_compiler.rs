@@ -1,14 +1,14 @@
 use crate::{
     build::{
-        package_compiler, package_compiler::PackageCompiler, project_compiler,
-        telemetry::Telemetry, Mode, Module, Origin, Package, Target,
+        package_compiler, package_compiler::PackageCompiler, package_loader::StaleTracker,
+        project_compiler, telemetry::Telemetry, Mode, Module, Origin, Package, Target,
     },
     codegen::{self, ErlangApp},
     config::PackageConfig,
     dep_tree,
     error::{FileIoAction, FileKind},
     io::{CommandExecutor, FileSystemReader, FileSystemWriter, Stdio},
-    manifest::ManifestPackage,
+    manifest::{ManifestPackage, ManifestPackageSource},
     metadata,
     paths::{self, ProjectPaths},
     type_::{self, ModuleFunction},
@@ -54,6 +54,7 @@ pub struct Options {
 pub struct Built {
     pub root_package: Package,
     module_interfaces: im::HashMap<SmolStr, type_::ModuleInterface>,
+    compiled_dependency_modules: Vec<Module>,
 }
 
 impl Built {
@@ -71,16 +72,17 @@ impl Built {
 #[derive(Debug)]
 pub struct ProjectCompiler<IO> {
     // The gleam.toml config for the root package of the project
-    config: PackageConfig,
-    packages: HashMap<String, ManifestPackage>,
+    pub(crate) config: PackageConfig,
+    pub(crate) packages: HashMap<String, ManifestPackage>,
     importable_modules: im::HashMap<SmolStr, type_::ModuleInterface>,
     defined_modules: im::HashMap<SmolStr, PathBuf>,
+    stale_modules: StaleTracker,
     warnings: WarningEmitter,
     telemetry: Box<dyn Telemetry>,
     options: Options,
     paths: ProjectPaths,
     ids: UniqueIdGenerator,
-    io: IO,
+    pub(crate) io: IO,
     /// We may want to silence subprocess stdout if we are running in LSP mode.
     /// The language server talks over stdio so printing would break that.
     pub subprocess_stdio: Stdio,
@@ -110,6 +112,7 @@ where
         Self {
             importable_modules: im::HashMap::new(),
             defined_modules: im::HashMap::new(),
+            stale_modules: StaleTracker::default(),
             ids: UniqueIdGenerator::new(),
             warnings: WarningEmitter::new(warning_emitter),
             subprocess_stdio: Stdio::Inherit,
@@ -126,20 +129,6 @@ where
         &self.importable_modules
     }
 
-    // TODO: test
-    pub fn checkpoint(&self) -> CheckpointState {
-        CheckpointState {
-            importable_modules: self.importable_modules.clone(),
-            defined_modules: self.defined_modules.clone(),
-        }
-    }
-
-    // TODO: test
-    pub fn restore(&mut self, checkpoint: CheckpointState) {
-        self.importable_modules = checkpoint.importable_modules;
-        self.defined_modules = checkpoint.defined_modules;
-    }
-
     pub fn mode(&self) -> Mode {
         self.options.mode
     }
@@ -148,10 +137,24 @@ where
         self.options.target.unwrap_or(self.config.target)
     }
 
-    /// Returns the compiled information from the root package
+    /// Compiles all packages in the project and returns the compiled
+    /// information from the root package
     pub fn compile(mut self) -> Result<Built> {
+        // We make sure the stale module tracker is empty before we start, to
+        // avoid mistakenly thinking a module is stale due to outdated state
+        // from a previous build. A ProjectCompiler instance is re-used by the
+        // LSP engine so state could be reused if we don't reset it.
+        self.stale_modules.empty();
+
+        // Each package may specify a Gleam version that it supports, so we
+        // verify that this version is appropriate.
         self.check_gleam_version()?;
-        self.compile_dependencies()?;
+
+        // Dependencies are compiled first.
+        let compiled_dependency_modules = self.compile_dependencies()?;
+
+        // We reset the warning count as we don't want to fail the build if a
+        // dependency has warnings, only if the root package does.
         self.warnings.reset_count();
 
         match self.options.codegen {
@@ -170,13 +173,13 @@ where
         Ok(Built {
             root_package,
             module_interfaces: self.importable_modules,
+            compiled_dependency_modules,
         })
     }
 
     pub fn compile_root_package(&mut self) -> Result<Package, Error> {
         let config = self.config.clone();
         let modules = self.compile_gleam_package(&config, true, self.paths.root().to_path_buf())?;
-
         Ok(Package { config, modules })
     }
 
@@ -212,44 +215,38 @@ where
             })
     }
 
-    pub fn compile_dependencies(&mut self) -> Result<(), Error> {
+    pub fn compile_dependencies(&mut self) -> Result<Vec<Module>, Error> {
         let sequence = order_packages(&self.packages)?;
+        let mut modules = vec![];
 
         for name in sequence {
-            let package = self
-                .packages
-                .remove(name.as_str())
-                .expect("Missing package config");
-            self.load_cache_or_compile_package(&package)?;
+            let compiled = self.load_cache_or_compile_package(&name)?;
+            modules.extend(compiled);
         }
 
-        Ok(())
+        Ok(modules)
     }
 
-    fn load_cache_or_compile_package(&mut self, package: &ManifestPackage) -> Result<(), Error> {
-        let build_path =
-            self.paths
-                .build_directory_for_package(self.mode(), self.target(), &package.name);
-        if self.io.is_directory(&build_path) {
-            tracing::debug!(package=%package.name, "loading_precompiled_package");
-            return self.load_cached_package(build_path, package);
-        }
+    fn load_cache_or_compile_package(&mut self, name: &str) -> Result<Vec<Module>, Error> {
+        self.telemetry.compiling_package(name);
 
-        self.telemetry.compiling_package(&package.name);
-        let result = match usable_build_tool(package)? {
-            BuildTool::Gleam => self.compile_gleam_dep_package(package),
-            BuildTool::Rebar3 => self.compile_rebar3_dep_package(package),
-            BuildTool::Mix => self.compile_mix_dep_package(package),
+        // TODO: We could remove this clone if we split out the compilation of
+        // packages into their own classes and then only mutate self after we no
+        // longer need to have the package borrowed from self.packages.
+        let package = self.packages.get(name).expect("Missing package").clone();
+        let result = match usable_build_tool(&package)? {
+            BuildTool::Gleam => self.compile_gleam_dep_package(&package),
+            BuildTool::Rebar3 => self.compile_rebar3_dep_package(&package).map(|_| vec![]),
+            BuildTool::Mix => self.compile_mix_dep_package(&package).map(|_| vec![]),
         };
 
         // TODO: test. This one is not covered by the integration tests.
         if result.is_err() {
-            tracing::debug!(package=%package.name, "removing_failed_build");
-            self.io.delete(&self.paths.build_directory_for_package(
-                self.mode(),
-                self.target(),
-                &package.name,
-            ))?;
+            tracing::debug!(package=%name, "removing_failed_build");
+            let path = self
+                .paths
+                .build_directory_for_package(self.mode(), self.target(), name);
+            self.io.delete(&path)?;
         }
 
         result
@@ -261,9 +258,17 @@ where
         let mode = self.mode();
         let target = self.target();
 
+        let package_build = self.paths.build_directory_for_package(mode, target, name);
+
+        // TODO: test
+        if self.io.is_directory(&package_build) {
+            tracing::debug!(%name, "using_precompiled_rebar3_package");
+            return Ok(());
+        }
+
         // TODO: test
         if !self.options.codegen.should_codegen(false) {
-            tracing::debug!(%name, "skipping_mix_build_as_codegen_disabled");
+            tracing::debug!(%name, "skipping_rebar3_build_as_codegen_disabled");
             return Ok(());
         }
 
@@ -276,7 +281,6 @@ where
         let package = self.paths.build_packages_package(name);
         let build_packages = self.paths.build_directory_for_target(mode, target);
         let ebins = self.paths.build_packages_ebins_glob(mode, target);
-        let package_build = self.paths.build_directory_for_package(mode, target, name);
         let rebar3_path = |path: &Path| format!("../{}", path.to_str().expect("Build path"));
 
         tracing::debug!("copying_package_to_build");
@@ -319,6 +323,14 @@ where
         let target = self.target();
         let mix_target = "prod";
 
+        let dest = self.paths.build_directory_for_package(mode, target, name);
+
+        // TODO: test
+        if self.io.is_directory(&dest) {
+            tracing::debug!(%name, "using_precompiled_mix_package");
+            return Ok(());
+        }
+
         // TODO: test
         if !self.options.codegen.should_codegen(false) {
             tracing::debug!(%name, "skipping_mix_build_as_codegen_disabled");
@@ -338,7 +350,6 @@ where
         let up = paths::unnest(&project_dir);
         let mix_path = |path: &Path| up.join(path).to_str().unwrap_or_default().to_string();
         let ebins = self.paths.build_packages_ebins_glob(mode, target);
-        let dest = self.paths.build_directory_for_package(mode, target, name);
 
         // Elixir core libs must be loaded
         package_compiler::maybe_link_elixir_libs(&self.io, &build_dir, self.subprocess_stdio)?;
@@ -398,13 +409,32 @@ where
         }
     }
 
-    fn compile_gleam_dep_package(&mut self, package: &ManifestPackage) -> Result<(), Error> {
-        let config_path = self.paths.build_packages_package_config(&package.name);
+    fn compile_gleam_dep_package(
+        &mut self,
+        package: &ManifestPackage,
+    ) -> Result<Vec<Module>, Error> {
+        // TODO: Test
+        let package_root = match &package.source {
+            // If the path is relative it is relative to the root of the
+            // project, not to the current working directory. The language server
+            // could have the working directory and the project root in different
+            // places.
+            ManifestPackageSource::Local { path } if path.is_relative() => {
+                self.io.canonicalise(&self.paths.root().join(path))?
+            }
+
+            // If the path is absolute we can use it as-is.
+            ManifestPackageSource::Local { path } => path.clone(),
+
+            // Hex and Git packages are downloaded into the project's build
+            // directory.
+            ManifestPackageSource::Git { .. } | ManifestPackageSource::Hex { .. } => {
+                self.paths.build_packages_package(&package.name)
+            }
+        };
+        let config_path = package_root.join("gleam.toml");
         let config = PackageConfig::read(config_path, &self.io)?;
-        let root = self.paths.build_packages_package(&package.name);
-        self.compile_gleam_package(&config, false, root)
-            .map(|_| ())?;
-        Ok(())
+        self.compile_gleam_package(&config, false, package_root)
     }
 
     fn load_cached_package(
@@ -436,7 +466,7 @@ where
         let lib_path = self
             .paths
             .build_directory_for_target(self.mode(), self.target());
-        let mode = self.mode();
+        let mode = if is_root { self.mode() } else { Mode::Prod };
         let target = match self.target() {
             Target::Erlang => super::TargetCodegenConfiguration::Erlang {
                 app_file: Some(ErlangAppCodegenConfiguration {
@@ -468,6 +498,7 @@ where
             &mut self.warnings,
             &mut self.importable_modules,
             &mut self.defined_modules,
+            &mut self.stale_modules,
         )?;
 
         Ok(compiled)
@@ -523,10 +554,4 @@ pub(crate) fn usable_build_tool(package: &ManifestPackage) -> Result<BuildTool, 
         package: package.name.to_string(),
         build_tools: package.build_tools.clone(),
     })
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CheckpointState {
-    importable_modules: im::HashMap<SmolStr, type_::ModuleInterface>,
-    defined_modules: im::HashMap<SmolStr, PathBuf>,
 }

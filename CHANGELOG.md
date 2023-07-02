@@ -1,21 +1,28 @@
 # Changelog
 
-## Unreleased
+## v0.30.0-rc2 - Unreleased
+
+- Fixed a bug where `gleam fix` would merge external functions of the same name
+  but incompatible types.
+
+## v0.30.0-rc1 - 2023-06-29
 
 - The new `@target(erlang)` and `@target(javascript)` attribute syntax has been
   added for conditional compilation. The existing `if` conditional compilation
-  syntax has been deprecated. Run `gleam format` to update your code.
+  syntax has been deprecated. Run `gleam fix` to update your code.
 - The new `type TypeName` syntax syntax replaces the `external type TypeName`
   syntax. The existing external type syntax has been deprecated. Run `gleam format`
   to update your code.
 - Adding a new dependency now unlocks the target package. This helps avoid
   failing to find a suitable version for the package due to already being
   locked.
+- A custom message can now be specified for `panic` with `panic as "..."`.
+- The syntax for specifying a custom message for `todo` is now `todo as "..."`.
+- The Erlang error raised by `let assert` is now tagged `let_assert`.
 - Types named `Dynamic` are now called `dynamic_` in Erlang to avoid a clash
   with the new Erlang `dynamic` type introduced in OTP26.
-- Dependencies can now be loaded from paths. Path dependencies currently use
-  the same semantics as hex dependencies, and must be updated using the command
-  `gleam deps update` to load changes.
+- Dependencies can now be loaded from paths using the 
+  `packagename = { path = "..." }` syntax in `gleam.toml`.
 - The `javascript.deno.unstable` field in `gleam.toml` can now be used to
   enable Deno's unstable APIs when targeting JavaScript.
 - Blockquotes are now styled in rendered HTML documentation.
@@ -24,6 +31,7 @@
 - Type aliases can now refer to type aliases defined later in the same module.
 - Fixed a bug where unapplied record constructors in constant expressions would
   generate invalid Erlang.
+- Fixed a bug where the prescedence of `<>` and `|>` would clash.
 - Fixed a bug where `gleam docs build` would print an incorrect path upon
   completion.
 - Warnings from dependency packages are no longer surfaced in the language

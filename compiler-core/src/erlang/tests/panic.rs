@@ -1,6 +1,17 @@
 use crate::assert_erl;
 
 #[test]
+fn panic_as() {
+    assert_erl!(
+        r#"
+pub fn main() {
+  panic as "wibble"
+}
+"#
+    );
+}
+
+#[test]
 fn plain() {
     assert_erl!(
         r#"

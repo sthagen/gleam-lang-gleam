@@ -12,7 +12,7 @@ use gleam_core::{
     dependency,
     error::{FileIoAction, FileKind, StandardIoAction},
     hex::{self, HEXPM_PUBLIC_KEY},
-    io::{FileSystemWriter, HttpClient as _, TarUnpacker, WrappedReader},
+    io::{HttpClient as _, TarUnpacker, WrappedReader},
     manifest::{Base16Checksum, Manifest, ManifestPackage, ManifestPackageSource},
     paths::ProjectPaths,
     requirement::Requirement,
@@ -205,24 +205,6 @@ async fn add_missing_packages<Telem: Telemetry>(
 ) -> Result<(), Error> {
     let missing_packages = local.missing_local_packages(manifest, &project_name);
 
-    // Link local paths
-    for package in missing_packages.iter() {
-        let package_dest = paths.build_packages_package(&package.name);
-        match &package.source {
-            ManifestPackageSource::Hex { .. } => Ok(()),
-            ManifestPackageSource::Local { path } => {
-                fs.delete(&package_dest)?;
-                fs.mkdir(&package_dest)?;
-                fs.copy_dir(&path.join("src"), &package_dest)?;
-                if path.join("priv").exists() {
-                    fs.copy_dir(&path.join("priv"), &package_dest)?;
-                }
-                fs.copy(&path.join("gleam.toml"), &package_dest.join("gleam.toml"))
-            }
-            ManifestPackageSource::Git { .. } => Ok(()),
-        }?
-    }
-
     let mut num_to_download = 0;
     let mut missing_hex_packages = missing_packages
         .into_iter()
@@ -329,12 +311,12 @@ impl LocalPackages {
         manifest
             .packages
             .iter()
-            .filter(|p| {
-                p.name != root && {
-                    self.packages.get(&p.name) != Some(&p.version)
-                        || matches!(p.source, ManifestPackageSource::Local { .. })
-                }
-            })
+            // We don't need to download the root package
+            .filter(|p| p.name != root)
+            // We don't need to download local packages because we use the linked source directly
+            .filter(|p| !p.is_local())
+            // We don't need to download packages which we have the correct version of
+            .filter(|p| self.packages.get(&p.name) != Some(&p.version))
             .collect()
     }
 
