@@ -438,8 +438,12 @@ of the Gleam dependency modules."
 external functions so they were not all converted to the new
 syntax.
 
-If you know what target should be used for all these ambiguous
-functions run this command again with the --target flag set:
+This happens when an external function was not within conditional
+compilation for a specific target, and the module doesn't include
+`.mjs` or similar.
+
+If you know what target should be used for all ambiguous functions
+run this command again with the --target flag set:
 
     gleam fix --target erlang
     gleam fix --target javascript
