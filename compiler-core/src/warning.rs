@@ -168,6 +168,26 @@ impl Warning {
                     }
                 }
 
+                crate::parse::Warning::DeprecatedExternalFn { location } => {
+                    let text =
+                        "This syntax has been replaced by the `@external` attribute.\n".into();
+                    Diagnostic {
+                        title: "Deprecated external fn syntax".into(),
+                        text,
+                        hint: Some("Run `gleam fix` to auto-fix your code.".into()),
+                        level: diagnostic::Level::Warning,
+                        location: Some(Location {
+                            path: path.to_path_buf(),
+                            src: src.clone(),
+                            label: diagnostic::Label {
+                                text: None,
+                                span: *location,
+                            },
+                            extra_labels: Vec::new(),
+                        }),
+                    }
+                }
+
                 crate::parse::Warning::DeprecatedTodo { location, message } => {
                     let text = format!(
                         "The `todo()` syntax has been replaced by this syntax:
@@ -214,7 +234,9 @@ impl Warning {
 
             Warning::InvalidSource { path } => Diagnostic {
                 title: "Invalid module name.".into(),
-                text: "Module names must begin with a lowercase letter and contain only lowercase alphanumeric characters or underscores.".into(),
+                text: "Module names must begin with a lowercase letter and contain\
+ only lowercase alphanumeric characters or underscores."
+                    .into(),
                 level: diagnostic::Level::Warning,
                 location: None,
                 hint: Some(format!(

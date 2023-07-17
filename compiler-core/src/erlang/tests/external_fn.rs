@@ -218,3 +218,27 @@ fn do() -> Int
 "#
     );
 }
+
+#[test]
+fn elixir() {
+    assert_erl!(
+        r#"
+pub fn main() {
+  #(do, do())
+}
+
+@external(erlang, "Elixir.String", "main")
+fn do() -> Int
+"#
+    );
+}
+
+#[test]
+fn public_elixir() {
+    assert_erl!(
+        r#"
+@external(erlang, "Elixir.String", "main")
+pub fn do() -> Int
+"#
+    );
+}
