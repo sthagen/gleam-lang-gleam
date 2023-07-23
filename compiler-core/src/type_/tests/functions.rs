@@ -60,3 +60,28 @@ fn call(f: fn() -> a) {
         vec![(r#"main"#, r#"fn() -> String"#)]
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/2275
+#[test]
+fn bug_2275() {
+    assert_module_infer!(
+        r#"
+pub fn main() {
+  one
+  Nil
+}
+
+fn one() {
+  one
+  two
+  Nil
+}
+
+fn two() {
+  two
+  Nil
+}
+"#,
+        vec![(r#"main"#, r#"fn() -> Nil"#)]
+    );
+}
