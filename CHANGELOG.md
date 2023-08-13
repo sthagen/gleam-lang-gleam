@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- The highlight.js grammar included with generated HTML documentation has been
+  updated for the latest syntax.
+- Packages are no longer precompiled to Erlang when publishing to Hex if the
+  package target is set to JavaScript.
+- Fixed a bug where mutually recursive functions could be incorrectly inferred
+  as having an overly general type.
+
+## v0.30.4 - 2023-07-26
+
+- External implementations are always referenced directly in generated code, to
+  avoid the overhead of an extra function call.
+- Fixed a bug where the compiler could infer incorrect generic type parameters
+  when analysing a module without type annotations with self recursive
+  functions that reference themselves multiple times.
+
+## v0.30.3 - 2023-07-23
+
+- Fixed a bug where JavaScript module path such as `node:fs` would be rejected.
+- New Gleam projects are created with `gleam_stdlib` v0.30, Erlang OTP v26.0.2,
+  Elixir v1.15.4, actions/checkout v3.5.1, and erlef/setup-beam v1.16.0.
+
+## v0.30.2 - 2023-07-20
+
 - Fixed a bug where the compiler could infer incorrect generic type parameters
   when analysing a module without type annotations with self recursive
   functions.

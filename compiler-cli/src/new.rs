@@ -1,3 +1,4 @@
+use camino::{Utf8Path, Utf8PathBuf};
 use gleam_core::{
     erlang,
     error::{Error, FileIoAction, FileKind, InvalidProjectNameReason},
@@ -5,7 +6,6 @@ use gleam_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::path::{Path, PathBuf};
 use std::{env, io::Write};
 use strum::{Display, EnumString, EnumVariantNames};
 
@@ -14,11 +14,11 @@ mod tests;
 
 use crate::NewOptions;
 
-const GLEAM_STDLIB_VERSION: &str = "0.29";
+const GLEAM_STDLIB_VERSION: &str = "0.30";
 const GLEEUNIT_VERSION: &str = "0.10";
-const ERLANG_OTP_VERSION: &str = "25.2";
+const ERLANG_OTP_VERSION: &str = "26.0.2";
 const REBAR3_VERSION: &str = "3";
-const ELIXIR_VERSION: &str = "1.14.2";
+const ELIXIR_VERSION: &str = "1.15.4";
 
 #[derive(Debug, Serialize, Deserialize, Display, EnumString, EnumVariantNames, Clone, Copy)]
 #[strum(serialize_all = "kebab_case")]
@@ -28,11 +28,11 @@ pub enum Template {
 
 #[derive(Debug)]
 pub struct Creator {
-    root: PathBuf,
-    src: PathBuf,
-    test: PathBuf,
-    github: PathBuf,
-    workflows: PathBuf,
+    root: Utf8PathBuf,
+    src: Utf8PathBuf,
+    test: Utf8PathBuf,
+    github: Utf8PathBuf,
+    workflows: Utf8PathBuf,
     gleam_version: &'static str,
     options: NewOptions,
     project_name: String,
@@ -51,7 +51,7 @@ impl Creator {
         validate_name(&project_name)?;
         validate_root_folder(&options.project_root)?;
 
-        let root = PathBuf::from(&options.project_root);
+        let root = Utf8PathBuf::from(&options.project_root);
         let src = root.join("src");
         let test = root.join("test");
         let github = root.join(".github");
@@ -179,8 +179,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3.5.1
-      - uses: erlef/setup-beam@v1.15.4
+      - uses: actions/checkout@v3.5.3
+      - uses: erlef/setup-beam@v1.16.0
         with:
           otp-version: "{}"
           gleam-version: "{}"
@@ -266,7 +266,7 @@ The project can be compiled and tested by running these commands:
     Ok(())
 }
 
-fn write(path: PathBuf, contents: &str) -> Result<()> {
+fn write(path: Utf8PathBuf, contents: &str) -> Result<()> {
     let mut f = File::create(&path).map_err(|err| Error::FileIo {
         kind: FileKind::File,
         path: path.clone(),
@@ -285,7 +285,7 @@ fn write(path: PathBuf, contents: &str) -> Result<()> {
 }
 
 fn validate_root_folder(name: &str) -> Result<(), Error> {
-    if Path::new(name).exists() {
+    if Utf8Path::new(name).exists() {
         Err(Error::ProjectRootAlreadyExist {
             path: name.to_string(),
         })
@@ -343,9 +343,8 @@ fn get_foldername(path: &str) -> Result<String, Error> {
             .ok_or(Error::UnableToFindProjectRoot {
                 path: path.to_string(),
             }),
-        _ => Path::new(path)
+        _ => Utf8Path::new(path)
             .file_name()
-            .and_then(|x| x.to_str())
             .map(ToString::to_string)
             .ok_or(Error::UnableToFindProjectRoot {
                 path: path.to_string(),

@@ -1,6 +1,6 @@
 [package]
 name = "test-package-compiler"
-version = "0.30.2"
+version = "0.30.5"
 authors = ["Louis Pilfold <louis@lpil.uk>"]
 edition = "2021"
 license-file = "LICENCE"
@@ -17,6 +17,7 @@ itertools = "0.10.1"
 walkdir = "2.3.2"
 # Regular expressions
 regex = "*"
+camino = "1.1.6"
 
 [dev-dependencies]
 # Snapshot testing to make test maintenance easier
