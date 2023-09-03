@@ -174,11 +174,7 @@ utf16_codepoint, utf32_codepoint, signed, unsigned, big, little, native, size, u
 
                 ("I was not expecting this.", messages)
             }
-            ParseErrorType::ExpectedBoolean => (
-                "Did you mean to negate a boolean?",
-                // TODO: (HarryET): Get a hint for missing boolean
-                vec![],
-            ),
+            ParseErrorType::ExpectedBoolean => ("Did you mean to negate a boolean?", vec![]),
             ParseErrorType::ConcatPatternVariableLeftHandSide => (
                 "This must be a string literal",
                 vec![
@@ -198,14 +194,15 @@ utf16_codepoint, utf32_codepoint, signed, unsigned, big, little, native, size, u
                 vec!["If a list expression has a spread then a tail must also be given.".into()],
             ),
             ParseErrorType::UnknownAttribute => (
-                "I was expecting a target name here",
-                vec!["Try `erlang` or `javascript` instead.".into()],
+                "I don't recognise this attribute",
+                vec!["Try `external` or `target` instead.".into()],
             ),
             ParseErrorType::DuplicateAttribute => (
                 "Duplicate attribute",
                 vec!["This attribute has already been given.".into()],
             ),
             ParseErrorType::UnknownTarget => ("I don't know what this attribute is", vec![]),
+            ParseErrorType::ExpectedFunctionBody => ("This function does not have a body", vec![]),
         }
     }
 }
@@ -256,7 +253,8 @@ pub enum ParseErrorType {
     UnexpectedFunction, // a function was used called outside of another function
     // A variable was assigned or discarded on the left hand side of a <> pattern
     ConcatPatternVariableLeftHandSide,
-    ListSpreadWithoutTail,
+    ListSpreadWithoutTail, // let x = [1, ..]
+    ExpectedFunctionBody,  // let x = fn()
 }
 
 impl LexicalError {

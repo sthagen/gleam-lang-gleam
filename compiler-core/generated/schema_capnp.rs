@@ -2051,6 +2051,14 @@ pub mod value_constructor {
     pub fn get_public(self) -> bool {
       self.reader.get_bool_field(0)
     }
+    #[inline]
+    pub fn get_deprecated(self) -> ::capnp::Result<::capnp::text::Reader<'a>> {
+      ::capnp::traits::FromPointerReader::get_from_pointer(&self.reader.get_pointer_field(2), ::core::option::Option::None)
+    }
+    #[inline]
+    pub fn has_deprecated(&self) -> bool {
+      !self.reader.get_pointer_field(2).is_null()
+    }
   }
 
   pub struct Builder<'a> { builder: ::capnp::private::layout::StructBuilder<'a> }
@@ -2141,6 +2149,22 @@ pub mod value_constructor {
     pub fn set_public(&mut self, value: bool)  {
       self.builder.set_bool_field(0, value);
     }
+    #[inline]
+    pub fn get_deprecated(self) -> ::capnp::Result<::capnp::text::Builder<'a>> {
+      ::capnp::traits::FromPointerBuilder::get_from_pointer(self.builder.get_pointer_field(2), ::core::option::Option::None)
+    }
+    #[inline]
+    pub fn set_deprecated(&mut self, value: ::capnp::text::Reader<'_>)  {
+      self.builder.get_pointer_field(2).set_text(value);
+    }
+    #[inline]
+    pub fn init_deprecated(self, size: u32) -> ::capnp::text::Builder<'a> {
+      self.builder.get_pointer_field(2).init_text(size)
+    }
+    #[inline]
+    pub fn has_deprecated(&self) -> bool {
+      !self.builder.get_pointer_field(2).is_null()
+    }
   }
 
   pub struct Pipeline { _typeless: ::capnp::any_pointer::Pipeline }
@@ -2159,7 +2183,7 @@ pub mod value_constructor {
   }
   mod _private {
     use capnp::private::layout;
-    pub const STRUCT_SIZE: layout::StructSize = layout::StructSize { data: 1, pointers: 2 };
+    pub const STRUCT_SIZE: layout::StructSize = layout::StructSize { data: 1, pointers: 3 };
     pub const TYPE_ID: u64 = 0xd4c6_d8f1_a8fb_051c;
   }
 }

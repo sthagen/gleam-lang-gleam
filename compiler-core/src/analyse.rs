@@ -2,14 +2,14 @@
 mod tests;
 
 use crate::ast::{UntypedArg, UntypedStatement};
-use crate::dep_tree;
 use crate::type_::error::MissingAnnotation;
+use crate::type_::Deprecation;
 use crate::{
     ast::{
-        self, BitStringSegmentOption, CustomType, Definition, DefinitionLocation, ExternalFunction,
-        Function, GroupedStatements, Import, Layer, ModuleConstant, ModuleFunction,
-        RecordConstructor, RecordConstructorArg, SrcSpan, TypeAlias, TypeAst, TypedDefinition,
-        TypedModule, UnqualifiedImport, UntypedModule,
+        self, BitStringSegmentOption, CustomType, Definition, DefinitionLocation, Function,
+        GroupedStatements, Import, Layer, ModuleConstant, RecordConstructor, RecordConstructorArg,
+        SrcSpan, TypeAlias, TypeAst, TypedDefinition, TypedModule, UnqualifiedImport,
+        UntypedModule,
     },
     build::{Origin, Target},
     call_graph::into_dependency_order,
@@ -27,6 +27,7 @@ use crate::{
     uid::UniqueIdGenerator,
     warning::TypeWarningEmitter,
 };
+use crate::{dep_tree, GLEAM_CORE_PACKAGE_NAME};
 use itertools::Itertools;
 use smol_str::SmolStr;
 use std::{collections::HashMap, sync::Arc};
@@ -65,10 +66,11 @@ impl Inferred<PatternConstructor> {
 }
 
 // TODO: This takes too many arguments.
+#[allow(clippy::too_many_arguments)]
 /// Crawl the AST, annotating each node with the inferred type or
 /// returning an error.
 ///
-pub fn infer_module(
+pub fn infer_module<A>(
     target: Target,
     ids: &UniqueIdGenerator,
     mut module: UntypedModule,
@@ -76,6 +78,7 @@ pub fn infer_module(
     package: &SmolStr,
     modules: &im::HashMap<SmolStr, ModuleInterface>,
     warnings: &TypeWarningEmitter,
+    direct_dependencies: &HashMap<SmolStr, A>,
 ) -> Result<TypedModule, Error> {
     let name = module.name.clone();
     let documentation = std::mem::take(&mut module.documentation);
@@ -115,9 +118,6 @@ pub fn infer_module(
     for f in &statements.functions {
         register_value_from_function(f, &mut value_names, &mut env, &mut hydrators, &name)?;
     }
-    for ef in &statements.external_functions {
-        register_external_function(ef, &mut value_names, &mut env)?;
-    }
     for t in &statements.custom_types {
         register_values_from_custom_type(t, &mut hydrators, &mut env, &mut value_names, &name)?;
     }
@@ -125,7 +125,13 @@ pub fn infer_module(
     // Infer the types of each statement in the module
     let mut typed_statements = Vec::with_capacity(statements_count);
     for i in statements.imports {
-        let statement = record_imported_items_for_use_detection(i, &mut env)?;
+        let statement = record_imported_items_for_use_detection(
+            i,
+            package,
+            direct_dependencies,
+            warnings,
+            &mut env,
+        )?;
         typed_statements.push(statement);
     }
     for t in statements.custom_types {
@@ -144,26 +150,14 @@ pub fn infer_module(
     // Sort the functions into dependency order for inference. Functions that do
     // not depend on other functions are inferred first, then ones that depend
     // on those, etc.
-    let functions = statements
-        .functions
-        .into_iter()
-        .map(ModuleFunction::Internal);
-    let external_functions = statements
-        .external_functions
-        .into_iter()
-        .map(ModuleFunction::External);
-    let functions = functions.chain(external_functions).collect_vec();
-    let function_groups = into_dependency_order(functions)?;
+    let function_groups = into_dependency_order(statements.functions)?;
     let mut working_group = vec![];
 
     for group in function_groups {
         // A group may have multiple functions that depend on each other through
         // mutual recursion.
         for function in group {
-            let inferred = match function {
-                ModuleFunction::Internal(f) => infer_function(f, &mut env, &mut hydrators, &name)?,
-                ModuleFunction::External(f) => infer_external_function(f, &mut env)?,
-            };
+            let inferred = infer_function(function, &mut env, &mut hydrators, &name)?;
             working_group.push(inferred);
         }
 
@@ -248,6 +242,7 @@ pub fn register_import(
                 imported_modules: environment.imported_modules.keys().cloned().collect(),
             })?;
 
+    // Modules in `src/` cannot import modules from `test/`
     if origin.is_src() && !module_info.origin.is_src() {
         return Err(Error::SrcImportingTest {
             location: *location,
@@ -292,6 +287,7 @@ pub fn register_import(
                 value.variant.clone(),
                 value.type_.clone(),
                 true,
+                Deprecation::NotDeprecated,
             );
             variant = Some(&value.variant);
             value_imported = true;
@@ -443,6 +439,9 @@ fn register_types_from_custom_type<'a>(
     assert_unique_type_name(names, name, *location)?;
     let mut hydrator = Hydrator::new();
     let parameters = make_type_vars(parameters, location, &mut hydrator, environment)?;
+
+    hydrator.clear_ridgid_type_names();
+
     let typ = Arc::new(Type::App {
         public: *public,
         module: module.to_owned(),
@@ -540,6 +539,7 @@ fn register_values_from_custom_type(
         environment.insert_module_value(
             constructor.name.clone(),
             ValueConstructor {
+                deprecation: Deprecation::NotDeprecated,
                 public: *public && !opaque,
                 type_: typ.clone(),
                 variant: constructor_info.clone(),
@@ -554,72 +554,14 @@ fn register_values_from_custom_type(
             );
         }
 
-        environment.insert_variable(constructor.name.clone(), constructor_info, typ, *public);
+        environment.insert_variable(
+            constructor.name.clone(),
+            constructor_info,
+            typ,
+            *public,
+            Deprecation::NotDeprecated,
+        );
     }
-    Ok(())
-}
-
-fn register_external_function(
-    f: &ExternalFunction<()>,
-    names: &mut HashMap<SmolStr, SrcSpan>,
-    environment: &mut Environment<'_>,
-) -> Result<(), Error> {
-    let ExternalFunction {
-        location,
-        name,
-        public,
-        arguments: args,
-        return_: retrn,
-        module,
-        fun,
-        documentation,
-        ..
-    } = f;
-    assert_unique_name(names, name, *location)?;
-    let mut hydrator = Hydrator::new();
-    let (typ, field_map) = environment.in_new_scope(|environment| {
-        let return_type = hydrator.type_from_ast(retrn, environment)?;
-        let mut args_types = Vec::with_capacity(args.len());
-        let mut builder = FieldMapBuilder::new(args.len() as u32);
-
-        for arg in args.iter() {
-            args_types.push(hydrator.type_from_ast(&arg.annotation, environment)?);
-            builder.add(arg.label.as_ref(), arg.location)?;
-        }
-        let typ = fn_(args_types, return_type);
-        Ok((typ, builder.finish()))
-    })?;
-    environment.insert_module_value(
-        name.clone(),
-        ValueConstructor {
-            public: *public,
-            type_: typ.clone(),
-            variant: ValueConstructorVariant::ModuleFn {
-                documentation: documentation.clone(),
-                name: fun.clone(),
-                field_map: field_map.clone(),
-                module: module.clone(),
-                arity: args.len(),
-                location: *location,
-            },
-        },
-    );
-    environment.insert_variable(
-        name.clone(),
-        ValueConstructorVariant::ModuleFn {
-            documentation: documentation.clone(),
-            name: fun.clone(),
-            module: module.clone(),
-            arity: args.len(),
-            field_map,
-            location: *location,
-        },
-        typ,
-        *public,
-    );
-    if !public {
-        environment.init_usage(name.clone(), EntityKind::PrivateFunction, *location);
-    };
     Ok(())
 }
 
@@ -639,7 +581,10 @@ fn register_value_from_function(
         documentation,
         external_erlang,
         external_javascript,
-        ..
+        deprecation,
+        end_position: _,
+        body: _,
+        return_type: _,
     } = f;
     assert_unique_name(names, name, *location)?;
     assert_valid_javascript_external(name, external_javascript.as_ref(), *location)?;
@@ -674,7 +619,7 @@ fn register_value_from_function(
         arity: args.len(),
         location: *location,
     };
-    environment.insert_variable(name.clone(), variant, typ, *public);
+    environment.insert_variable(name.clone(), variant, typ, *public, deprecation.clone());
     if !public {
         environment.init_usage(name.clone(), EntityKind::PrivateFunction, *location);
     };
@@ -728,9 +673,10 @@ fn infer_function(
         body,
         return_annotation,
         end_position: end_location,
+        deprecation,
         external_erlang,
         external_javascript,
-        ..
+        return_type: (),
     } = f;
     let preregistered_fn = environment
         .get_variable(&name)
@@ -788,13 +734,20 @@ fn infer_function(
         arity: args.len(),
         location,
     };
-    environment.insert_variable(name.clone(), variant, type_.clone(), public);
+    environment.insert_variable(
+        name.clone(),
+        variant,
+        type_.clone(),
+        public,
+        deprecation.clone(),
+    );
 
     Ok(Definition::Function(Function {
         documentation: doc,
         location,
         name,
         public,
+        deprecation,
         arguments: args,
         end_position: end_location,
         return_annotation,
@@ -861,46 +814,6 @@ fn ensure_annotations_present(
         });
     }
     Ok(())
-}
-
-fn infer_external_function(
-    f: ExternalFunction<()>,
-    environment: &mut Environment<'_>,
-) -> Result<TypedDefinition, Error> {
-    let ExternalFunction {
-        documentation: doc,
-        location,
-        name,
-        public,
-        arguments: args,
-        return_: retrn,
-        module,
-        fun,
-        ..
-    } = f;
-    let preregistered_fn = environment
-        .get_variable(&name)
-        .expect("Could not find preregistered type value function");
-    let preregistered_type = preregistered_fn.type_.clone();
-    let (args_types, return_type) = preregistered_type
-        .fn_types()
-        .expect("Preregistered type for fn was not a fn");
-    let args = args
-        .into_iter()
-        .zip(&args_types)
-        .map(|(a, t)| a.set_type(t.clone()))
-        .collect();
-    Ok(Definition::ExternalFunction(ExternalFunction {
-        return_type,
-        documentation: doc,
-        location,
-        name,
-        public,
-        arguments: args,
-        return_: retrn,
-        module,
-        fun,
-    }))
 }
 
 fn insert_type_alias(
@@ -1016,8 +929,11 @@ fn infer_custom_type(
     }))
 }
 
-fn record_imported_items_for_use_detection(
+fn record_imported_items_for_use_detection<A>(
     i: Import<()>,
+    current_package: &str,
+    direct_dependencies: &HashMap<SmolStr, A>,
+    warnings: &TypeWarningEmitter,
     environment: &mut Environment<'_>,
 ) -> Result<TypedDefinition, Error> {
     let Import {
@@ -1045,6 +961,21 @@ fn record_imported_items_for_use_detection(
             import.layer = Layer::Type;
         }
     }
+
+    // Modules should belong to a package that is a direct dependency of the
+    // current package to be imported.
+    // Upgrade this to an error in future.
+    if module_info.package != GLEAM_CORE_PACKAGE_NAME
+        && module_info.package != current_package
+        && !direct_dependencies.contains_key(&module_info.package)
+    {
+        warnings.emit(type_::Warning::TransitiveDependencyImported {
+            location,
+            module: module_info.name.clone(),
+            package: module_info.package.clone(),
+        })
+    }
+
     Ok(Definition::Import(Import {
         documentation,
         location,
@@ -1073,6 +1004,7 @@ fn infer_module_constant(
     let type_ = typed_expr.type_();
     let variant = ValueConstructor {
         public,
+        deprecation: Deprecation::NotDeprecated,
         variant: ValueConstructorVariant::ModuleConstant {
             documentation: doc.clone(),
             location,
@@ -1082,7 +1014,13 @@ fn infer_module_constant(
         type_: type_.clone(),
     };
 
-    environment.insert_variable(name.clone(), variant.variant.clone(), type_.clone(), public);
+    environment.insert_variable(
+        name.clone(),
+        variant.variant.clone(),
+        type_.clone(),
+        public,
+        Deprecation::NotDeprecated,
+    );
     environment.insert_module_value(name.clone(), variant);
 
     if !public {
@@ -1178,7 +1116,6 @@ fn generalise_statement(
 
         statement @ (Definition::TypeAlias(TypeAlias { .. })
         | Definition::CustomType(CustomType { .. })
-        | Definition::ExternalFunction(ExternalFunction { .. })
         | Definition::Import(Import { .. })
         | Definition::ModuleConstant(ModuleConstant { .. })) => statement,
     }
@@ -1194,6 +1131,7 @@ fn generalise_function(
         location,
         name,
         public,
+        deprecation,
         arguments: args,
         body,
         return_annotation,
@@ -1220,6 +1158,7 @@ fn generalise_function(
         name.clone(),
         ValueConstructor {
             public,
+            deprecation: deprecation.clone(),
             type_: typ,
             variant: ValueConstructorVariant::ModuleFn {
                 documentation: doc.clone(),
@@ -1237,6 +1176,7 @@ fn generalise_function(
         location,
         name,
         public,
+        deprecation,
         arguments: args,
         end_position: end_location,
         return_annotation,

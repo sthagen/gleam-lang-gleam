@@ -2,12 +2,27 @@
 
 ## Unreleased
 
+- A warning is now emitted if a module from a transitive dependency is imported.
+- Record access can now be used in case clause guards.
+- The `if` conditional compilation, `external fn`, and `external type` syntaxes
+  have been removed.
+- The `description` flag for the `gleam new` command has been removed.
 - The highlight.js grammar included with generated HTML documentation has been
   updated for the latest syntax.
 - Packages are no longer precompiled to Erlang when publishing to Hex if the
   package target is set to JavaScript.
 - Fixed a bug where mutually recursive functions could be incorrectly inferred
   as having an overly general type.
+- Fixed a bug where recursive type constructors could incorrectly infer a type
+  error.
+- Fixed a bug where constants where not being correctly inlined when used in the 
+  size option of a bitstring pattern match.
+- Fixed a bug where anonymous functions could parse successfully when missing a
+  body.
+- Fixed a bug where incorrect unused variable warnings could be emitted for code
+  that doesn't type check.
+- Hovering over a function definition will now display the function signature,
+  or the type of the hovered argument.
 
 ## v0.30.4 - 2023-07-26
 

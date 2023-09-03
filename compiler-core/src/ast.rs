@@ -12,7 +12,9 @@ pub use self::constant::{Constant, TypedConstant, UntypedConstant};
 
 use crate::analyse::Inferred;
 use crate::build::{Located, Target};
-use crate::type_::{self, ModuleValueConstructor, PatternConstructor, Type, ValueConstructor};
+use crate::type_::{
+    self, Deprecation, ModuleValueConstructor, PatternConstructor, Type, ValueConstructor,
+};
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -62,38 +64,14 @@ impl TypedModule {
 /// ```
 ///
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TargettedDefinition {
-    Any(UntypedDefinition),
-    Only(Target, UntypedDefinition),
+pub struct TargettedDefinition {
+    pub definition: UntypedDefinition,
+    pub target: Option<Target>,
 }
 
 impl TargettedDefinition {
     pub fn is_for(&self, target: Target) -> bool {
-        match self {
-            Self::Any(_) => true,
-            Self::Only(t, _) => *t == target,
-        }
-    }
-
-    pub fn into_inner(self) -> UntypedDefinition {
-        match self {
-            Self::Any(s) => s,
-            Self::Only(_, s) => s,
-        }
-    }
-
-    pub fn inner(&self) -> &UntypedDefinition {
-        match self {
-            Self::Any(s) => s,
-            Self::Only(_, s) => s,
-        }
-    }
-
-    pub fn target(&self) -> Option<Target> {
-        match self {
-            Self::Any(_) => None,
-            Self::Only(t, _) => Some(*t),
-        }
+        self.target.map(|t| t == target).unwrap_or(true)
     }
 }
 
@@ -112,15 +90,15 @@ impl UntypedModule {
     pub fn iter_statements(&self, target: Target) -> impl Iterator<Item = &UntypedDefinition> {
         self.definitions
             .iter()
-            .filter(move |group| group.is_for(target))
-            .map(|group| group.inner())
+            .filter(move |def| def.is_for(target))
+            .map(|def| &def.definition)
     }
 
     pub fn into_iter_statements(self, target: Target) -> impl Iterator<Item = UntypedDefinition> {
         self.definitions
             .into_iter()
-            .filter(move |group| group.is_for(target))
-            .map(|group| group.into_inner())
+            .filter(move |def| def.is_for(target))
+            .map(|def| def.definition)
     }
 }
 
@@ -128,8 +106,12 @@ impl UntypedModule {
 fn module_dependencies_test() {
     let parsed = crate::parse::parse_module(
         "import one 
-         if erlang { import two } 
-         if javascript { import three } 
+         @target(erlang)
+         import two
+
+         @target(javascript)
+         import three
+
          import four",
     )
     .expect("syntax error");
@@ -138,8 +120,8 @@ fn module_dependencies_test() {
     assert_eq!(
         vec![
             ("one".into(), SrcSpan::new(7, 10)),
-            ("two".into(), SrcSpan::new(40, 43)),
-            ("four".into(), SrcSpan::new(104, 108)),
+            ("two".into(), SrcSpan::new(53, 56)),
+            ("four".into(), SrcSpan::new(126, 130)),
         ],
         module.dependencies(Target::Erlang)
     );
@@ -147,8 +129,6 @@ fn module_dependencies_test() {
 
 pub type TypedArg = Arg<Arc<Type>>;
 pub type UntypedArg = Arg<()>;
-pub type TypedExternalFnArg = ExternalFnArg<Arc<Type>>;
-pub type UntypedExternalFnArg = ExternalFnArg<()>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arg<T> {
@@ -170,17 +150,6 @@ impl<A> Arg<A> {
 
     pub fn get_variable_name(&self) -> Option<&SmolStr> {
         self.names.get_variable_name()
-    }
-}
-
-impl<A> ExternalFnArg<A> {
-    pub fn set_type<B>(self, t: B) -> ExternalFnArg<B> {
-        ExternalFnArg {
-            location: self.location,
-            label: self.label,
-            annotation: self.annotation,
-            type_: t,
-        }
     }
 }
 
@@ -359,29 +328,6 @@ impl TypeAst {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Import a function defined outside of Gleam code.
-/// When compiling to Erlang the function could be implemented in Erlang
-/// or Elixir, when compiling to JavaScript it might be implemented in
-/// JavaScript or TypeScript.
-///
-/// # Example(s)
-///
-/// ```gleam
-/// pub external fn random_float() -> Float = "rand" "uniform"
-/// ```
-pub struct ExternalFunction<T> {
-    pub location: SrcSpan,
-    pub public: bool,
-    pub arguments: Vec<ExternalFnArg<T>>,
-    pub name: SmolStr,
-    pub return_: TypeAst,
-    pub return_type: T,
-    pub module: SmolStr,
-    pub fun: SmolStr,
-    pub documentation: Option<SmolStr>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 /// A function definition
 ///
 /// # Example(s)
@@ -399,6 +345,7 @@ pub struct Function<T, Expr> {
     pub arguments: Vec<Arg<T>>,
     pub body: Vec1<Statement<T, Expr>>,
     pub public: bool,
+    pub deprecation: Deprecation,
     pub return_annotation: Option<TypeAst>,
     pub return_type: T,
     pub documentation: Option<SmolStr>,
@@ -535,8 +482,6 @@ pub enum Definition<T, Expr, ConstantRecordTag, PackageName> {
 
     CustomType(CustomType<T>),
 
-    ExternalFunction(ExternalFunction<T>),
-
     Import(Import<PackageName>),
 
     ModuleConstant(ModuleConstant<T, ConstantRecordTag>),
@@ -550,10 +495,28 @@ impl TypedDefinition {
                     return Some(found);
                 };
 
+                if let Some(found_arg) = function
+                    .arguments
+                    .iter()
+                    .find(|arg| arg.location.contains(byte_index))
+                {
+                    return Some(Located::Arg(found_arg));
+                };
+
+                if let Some(found_statement) = function
+                    .body
+                    .iter()
+                    .find(|statement| statement.location().contains(byte_index))
+                {
+                    return Some(Located::Statement(found_statement));
+                };
+
                 // Note that the fn `.location` covers the function head, not
                 // the entire statement.
-                if function.full_location().contains(byte_index) {
+                if function.location.contains(byte_index) {
                     Some(Located::ModuleStatement(self))
+                } else if function.full_location().contains(byte_index) {
+                    Some(Located::FunctionBody(function))
                 } else {
                     None
                 }
@@ -569,10 +532,7 @@ impl TypedDefinition {
                 }
             }
 
-            Definition::TypeAlias(_)
-            | Definition::ExternalFunction(_)
-            | Definition::Import(_)
-            | Definition::ModuleConstant(_) => {
+            Definition::TypeAlias(_) | Definition::Import(_) | Definition::ModuleConstant(_) => {
                 if self.location().contains(byte_index) {
                     Some(Located::ModuleStatement(self))
                 } else {
@@ -590,7 +550,6 @@ impl<A, B, C, E> Definition<A, B, C, E> {
             | Definition::Import(Import { location, .. })
             | Definition::TypeAlias(TypeAlias { location, .. })
             | Definition::CustomType(CustomType { location, .. })
-            | Definition::ExternalFunction(ExternalFunction { location, .. })
             | Definition::ModuleConstant(ModuleConstant { location, .. }) => *location,
         }
     }
@@ -622,9 +581,6 @@ impl<A, B, C, E> Definition<A, B, C, E> {
                 documentation: doc, ..
             })
             | Definition::CustomType(CustomType {
-                documentation: doc, ..
-            })
-            | Definition::ExternalFunction(ExternalFunction {
                 documentation: doc, ..
             })
             | Definition::ModuleConstant(ModuleConstant {
@@ -666,14 +622,6 @@ impl Layer {
     pub fn is_value(&self) -> bool {
         matches!(self, Self::Value)
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExternalFnArg<T> {
-    pub location: SrcSpan,
-    pub label: Option<SmolStr>,
-    pub annotation: TypeAst,
-    pub type_: T,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -960,6 +908,14 @@ pub enum ClauseGuard<Type, RecordTag> {
         tuple: Box<Self>,
     },
 
+    FieldAccess {
+        location: SrcSpan,
+        index: Option<u64>,
+        label: SmolStr,
+        type_: Type,
+        container: Box<Self>,
+    },
+
     Constant(Constant<Type, RecordTag>),
 }
 
@@ -980,6 +936,7 @@ impl<A, B> ClauseGuard<A, B> {
             | ClauseGuard::GtFloat { location, .. }
             | ClauseGuard::GtEqFloat { location, .. }
             | ClauseGuard::LtFloat { location, .. }
+            | ClauseGuard::FieldAccess { location, .. }
             | ClauseGuard::LtEqFloat { location, .. } => *location,
         }
     }
@@ -1001,9 +958,10 @@ impl<A, B> ClauseGuard<A, B> {
             | ClauseGuard::LtFloat { .. }
             | ClauseGuard::LtEqFloat { .. } => 4,
 
-            ClauseGuard::Constant(_) | ClauseGuard::Var { .. } | ClauseGuard::TupleIndex { .. } => {
-                5
-            }
+            ClauseGuard::Constant(_)
+            | ClauseGuard::Var { .. }
+            | ClauseGuard::TupleIndex { .. }
+            | ClauseGuard::FieldAccess { .. } => 5,
         }
     }
 }
@@ -1013,6 +971,7 @@ impl TypedClauseGuard {
         match self {
             ClauseGuard::Var { type_, .. } => type_.clone(),
             ClauseGuard::TupleIndex { type_, .. } => type_.clone(),
+            ClauseGuard::FieldAccess { type_, .. } => type_.clone(),
             ClauseGuard::Constant(constant) => constant.type_(),
 
             ClauseGuard::Or { .. }
@@ -1087,6 +1046,7 @@ pub enum Pattern<Type> {
     VarUsage {
         location: SrcSpan,
         name: SmolStr,
+        constructor: Option<ValueConstructor>,
         type_: Type,
     },
 
@@ -1479,7 +1439,6 @@ pub enum TodoKind {
 #[derive(Debug, Default)]
 pub struct GroupedStatements {
     pub functions: Vec<Function<(), UntypedExpr>>,
-    pub external_functions: Vec<ExternalFunction<()>>,
     pub constants: Vec<UntypedModuleConstant>,
     pub custom_types: Vec<CustomType<()>>,
     pub imports: Vec<Import<()>>,
@@ -1505,17 +1464,11 @@ impl GroupedStatements {
         let Self {
             custom_types,
             functions,
-            external_functions,
             constants,
             imports,
             type_aliases,
         } = self;
-        functions.len()
-            + constants.len()
-            + imports.len()
-            + custom_types.len()
-            + type_aliases.len()
-            + external_functions.len()
+        functions.len() + constants.len() + imports.len() + custom_types.len() + type_aliases.len()
     }
 
     fn add(&mut self, statement: UntypedDefinition) {
@@ -1525,29 +1478,6 @@ impl GroupedStatements {
             Definition::TypeAlias(t) => self.type_aliases.push(t),
             Definition::CustomType(c) => self.custom_types.push(c),
             Definition::ModuleConstant(c) => self.constants.push(c),
-            Definition::ExternalFunction(f) => self.external_functions.push(f),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ModuleFunction {
-    Internal(Function<(), UntypedExpr>),
-    External(ExternalFunction<()>),
-}
-
-impl ModuleFunction {
-    pub fn name(&self) -> &SmolStr {
-        match self {
-            Self::Internal(f) => &f.name,
-            Self::External(f) => &f.name,
-        }
-    }
-
-    pub fn location(&self) -> SrcSpan {
-        match self {
-            Self::Internal(f) => f.location,
-            Self::External(f) => f.location,
         }
     }
 }

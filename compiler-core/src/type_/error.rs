@@ -381,6 +381,17 @@ pub enum Warning {
         location: SrcSpan,
         kind: EmptyListCheckKind,
     },
+
+    TransitiveDependencyImported {
+        location: SrcSpan,
+        module: SmolStr,
+        package: SmolStr,
+    },
+
+    DeprecatedValue {
+        location: SrcSpan,
+        message: SmolStr,
+    },
 }
 
 impl Error {

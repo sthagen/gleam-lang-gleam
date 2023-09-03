@@ -33,7 +33,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
     }
 
-    pub fn in_new_scope<T>(&mut self, process_scope: impl FnOnce(&mut Self) -> T) -> T {
+    pub fn in_new_scope<T, E>(
+        &mut self,
+        process_scope: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E> {
         // Create new scope
         let environment_reset_data = self.environment.open_new_scope();
         let hydrator_reset_data = self.hydrator.open_new_scope();
@@ -42,7 +45,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let result = process_scope(self);
 
         // Close scope, discarding any scope local state
-        self.environment.close_scope(environment_reset_data);
+        self.environment
+            .close_scope(environment_reset_data, result.is_ok());
         self.hydrator.close_scope(hydrator_reset_data);
         result
     }
@@ -546,7 +550,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // Attempt to infer the container as a record access. If that fails, we may be shadowing the name
         // of an imported module, so attempt to infer the container as a module access.
         // TODO: Remove this cloning
-        match self.infer_record_access(container.clone(), label.clone(), access_location, usage) {
+        match self.infer_record_expression_access(
+            container.clone(),
+            label.clone(),
+            access_location,
+            usage,
+        ) {
             Ok(record_access) => Ok(record_access),
             Err(err) => match container {
                 UntypedExpr::Var { name, location, .. } => {
@@ -1046,6 +1055,32 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 }
             }
 
+            ClauseGuard::FieldAccess {
+                location,
+                label,
+                container,
+                index: _,
+                type_: (),
+            } => {
+                let container = self.infer_clause_guard(*container)?;
+                let container = Box::new(container);
+                let container_type = container.type_();
+                let (index, label, type_) = self.infer_known_record_access(
+                    container_type,
+                    container.location(),
+                    FieldAccessUsage::Other,
+                    location,
+                    label,
+                )?;
+                Ok(ClauseGuard::FieldAccess {
+                    container,
+                    label,
+                    index: Some(index),
+                    location,
+                    type_,
+                })
+            }
+
             ClauseGuard::And {
                 location,
                 left,
@@ -1330,7 +1365,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
-    fn infer_record_access(
+    fn infer_record_expression_access(
         &mut self,
         record: UntypedExpr,
         label: SmolStr,
@@ -1339,11 +1374,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     ) -> Result<TypedExpr, Error> {
         // Infer the type of the (presumed) record
         let record = self.infer(record)?;
-
-        self.infer_known_record_access(record, label, location, usage)
+        self.infer_known_record_expression_access(record, label, location, usage)
     }
 
-    fn infer_known_record_access(
+    fn infer_known_record_expression_access(
         &mut self,
         record: TypedExpr,
         label: SmolStr,
@@ -1351,25 +1385,39 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         usage: FieldAccessUsage,
     ) -> Result<TypedExpr, Error> {
         let record = Box::new(record);
+        let record_type = record.type_();
+        let (index, label, typ) =
+            self.infer_known_record_access(record_type, record.location(), usage, location, label)?;
+        Ok(TypedExpr::RecordAccess {
+            record,
+            label,
+            index,
+            location,
+            typ,
+        })
+    }
 
-        // If we don't yet know the type of the record then we cannot use any accessors
-        if record.type_().is_unbound() {
+    fn infer_known_record_access(
+        &mut self,
+        record_type: Arc<Type>,
+        record_location: SrcSpan,
+        usage: FieldAccessUsage,
+        location: SrcSpan,
+        label: SmolStr,
+    ) -> Result<(u64, SmolStr, Arc<Type>), Error> {
+        if record_type.is_unbound() {
             return Err(Error::RecordAccessUnknownType {
-                location: record.location(),
+                location: record_location,
             });
         }
-
-        // Error constructor helper function
         let unknown_field = |fields| Error::UnknownRecordField {
             usage,
-            typ: record.type_(),
+            typ: record_type.clone(),
             location,
             label: label.clone(),
             fields,
         };
-
-        // Check to see if it's a Type that can have accessible fields
-        let accessors = match collapse_links(record.type_()).as_ref() {
+        let accessors = match collapse_links(record_type.clone()).as_ref() {
             // A type in the current module which may have fields
             Type::App { module, name, .. } if module == self.environment.current_module => {
                 self.environment.accessors.get(name)
@@ -1385,8 +1433,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             _something_without_fields => return Err(unknown_field(vec![])),
         }
         .ok_or_else(|| unknown_field(vec![]))?;
-
-        // Find the accessor, if the type has one with the same label
         let RecordAccessor {
             index,
             label,
@@ -1396,24 +1442,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             .get(&label)
             .ok_or_else(|| unknown_field(accessors.accessors.keys().cloned().collect()))?
             .clone();
-
-        // Unify the record type with the accessor's stored copy of the record type.
-        // This ensure that the type parameters of the retrieved value have the correct
-        // types for this instance of the record.
         let accessor_record_type = accessors.type_.clone();
         let mut type_vars = hashmap![];
         let accessor_record_type = self.instantiate(accessor_record_type, &mut type_vars);
         let typ = self.instantiate(typ, &mut type_vars);
-        unify(accessor_record_type, record.type_())
-            .map_err(|e| convert_unify_error(e, record.location()))?;
-
-        Ok(TypedExpr::RecordAccess {
-            record,
-            label,
-            index,
-            location,
-            typ,
-        })
+        unify(accessor_record_type, record_type)
+            .map_err(|e| convert_unify_error(e, record_location))?;
+        Ok((index, label, typ))
     }
 
     fn infer_record_update(
@@ -1494,7 +1529,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                      location,
                  }| {
                     let value = self.infer(value.clone())?;
-                    let spread_field = self.infer_known_record_access(
+                    let spread_field = self.infer_known_record_expression_access(
                         spread.clone(),
                         label.clone(),
                         *location,
@@ -1601,12 +1636,22 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             public,
             variant,
             type_: typ,
+            deprecation,
         } = constructor;
+
+        // Emit a warning if the value being used is deprecated.
+        if let Deprecation::Deprecated { message } = &deprecation {
+            self.environment.warnings.emit(Warning::DeprecatedValue {
+                location: *location,
+                message: message.clone(),
+            })
+        }
 
         // Instantiate generic variables into unbound variables for this usage
         let typ = self.instantiate(typ, &mut hashmap![]);
         Ok(ValueConstructor {
             public,
+            deprecation,
             variant,
             type_: typ,
         })
@@ -2050,7 +2095,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         body: Vec1<UntypedStatement>,
         return_type: Option<Arc<Type>>,
     ) -> Result<(Vec<TypedArg>, Vec1<TypedStatement>), Error> {
-        let (body_rigid_names, body_infer) = self.in_new_scope(|body_typer| {
+        self.in_new_scope(|body_typer| {
             // Used to track if any argument names are used more than once
             let mut argument_names = HashSet::with_capacity(args.len());
 
@@ -2086,21 +2131,20 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             }
 
             let body = body_typer.infer_statements(body);
-            Ok((body_typer.hydrator.rigid_names(), body))
-        })?;
+            let body_rigid_names = body_typer.hydrator.rigid_names();
+            let body = body.map_err(|e| e.with_unify_error_rigid_names(&body_rigid_names))?;
 
-        let body = body_infer.map_err(|e| e.with_unify_error_rigid_names(&body_rigid_names))?;
+            // Check that any return type is accurate.
+            if let Some(return_type) = return_type {
+                unify(return_type, body.last().type_()).map_err(|e| {
+                    e.return_annotation_mismatch()
+                        .into_error(body.last().type_defining_location())
+                        .with_unify_error_rigid_names(&body_rigid_names)
+                })?;
+            }
 
-        // Check that any return type is accurate.
-        if let Some(return_type) = return_type {
-            unify(return_type, body.last().type_()).map_err(|e| {
-                e.return_annotation_mismatch()
-                    .into_error(body.last().type_defining_location())
-                    .with_unify_error_rigid_names(&body_rigid_names)
-            })?;
-        }
-
-        Ok((args, body))
+            Ok((args, body))
+        })
     }
 
     fn check_case_exhaustiveness(

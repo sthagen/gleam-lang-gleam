@@ -241,10 +241,10 @@ fn record_update_warnings_test3() {
 fn unused_private_type_warnings_test() {
     // External type
     assert_warning!(
-        "external type X",
+        "type X",
         Warning::UnusedType {
             name: "X".into(),
-            location: SrcSpan { start: 0, end: 15 },
+            location: SrcSpan { start: 0, end: 6 },
             imported: false
         }
     );
@@ -252,7 +252,7 @@ fn unused_private_type_warnings_test() {
 
 #[test]
 fn unused_private_type_warnings_test2() {
-    assert_no_warnings!("pub external type Y");
+    assert_no_warnings!("pub type Y");
 }
 
 #[test]
@@ -832,5 +832,48 @@ fn unused_external_function_arguments() {
 @external(erlang, "go", "go")
 pub fn go(a: item_a) -> Nil
 "#,
+    );
+}
+
+#[test]
+fn importing_non_direct_dep_package() {
+    // Warn if an imported module is from a package that is not a direct dependency
+    assert_warning!(
+        // Magic string package name that the test setup will detect to not
+        // register this package as a dep.
+        ("non-dependency-package", "some_module", "pub const x = 1"),
+        r#"
+import some_module
+pub const x = some_module.x
+        "#
+    );
+}
+
+#[test]
+fn no_unused_warnings_for_broken_code() {
+    assert_no_warnings!(
+        r#"
+pub fn main() {
+  let x = 1
+  1 + ""
+  x
+}
+        "#
+    );
+}
+
+#[test]
+fn deprecated_function() {
+    assert_warning!(
+        r#"
+@deprecated("Don't use this!")
+pub fn a() {
+  Nil
+}
+
+pub fn b() {
+  a
+}
+        "#
     );
 }

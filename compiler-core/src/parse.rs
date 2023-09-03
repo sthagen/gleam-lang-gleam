@@ -58,17 +58,16 @@ use crate::analyse::Inferred;
 use crate::ast::{
     Arg, ArgNames, AssignName, Assignment, AssignmentKind, BinOp, BitStringSegment,
     BitStringSegmentOption, CallArg, Clause, ClauseGuard, Constant, CustomType, Definition,
-    ExternalFnArg, ExternalFunction, Function, HasLocation, Import, Module, ModuleConstant,
-    Pattern, RecordConstructor, RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement,
-    TargettedDefinition, TodoKind, TypeAlias, TypeAst, UnqualifiedImport, UntypedArg,
-    UntypedClause, UntypedClauseGuard, UntypedConstant, UntypedDefinition, UntypedExpr,
-    UntypedExternalFnArg, UntypedModule, UntypedPattern, UntypedRecordUpdateArg, UntypedStatement,
-    Use, UseAssignment, CAPTURE_VARIABLE,
+    Function, HasLocation, Import, Module, ModuleConstant, Pattern, RecordConstructor,
+    RecordConstructorArg, RecordUpdateSpread, SrcSpan, Statement, TargettedDefinition, TodoKind,
+    TypeAlias, TypeAst, UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard,
+    UntypedConstant, UntypedDefinition, UntypedExpr, UntypedModule, UntypedPattern,
+    UntypedRecordUpdateArg, UntypedStatement, Use, UseAssignment, CAPTURE_VARIABLE,
 };
 use crate::build::Target;
 use crate::parse::extra::ModuleExtra;
+use crate::type_::Deprecation;
 use error::{LexicalError, ParseError, ParseErrorType};
-use itertools::Itertools;
 use lexer::{LexResult, Spanned};
 use smol_str::SmolStr;
 use std::cmp::Ordering;
@@ -89,6 +88,8 @@ pub struct Parsed {
 
 #[derive(Debug, Default)]
 struct Attributes {
+    target: Option<Target>,
+    deprecated: Deprecation,
     external_erlang: Option<(SmolStr, SmolStr)>,
     external_javascript: Option<(SmolStr, SmolStr)>,
 }
@@ -162,9 +163,8 @@ where
     }
 
     fn parse_module(&mut self) -> Result<Parsed, ParseError> {
-        let definitions = Parser::series_of(self, &Parser::parse_target_group, None);
+        let definitions = Parser::series_of(self, &Parser::parse_definition, None);
         let definitions = self.ensure_no_errors_or_remaining_input(definitions)?;
-        let definitions = definitions.into_iter().flatten().collect_vec();
         let module = Module {
             name: "".into(),
             documentation: vec![],
@@ -224,73 +224,11 @@ where
         }
     }
 
-    /// Parse conditional compilation blocks.
-    fn parse_target_group(&mut self) -> Result<Option<Vec<TargettedDefinition>>, ParseError> {
-        match &self.tok0 {
-            // Attribute-syntax
-            Some((_, Token::At, _)) => match &self.tok1 {
-                Some((_, Token::Name { name }, _)) if name == "target" => {
-                    let _ = self.next_tok();
-                    let _ = self.next_tok();
-                    let _ = self.expect_one(&Token::LeftParen)?;
-                    let target = self.expect_target()?;
-                    let _ = self.expect_one(&Token::RightParen)?;
-                    let definition = self.expect_definition()?;
-                    Ok(Some(vec![TargettedDefinition::Only(target, definition)]))
-                }
-                _ => {
-                    let definition = self.expect_definition()?;
-                    Ok(Some(vec![TargettedDefinition::Any(definition)]))
-                }
-            },
-
-            // If-syntax
-            Some((start, Token::If, _)) => {
-                let start = *start;
-                let _ = self.next_tok();
-                let target = self.expect_target()?;
-                let (_, end) = self.expect_one(&Token::LeftBrace)?;
-                self.warnings.push(Warning::DeprecatedIf {
-                    target,
-                    location: SrcSpan::new(start, end),
-                });
-                let statements = self.expect_definitions()?;
-                let (_, _) = self.expect_one(&Token::RightBrace)?;
-                let statements = statements
-                    .into_iter()
-                    .map(|s| TargettedDefinition::Only(target, s))
-                    .collect();
-                Ok(Some(statements))
-            }
-
-            Some(_) => Ok(self
-                .parse_definition()?
-                .map(|d| vec![TargettedDefinition::Any(d)])),
-
-            None => Ok(None),
-        }
-    }
-
-    fn expect_definition(&mut self) -> Result<UntypedDefinition, ParseError> {
-        match self.parse_definition()? {
-            None => parse_error(
-                ParseErrorType::ExpectedStatement,
-                SrcSpan { start: 0, end: 0 },
-            ),
-            Some(statement) => self.ensure_no_errors(Ok(statement)),
-        }
-    }
-
-    fn expect_definitions(&mut self) -> Result<Vec<UntypedDefinition>, ParseError> {
-        let statements = Parser::series_of(self, &Parser::parse_definition, None);
-        self.ensure_no_errors(statements)
-    }
-
-    fn parse_definition(&mut self) -> Result<Option<UntypedDefinition>, ParseError> {
+    fn parse_definition(&mut self) -> Result<Option<TargettedDefinition>, ParseError> {
         let mut attributes = Attributes::default();
         self.parse_attributes(&mut attributes)?;
 
-        match (self.tok0.take(), self.tok1.as_ref()) {
+        let def = match (self.tok0.take(), self.tok1.as_ref()) {
             // Imports
             (Some((_, Token::Import, _)), _) => {
                 let _ = self.next_tok();
@@ -307,38 +245,15 @@ where
                 self.parse_module_const(true)
             }
 
-            // External Type
-            (Some((start, Token::External, _)), Some((_, Token::Type, _))) => {
-                let _ = self.next_tok();
-                let _ = self.next_tok();
-                self.parse_external_type(start, false)
-            }
-            // External Function
-            (Some((start, Token::External, _)), Some((_, Token::Fn, _))) => {
-                let _ = self.next_tok();
-                let _ = self.next_tok();
-                self.parse_external_fn(start, false)
-            }
-            // Pub External type or fn
-            (Some((start, Token::Pub, _)), Some((_, Token::External, _))) => {
-                let _ = self.next_tok();
-                let _ = self.next_tok();
-                match self.next_tok() {
-                    Some((_, Token::Type, _)) => self.parse_external_type(start, true),
-                    Some((_, Token::Fn, _)) => self.parse_external_fn(start, true),
-                    _ => self.next_tok_unexpected(vec!["A type or function definition".into()])?,
-                }
-            }
-
             // Function
             (Some((start, Token::Fn, _)), _) => {
                 let _ = self.next_tok();
-                self.parse_function(start, false, false, attributes)
+                self.parse_function(start, false, false, &mut attributes)
             }
             (Some((start, Token::Pub, _)), Some((_, Token::Fn, _))) => {
                 let _ = self.next_tok();
                 let _ = self.next_tok();
-                self.parse_function(start, true, false, attributes)
+                self.parse_function(start, true, false, &mut attributes)
             }
 
             // Custom Types, and Type Aliases
@@ -362,7 +277,12 @@ where
                 self.tok0 = t0;
                 Ok(None)
             }
-        }
+        }?;
+
+        Ok(def.map(|definition| TargettedDefinition {
+            definition,
+            target: attributes.target,
+        }))
     }
 
     //
@@ -590,7 +510,8 @@ where
             }
             Some((start, Token::Fn, _)) => {
                 let _ = self.next_tok();
-                match self.parse_function(start, false, true, Attributes::default())? {
+                let mut attributes = Attributes::default();
+                match self.parse_function(start, false, true, &mut attributes)? {
                     Some(Definition::Function(Function {
                         location,
                         arguments: args,
@@ -1263,43 +1184,61 @@ where
         match self.tok0.take() {
             Some((start, Token::Name { name }, end)) => {
                 let _ = self.next_tok();
-                if let Some((dot_s, _)) = self.maybe_one(&Token::Dot) {
+                let mut unit = ClauseGuard::Var {
+                    location: SrcSpan { start, end },
+                    type_: (),
+                    name,
+                };
+
+                loop {
+                    let dot_s = match self.maybe_one(&Token::Dot) {
+                        Some((dot_s, _)) => dot_s,
+                        None => return Ok(Some(unit)),
+                    };
+
                     match self.next_tok() {
                         Some((_, Token::Int { value }, int_e)) => {
                             let v = value.replace('_', "");
                             if let Ok(index) = u64::from_str(&v) {
-                                Ok(Some(ClauseGuard::TupleIndex {
+                                unit = ClauseGuard::TupleIndex {
                                     location: SrcSpan {
                                         start: dot_s,
                                         end: int_e,
                                     },
                                     index,
                                     type_: (),
-                                    tuple: Box::new(ClauseGuard::Var {
-                                        location: SrcSpan { start, end },
-                                        type_: (),
-                                        name,
-                                    }),
-                                }))
+                                    tuple: Box::new(unit),
+                                };
                             } else {
-                                parse_error(
+                                return parse_error(
                                     ParseErrorType::InvalidTupleAccess,
                                     SrcSpan { start, end },
-                                )
+                                );
                             }
                         }
 
-                        Some((start, _, end)) => {
-                            parse_error(ParseErrorType::InvalidTupleAccess, SrcSpan { start, end })
+                        Some((_, Token::Name { name: label }, int_e)) => {
+                            unit = ClauseGuard::FieldAccess {
+                                location: SrcSpan {
+                                    start: dot_s,
+                                    end: int_e,
+                                },
+                                index: None,
+                                label,
+                                type_: (),
+                                container: Box::new(unit),
+                            };
                         }
-                        _ => self.next_tok_unexpected(vec!["A positive integer".into()]),
+
+                        Some((start, _, end)) => {
+                            return parse_error(
+                                ParseErrorType::IncorrectName,
+                                SrcSpan { start, end },
+                            )
+                        }
+
+                        _ => return self.next_tok_unexpected(vec!["A positive integer".into()]),
                     }
-                } else {
-                    Ok(Some(ClauseGuard::Var {
-                        location: SrcSpan { start, end },
-                        type_: (),
-                        name,
-                    }))
                 }
             }
             Some((_, Token::LeftBrace, _)) => {
@@ -1452,7 +1391,7 @@ where
         start: u32,
         public: bool,
         is_anon: bool,
-        attributes: Attributes,
+        attributes: &mut Attributes,
     ) -> Result<Option<UntypedDefinition>, ParseError> {
         let documentation = if is_anon {
             None
@@ -1491,6 +1430,14 @@ where
                 };
                 (body, end, rbr_e)
             }
+
+            None if is_anon => {
+                return parse_error(
+                    ParseErrorType::ExpectedFunctionBody,
+                    SrcSpan { start, end: rpar_e },
+                );
+            }
+
             None => {
                 let body = vec1![Statement::Expression(UntypedExpr::Placeholder {
                     location: SrcSpan::new(start, rpar_e)
@@ -1509,105 +1456,10 @@ where
             body,
             return_type: (),
             return_annotation,
-            external_erlang: attributes.external_erlang,
-            external_javascript: attributes.external_javascript,
+            deprecation: std::mem::take(&mut attributes.deprecated),
+            external_erlang: attributes.external_erlang.take(),
+            external_javascript: attributes.external_javascript.take(),
         })))
-    }
-
-    // TODO: remove
-    // Starts after "fn"
-    //
-    // examples:
-    //   external fn a(String) -> String = "x" "y"
-    //   pub external fn a(name: String) -> String = "x" "y"
-    fn parse_external_fn(
-        &mut self,
-        start: u32,
-        public: bool,
-    ) -> Result<Option<UntypedDefinition>, ParseError> {
-        let documentation = self.take_documentation(start);
-        let (_, name, _) = self.expect_name()?;
-        let _ = self.expect_one(&Token::LeftParen)?;
-        let args = Parser::series_of(self, &Parser::parse_external_fn_param, Some(&Token::Comma))?;
-        let _ = self.expect_one(&Token::RightParen)?;
-        let (arr_s, arr_e) = self.expect_one(&Token::RArrow)?;
-        let return_annotation = self.parse_type()?;
-        let _ = self.expect_one(&Token::Equal)?;
-        let (_, module, _) = self.expect_string()?;
-        let (_, fun, end) = self.expect_string()?;
-
-        self.warnings.push(Warning::DeprecatedExternalFn {
-            location: SrcSpan::new(start, end),
-        });
-
-        if let Some(retrn) = return_annotation {
-            Ok(Some(Definition::ExternalFunction(ExternalFunction {
-                documentation,
-                location: SrcSpan { start, end },
-                public,
-                name,
-                arguments: args,
-                module,
-                fun,
-                return_: retrn,
-                return_type: (),
-            })))
-        } else {
-            parse_error(
-                ParseErrorType::ExpectedType,
-                SrcSpan {
-                    start: arr_s,
-                    end: arr_e,
-                },
-            )
-        }
-    }
-
-    // Parse a single external function definition param
-    //
-    // examples:
-    //   A
-    //   a: A
-    fn parse_external_fn_param(&mut self) -> Result<Option<UntypedExternalFnArg>, ParseError> {
-        let mut start = 0;
-        let mut label = None;
-        let mut end = 0;
-        match (self.tok0.take(), self.tok1.take()) {
-            (Some((s, Token::Name { name }, _)), Some((_, Token::Colon, e))) => {
-                let _ = self.next_tok();
-                let _ = self.next_tok();
-                start = s;
-                label = Some(name);
-                end = e;
-            }
-
-            (t0, t1) => {
-                self.tok0 = t0;
-                self.tok1 = t1;
-            }
-        };
-        match (&label, self.parse_type()?) {
-            (None, None) => Ok(None),
-            (Some(_), None) => {
-                parse_error(ParseErrorType::ExpectedType, SrcSpan { start: end, end })
-            }
-            (None, Some(annotation)) => Ok(Some(ExternalFnArg {
-                location: annotation.location(),
-                label: None,
-                annotation,
-                type_: (),
-            })),
-
-            (Some(_), Some(annotation)) => {
-                let end = annotation.location().end;
-                Ok(Some(ExternalFnArg {
-                    location: SrcSpan { start, end },
-                    label,
-                    annotation,
-                    type_: (),
-                }))
-            }
-        }
     }
 
     // Parse a single function definition param
@@ -1745,35 +1597,6 @@ where
         } else {
             Ok(None)
         }
-    }
-
-    // Starts after "type"
-    //
-    // examples:
-    //   external type A
-    //   pub external type A(a, b, c)
-    fn parse_external_type(
-        &mut self,
-        start: u32,
-        public: bool,
-    ) -> Result<Option<UntypedDefinition>, ParseError> {
-        let documentation = self.take_documentation(start);
-        let (_, name, parameters, end) = self.expect_type_name()?;
-        self.warnings.push(Warning::DeprecatedExternalType {
-            location: SrcSpan::new(start, end),
-            name: name.clone(),
-        });
-        Ok(Some(Definition::CustomType(CustomType {
-            location: SrcSpan { start, end },
-            public,
-            name,
-            parameters,
-            documentation,
-            end_position: end,
-            constructors: vec![],
-            opaque: false,
-            typed_parameters: vec![],
-        })))
     }
 
     //
@@ -2571,6 +2394,7 @@ where
             Some((start, Token::Name { name }, end)) => Ok(Pattern::VarUsage {
                 location: SrcSpan { start, end },
                 name,
+                constructor: None,
                 type_: (),
             }),
             Some((start, Token::Int { value }, end)) => Ok(Pattern::Int {
@@ -2857,15 +2681,43 @@ where
         start: u32,
         attributes: &mut Attributes,
     ) -> Result<(), ParseError> {
-        let duplicate_attribute_error =
-            |end| parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
+        // Parse the name of the attribute.
 
-        // Parse the name of the attribute. Later this will be a name token, but
-        // for now we parse `external`, which is currently a keyword.
-        let (_, end) = self.expect_one(&Token::External)?;
-
-        // And now we parse the arguments to the attribute.
+        let (_, name, end) = self.expect_name()?;
         let _ = self.expect_one(&Token::LeftParen)?;
+
+        match name.as_str() {
+            "external" => self.parse_external_attribute(start, end, attributes),
+            "target" => self.parse_target_attribute(start, end, attributes),
+            "deprecated" => self.parse_deprecated_attribute(start, end, attributes),
+            _ => parse_error(ParseErrorType::UnknownAttribute, SrcSpan { start, end }),
+        }
+    }
+
+    fn parse_target_attribute(
+        &mut self,
+        start: u32,
+        end: u32,
+        attributes: &mut Attributes,
+    ) -> Result<(), ParseError> {
+        let target = self.expect_target()?;
+        if attributes.target.is_some() {
+            return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
+        }
+        let (_, end) = self.expect_one(&Token::RightParen)?;
+        if attributes.target.is_some() {
+            return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
+        }
+        attributes.target = Some(target);
+        Ok(())
+    }
+
+    fn parse_external_attribute(
+        &mut self,
+        start: u32,
+        end: u32,
+        attributes: &mut Attributes,
+    ) -> Result<(), ParseError> {
         let (_, name, _) = self.expect_name()?;
 
         match name.as_str() {
@@ -2877,7 +2729,7 @@ where
                 let _ = self.maybe_one(&Token::Comma);
                 let (_, end) = self.expect_one(&Token::RightParen)?;
                 if attributes.external_erlang.is_some() {
-                    return duplicate_attribute_error(end);
+                    return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
                 }
                 attributes.external_erlang = Some((module, function));
                 Ok(())
@@ -2891,7 +2743,7 @@ where
                 let _ = self.maybe_one(&Token::Comma);
                 let _ = self.expect_one(&Token::RightParen)?;
                 if attributes.external_javascript.is_some() {
-                    return duplicate_attribute_error(end);
+                    return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
                 }
                 attributes.external_javascript = Some((module, function));
                 Ok(())
@@ -2899,6 +2751,21 @@ where
 
             _ => parse_error(ParseErrorType::UnknownAttribute, SrcSpan::new(start, end)),
         }
+    }
+
+    fn parse_deprecated_attribute(
+        &mut self,
+        start: u32,
+        end: u32,
+        attributes: &mut Attributes,
+    ) -> Result<(), ParseError> {
+        if attributes.deprecated.is_deprecated() {
+            return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan::new(start, end));
+        }
+        let (_, message, _) = self.expect_string()?;
+        let (_, _) = self.expect_one(&Token::RightParen)?;
+        attributes.deprecated = Deprecation::Deprecated { message };
+        Ok(())
     }
 }
 
@@ -3203,7 +3070,6 @@ fn is_reserved_word(tok: Token) -> bool {
             | Token::Assert
             | Token::Case
             | Token::Const
-            | Token::External
             | Token::Fn
             | Token::If
             | Token::Import

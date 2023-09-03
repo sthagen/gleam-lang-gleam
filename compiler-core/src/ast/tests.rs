@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::build::Target;
-use crate::type_::PRELUDE_MODULE_NAME;
+use crate::type_::{Deprecation, PRELUDE_MODULE_NAME};
 use crate::{
     ast::{SrcSpan, TypedExpr},
     build::Located,
@@ -26,7 +26,7 @@ fn compile_module(src: &str) -> TypedModule {
     // to have one place where we create all this required state for use in each
     // place.
     let _ = modules.insert(PRELUDE_MODULE_NAME.into(), build_prelude(&ids));
-    crate::analyse::infer_module(
+    crate::analyse::infer_module::<()>(
         Target::Erlang,
         &ids,
         ast,
@@ -34,6 +34,7 @@ fn compile_module(src: &str) -> TypedModule {
         &"thepackage".into(),
         &modules,
         &TypeWarningEmitter::null(),
+        &std::collections::HashMap::new(),
     )
     .expect("should successfully infer")
 }
@@ -84,6 +85,7 @@ fn compile_expression(src: &str) -> TypedStatement {
         variant,
         type_::fn_(vec![type_::string(), type_::int()], cat_type.clone()),
         true,
+        Deprecation::NotDeprecated,
     );
 
     environment.insert_accessors(
@@ -180,6 +182,7 @@ wibble}"#,
     let var = TypedExpr::Var {
         location: SrcSpan { start: 16, end: 22 },
         constructor: ValueConstructor {
+            deprecation: Deprecation::NotDeprecated,
             public: false,
             variant: ValueConstructorVariant::LocalVariable {
                 location: SrcSpan { start: 5, end: 11 },
@@ -464,6 +467,7 @@ fn find_node_bool() {
     let bool = TypedExpr::Var {
         location: SrcSpan { start: 1, end: 5 },
         constructor: ValueConstructor {
+            deprecation: Deprecation::NotDeprecated,
             public: true,
             variant: ValueConstructorVariant::Record {
                 documentation: None,

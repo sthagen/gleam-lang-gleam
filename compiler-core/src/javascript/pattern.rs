@@ -174,9 +174,11 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
 
     fn wrapped_guard(&mut self, guard: &'a TypedClauseGuard) -> Result<Document<'a>, Error> {
         match guard {
-            ClauseGuard::Var { .. } | ClauseGuard::TupleIndex { .. } | ClauseGuard::Constant(_) => {
-                self.guard(guard)
-            }
+            ClauseGuard::Var { .. }
+            | ClauseGuard::TupleIndex { .. }
+            | ClauseGuard::Constant(_)
+            | ClauseGuard::FieldAccess { .. } => self.guard(guard),
+
             ClauseGuard::Equals { .. }
             | ClauseGuard::NotEquals { .. }
             | ClauseGuard::GtInt { .. }
@@ -264,6 +266,12 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
 
             ClauseGuard::TupleIndex { tuple, index, .. } => {
                 docvec!(self.guard(tuple)?, "[", index, "]")
+            }
+
+            ClauseGuard::FieldAccess {
+                label, container, ..
+            } => {
+                docvec!(self.guard(container)?, ".", label)
             }
 
             ClauseGuard::Constant(constant) => {

@@ -2,7 +2,7 @@
 mod tests;
 
 use crate::{
-    ast::{CustomType, ExternalFunction, Function, Import, ModuleConstant, TypeAlias, Use, *},
+    ast::{CustomType, Function, Import, ModuleConstant, TypeAlias, Use, *},
     build::Target,
     docvec,
     io::Utf8Writer,
@@ -131,8 +131,8 @@ impl<'comments> Formatter<'comments> {
     }
 
     fn targetted_definition<'a>(&mut self, definition: &'a TargettedDefinition) -> Document<'a> {
-        let target = definition.target();
-        let definition = definition.inner();
+        let target = definition.target;
+        let definition = &definition.definition;
         let start = definition.location().start;
         let comments = self.pop_comments(start);
         let document = self.documented_definition(definition);
@@ -149,7 +149,7 @@ impl<'comments> Formatter<'comments> {
         let mut previous_was_import = false;
 
         for definition in &module.definitions {
-            let is_import = definition.inner().is_import();
+            let is_import = definition.definition.is_import();
 
             if documents.is_empty() {
                 // We don't insert empty lines before the first definition
@@ -221,24 +221,6 @@ impl<'comments> Formatter<'comments> {
                 opaque,
                 ..
             }) => self.custom_type(*public, *opaque, name, parameters, constructors, location),
-
-            Definition::ExternalFunction(ExternalFunction {
-                public,
-                arguments: args,
-                name,
-                return_: retrn,
-                module,
-                fun,
-                ..
-            }) => self
-                .external_fn_signature(*public, name, args, retrn)
-                .append(" =")
-                .append(line())
-                .append("  \"")
-                .append(module.as_str())
-                .append("\" \"")
-                .append(fun.as_str())
-                .append("\""),
 
             Definition::Import(Import {
                 module,
@@ -499,7 +481,17 @@ impl<'comments> Formatter<'comments> {
     fn statement_fn<'a>(&mut self, function: &'a Function<(), UntypedExpr>) -> Document<'a> {
         let attributes = docvec![];
 
-        // Attributes
+        // @deprecated attribute
+        let attributes = match &function.deprecation {
+            type_::Deprecation::NotDeprecated => attributes,
+            type_::Deprecation::Deprecated { message } => attributes
+                .append("@deprecated(\"")
+                .append(message)
+                .append("\")")
+                .append(line()),
+        };
+
+        // @external attribute
         let external = |t: &'static str, m: &'a str, f: &'a str| {
             docvec!["@external(", t, ", \"", m, "\", \"", f, "\")", line()]
         };
@@ -546,22 +538,6 @@ impl<'comments> Formatter<'comments> {
             .append(line().append(body).nest(INDENT).group())
             .append(line())
             .append("}")
-    }
-
-    pub fn external_fn_signature<'a, A>(
-        &mut self,
-        public: bool,
-        name: &'a str,
-        args: &'a [ExternalFnArg<A>],
-        retrn: &'a TypeAst,
-    ) -> Document<'a> {
-        pub_(public)
-            .to_doc()
-            .append("external fn ")
-            .append(name)
-            .append(self.external_fn_args(args))
-            .append(" -> ".to_doc().append(self.type_ast(retrn)))
-            .group()
     }
 
     fn expr_fn<'a>(
@@ -1186,16 +1162,6 @@ impl<'comments> Formatter<'comments> {
         }))
     }
 
-    fn external_fn_arg<'a, A>(&mut self, arg: &'a ExternalFnArg<A>) -> Document<'a> {
-        let comments = self.pop_comments(arg.location.start);
-        let doc = label(&arg.label).append(self.type_ast(&arg.annotation));
-        commented(doc.group(), comments)
-    }
-
-    fn external_fn_args<'a, A>(&mut self, args: &'a [ExternalFnArg<A>]) -> Document<'a> {
-        wrap_args(args.iter().map(|e| self.external_fn_arg(e)))
-    }
-
     fn call_arg<'a>(&mut self, arg: &'a CallArg<UntypedExpr>) -> Document<'a> {
         match &arg.label {
             Some(s) => commented(
@@ -1485,6 +1451,14 @@ impl<'comments> Formatter<'comments> {
                 self.clause_guard(tuple).append(".").append(*index).to_doc()
             }
 
+            ClauseGuard::FieldAccess {
+                container, label, ..
+            } => self
+                .clause_guard(container)
+                .append(".")
+                .append(label)
+                .to_doc(),
+
             ClauseGuard::Constant(constant) => self.const_expr(constant),
         }
     }
@@ -1621,13 +1595,6 @@ impl<'a> Documentable<'a> for &'a UnqualifiedImport {
     }
 }
 
-fn label(label: &Option<SmolStr>) -> Document<'_> {
-    match label {
-        Some(s) => s.to_doc().append(": "),
-        None => nil(),
-    }
-}
-
 impl<'a> Documentable<'a> for &'a BinOp {
     fn to_doc(self) -> Document<'a> {
         match self {
@@ -1718,7 +1685,7 @@ fn bit_string<'a>(
         break_(",", ", ")
     };
     break_("<<", "<<")
-        .append(join(segments.into_iter(), comma))
+        .append(join(segments, comma))
         .nest(INDENT)
         .append(break_(",", ""))
         .append(">>")

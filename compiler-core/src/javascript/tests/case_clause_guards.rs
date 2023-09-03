@@ -196,3 +196,50 @@ fn alternative_patterns_guard() {
 "#,
     );
 }
+
+#[test]
+fn field_access() {
+    assert_js!(
+        r#"
+        pub type Person {
+          Person(username: String, name: String, age: Int)
+        }
+        
+        pub fn main() {
+          let given_name = "jack"
+          let raiden = Person("raiden", "jack", 31)
+          
+          case given_name {
+            name if name == raiden.name -> "It's jack"
+            _ -> "It's not jack"
+          }
+        }
+        "#
+    )
+}
+
+#[test]
+fn nested_record_access() {
+    assert_js!(
+        r#"
+pub type A {
+  A(b: B)
+}
+
+pub type B {
+  B(c: C)
+}
+
+pub type C {
+  C(d: Bool)
+}
+
+pub fn a(a: A) {
+  case a {
+    _ if a.b.c.d -> 1
+    _ -> 0
+  }
+}
+"#
+    );
+}

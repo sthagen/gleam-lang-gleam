@@ -22,7 +22,6 @@ mod patterns;
 mod pipes;
 mod records;
 mod reserved;
-mod statement_if;
 mod strings;
 mod todo;
 mod use_;
@@ -39,11 +38,12 @@ pub fn compile_test_project(src: &str, dep: Option<(&str, &str, &str)>) -> Strin
         PRELUDE_MODULE_NAME.into(),
         crate::type_::build_prelude(&ids),
     );
+    let mut direct_dependencies = std::collections::HashMap::from_iter(vec![]);
     if let Some((dep_package, dep_name, dep_src)) = dep {
         let parsed = crate::parse::parse_module(dep_src).expect("dep syntax error");
         let mut ast = parsed.module;
         ast.name = dep_name.into();
-        let dep = crate::analyse::infer_module(
+        let dep = crate::analyse::infer_module::<()>(
             Target::Erlang,
             &ids,
             ast,
@@ -51,14 +51,16 @@ pub fn compile_test_project(src: &str, dep: Option<(&str, &str, &str)>) -> Strin
             &dep_package.into(),
             &modules,
             &TypeWarningEmitter::null(),
+            &std::collections::HashMap::new(),
         )
         .expect("should successfully infer");
         let _ = modules.insert(dep_name.into(), dep.type_info);
+        let _ = direct_dependencies.insert(dep_package.into(), ());
     }
     let parsed = crate::parse::parse_module(src).expect("syntax error");
     let mut ast = parsed.module;
     ast.name = "my/mod".into();
-    let ast = crate::analyse::infer_module(
+    let ast = crate::analyse::infer_module::<()>(
         Target::Erlang,
         &ids,
         ast,
@@ -66,6 +68,7 @@ pub fn compile_test_project(src: &str, dep: Option<(&str, &str, &str)>) -> Strin
         &"thepackage".into(),
         &modules,
         &TypeWarningEmitter::null(),
+        &direct_dependencies,
     )
     .expect("should successfully infer");
     let line_numbers = LineNumbers::new(src);
@@ -565,5 +568,22 @@ pub type Box {
 // https://github.com/gleam-lang/gleam/issues/2156
 #[test]
 fn dynamic() {
-    assert_erl!("pub external type Dynamic")
+    assert_erl!("pub type Dynamic")
+}
+
+// https://github.com/gleam-lang/gleam/issues/2166
+#[test]
+fn inline_const_pattern_option() {
+    assert_erl!(
+        "pub fn main() {
+            let fifteen = 15
+            let x = <<5:size(sixteen)>>
+            case x {
+              <<5:size(sixteen)>> -> <<5:size(sixteen)>>
+              <<6:size(fifteen)>> -> <<5:size(fifteen)>>
+            }
+          }
+          
+          pub const sixteen = 16"
+    )
 }

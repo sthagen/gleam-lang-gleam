@@ -621,8 +621,31 @@ pub struct TypeConstructor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValueConstructor {
     pub public: bool,
+    pub deprecation: Deprecation,
     pub variant: ValueConstructorVariant,
     pub type_: Arc<Type>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Deprecation {
+    NotDeprecated,
+    Deprecated { message: SmolStr },
+}
+
+impl Deprecation {
+    /// Returns `true` if the deprecation is [`Deprecated`].
+    ///
+    /// [`Deprecated`]: Deprecation::Deprecated
+    #[must_use]
+    pub fn is_deprecated(&self) -> bool {
+        matches!(self, Self::Deprecated { .. })
+    }
+}
+
+impl Default for Deprecation {
+    fn default() -> Self {
+        Self::NotDeprecated
+    }
 }
 
 impl ValueConstructor {

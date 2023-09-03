@@ -6,6 +6,8 @@ mod blocks;
 mod conditional_compilation;
 mod external_fn;
 mod external_types;
+mod function;
+mod guards;
 mod record_update;
 mod tuple;
 mod use_;
@@ -73,71 +75,6 @@ pub type Two
 pub type Three
 
 pub type Four
-"#
-    );
-}
-
-#[test]
-fn external_fn() {
-    assert_format!(
-        r#"external fn main() -> Int =
-  "app" "main"
-"#
-    );
-
-    assert_format!(
-        r#"external fn main() -> program.Exit =
-  "app" "main"
-"#
-    );
-
-    assert_format!(
-        r#"external fn main(List(String)) -> Int =
-  "app" "main"
-"#
-    );
-
-    assert_format!(
-        r#"external fn main(argv: List(String)) -> Int =
-  "app" "main"
-"#
-    );
-
-    assert_format!(
-        r#"external fn main(
-  a_really_long_argument_label: List(String),
-  another_really_long_argument_label: whatever,
-) -> Int =
-  "app" "main"
-"#
-    );
-
-    assert_format!(
-        r#"external fn main(
-  a_really_long_argument_label: List(String),
-  another_really_long_argument_label: whatever,
-) -> Container(
-  WowThisTypeHasJustTheLongestName,
-  WowThisTypeHasJustTheLongestName,
-  WowThisTypeHasJustTheLongestName,
-) =
-  "app" "main"
-"#
-    );
-
-    assert_format!(
-        r#"external fn erl_filter(
-  fn(key, value) -> Bool,
-  Map(key, value),
-) -> Map(key, value) =
-  "maps" "filter"
-"#
-    );
-
-    assert_format!(
-        r#"///
-external fn x(a, b, c) -> #(a, b, c) =
-  "" ""
 "#
     );
 }
@@ -3276,7 +3213,10 @@ fn main() {
 }
 "
     );
+}
 
+#[test]
+fn doc_comments_1_test() {
     assert_format!(
         "/// one
 ///two
@@ -3285,29 +3225,41 @@ fn main() {
 }
 "
     );
+}
 
+#[test]
+fn doc_comments_2_test() {
     assert_format!(
         r#"/// one
 ///two
-external fn whatever() -> Nil =
-  "" ""
+@external(javascript, "", "")
+fn whatever() -> Nil
 "#
     );
+}
 
+#[test]
+fn doc_comments_3_test() {
     assert_format!(
         r#"/// one
 ///two
 type Thingy
 "#
     );
+}
 
+#[test]
+fn doc_comments_4_test() {
     assert_format!(
         r#"/// one
 ///two
 type Thingy
 "#
     );
+}
 
+#[test]
+fn doc_comments_5_test() {
     assert_format!(
         r#"/// one
 ///two
@@ -3316,7 +3268,10 @@ type Whatever {
 }
 "#
     );
+}
 
+#[test]
+fn doc_comments_6_test() {
     assert_format!(
         r#"/// one
 ///two
@@ -3324,7 +3279,10 @@ type Whatever =
   Int
 "#
     );
+}
 
+#[test]
+fn doc_comments_7_test() {
     assert_format!(
         r#"import one
 
@@ -3394,8 +3352,8 @@ fn comments5() {
     assert_format!(
         r#"// one
 //two
-external fn whatever() -> Nil =
-  "" ""
+@external(javascript, "", "")
+fn whatever() -> Nil
 "#
     );
 }
@@ -3695,7 +3653,10 @@ fn commented_fn_arguments() {
 }
 "
     );
+}
 
+#[test]
+fn commented_fn_arguments1() {
     assert_format!(
         "fn main(
   // comment1
@@ -3707,15 +3668,18 @@ fn commented_fn_arguments() {
 }
 "
     );
+}
 
+#[test]
+fn commented_fn_arguments2() {
     assert_format!(
-        "pub external fn main(
+        "@external(erlang, \"\", \"\")
+pub fn main(
   // comment1
   argument1: Type,
   // comment2
   argument2: Type,
-) -> Int =
-  \"\" \"\"
+) -> Int
 "
     );
 }
