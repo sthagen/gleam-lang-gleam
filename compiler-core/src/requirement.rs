@@ -2,7 +2,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::error::Result;
-use camino::Utf8PathBuf;
+use crate::io::make_relative;
+use camino::{Utf8Path, Utf8PathBuf};
 use hexpm::version::Range;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
@@ -32,12 +33,17 @@ impl Requirement {
         Requirement::Git { git: url.into() }
     }
 
-    pub fn to_toml(&self) -> String {
+    pub fn to_toml(&self, root_path: &Utf8Path) -> String {
         match self {
             Requirement::Hex { version: range } => {
                 format!(r#"{{ version = "{}" }}"#, range)
             }
-            Requirement::Path { path } => format!(r#"{{ path = "{}" }}"#, path),
+            Requirement::Path { path } => {
+                format!(
+                    r#"{{ path = "{}" }}"#,
+                    make_relative(root_path, path).as_str().replace('\\', "/")
+                )
+            }
             Requirement::Git { git: url } => format!(r#"{{ git = "{}" }}"#, url),
         }
     }

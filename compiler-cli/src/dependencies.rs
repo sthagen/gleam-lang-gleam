@@ -277,7 +277,7 @@ fn read_manifest_from_disc(paths: &ProjectPaths) -> Result<Manifest> {
 
 fn write_manifest_to_disc(paths: &ProjectPaths, manifest: &Manifest) -> Result<()> {
     let path = paths.manifest();
-    fs::write(&path, &manifest.to_toml())
+    fs::write(&path, &manifest.to_toml(paths.root()))
 }
 
 // This is the container for locally pinned packages, representing the current contents of
@@ -776,7 +776,6 @@ fn provide_package(
     let mut requirements = HashMap::new();
     parents.push(package_name);
     for (name, requirement) in config.dependencies.into_iter() {
-        let name = name;
         let version = match requirement {
             Requirement::Hex { version } => version,
             Requirement::Path { path } => {

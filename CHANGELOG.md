@@ -4,6 +4,10 @@
 
 - A warning is now emitted if a module from a transitive dependency is imported.
 - Record access can now be used in case clause guards.
+- Fixed a bug where `manifest.toml` could contain absolute paths for path
+  dependencies.
+- The `as` keyword can now be used to assign the literal prefix to a variable
+  when pattern matching on a string.
 - The `if` conditional compilation, `external fn`, and `external type` syntaxes
   have been removed.
 - The `description` flag for the `gleam new` command has been removed.
@@ -11,6 +15,8 @@
   updated for the latest syntax.
 - Packages are no longer precompiled to Erlang when publishing to Hex if the
   package target is set to JavaScript.
+- An exception is now raised if JavaScript code uses the BitString class
+  constructor and passes in the incorrect argument type.
 - Fixed a bug where mutually recursive functions could be incorrectly inferred
   as having an overly general type.
 - Fixed a bug where recursive type constructors could incorrectly infer a type
@@ -21,8 +27,12 @@
   body.
 - Fixed a bug where incorrect unused variable warnings could be emitted for code
   that doesn't type check.
+- Corrected some outdated links in error messages.
 - Hovering over a function definition will now display the function signature,
   or the type of the hovered argument.
+- Use `import type` for importing types from typescript declarations.
+- Use `.d.mts` extension for typescript declarations to match `.mjs`.
+- Prefix module names with dollar sign in typescript to avoid name collisions.
 
 ## v0.30.4 - 2023-07-26
 

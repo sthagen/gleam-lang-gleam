@@ -116,6 +116,9 @@ export class BitString {
   }
 
   constructor(buffer) {
+    if (!(buffer instanceof Uint8Array)) {
+      throw "BitString can only be constructed from a Uint8Array";
+    }
     this.buffer = buffer;
   }
 

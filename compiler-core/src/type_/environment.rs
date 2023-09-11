@@ -176,6 +176,21 @@ impl<'a> Environment<'a> {
         );
     }
 
+    /// Insert a constant in the current scope
+    pub fn insert_local_constant(&mut self, name: SmolStr, literal: Constant<Arc<Type>, SmolStr>) {
+        let _ = self.scope.insert(
+            name,
+            ValueConstructor {
+                deprecation: Deprecation::NotDeprecated,
+                public: false,
+                variant: ValueConstructorVariant::LocalConstant {
+                    literal: literal.clone(),
+                },
+                type_: literal.type_(),
+            },
+        );
+    }
+
     /// Insert a variable in the current scope.
     ///
     pub fn insert_variable(

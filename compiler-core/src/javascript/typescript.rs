@@ -23,6 +23,7 @@ use crate::{
         TypedConstant, TypedDefinition, TypedModule, TypedRecordConstructor,
     },
     docvec,
+    javascript::JavaScriptCodegenTarget,
     pretty::{break_, Document, Documentable},
     type_::{Type, TypeVar},
 };
@@ -222,9 +223,14 @@ impl<'a> TypeScriptGenerator<'a> {
             statements.push(line());
             Ok(statements.to_doc())
         } else if statements.is_empty() {
-            Ok(imports.into_doc())
+            Ok(imports.into_doc(JavaScriptCodegenTarget::TypeScriptDeclarations))
         } else {
-            Ok(docvec![imports.into_doc(), line(), statements, line()])
+            Ok(docvec![
+                imports.into_doc(JavaScriptCodegenTarget::TypeScriptDeclarations),
+                line(),
+                statements,
+                line()
+            ])
         }
     }
 
@@ -274,16 +280,16 @@ impl<'a> TypeScriptGenerator<'a> {
         if package == self.module.type_info.package || package.is_empty() {
             // Same package
             match self.current_module_name_segments_count {
-                1 => format!("./{module}.d.ts"),
+                1 => format!("./{module}.d.mts"),
                 _ => {
                     let prefix = "../".repeat(self.current_module_name_segments_count - 1);
-                    format!("{prefix}{module}.d.ts")
+                    format!("{prefix}{module}.d.mts")
                 }
             }
         } else {
             // Different package
             let prefix = "../".repeat(self.current_module_name_segments_count);
-            format!("{prefix}{package}/{module}.d.ts")
+            format!("{prefix}{package}/{module}.d.mts")
         }
     }
 
@@ -532,14 +538,16 @@ impl<'a> TypeScriptGenerator<'a> {
             return "_".into();
         }
 
-        match self.aliased_module_names.get(name) {
+        let name = match self.aliased_module_names.get(name) {
             Some(name) => (*name).to_string(),
             None => name
                 .split('/')
                 .last()
                 .expect("Non empty module path")
                 .to_string(),
-        }
+        };
+
+        format!("${name}")
     }
 
     fn do_print(

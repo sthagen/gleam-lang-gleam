@@ -417,7 +417,7 @@ fn unused_imported_module_warnings_test() {
         "import gleam/foo",
         Warning::UnusedImportedModule {
             name: "foo".into(),
-            location: SrcSpan { start: 7, end: 16 },
+            location: SrcSpan { start: 0, end: 16 },
         }
     );
 }
@@ -429,7 +429,7 @@ fn unused_imported_module_with_alias_warnings_test() {
         "import gleam/foo as bar",
         Warning::UnusedImportedModule {
             name: "bar".into(),
-            location: SrcSpan { start: 7, end: 23 },
+            location: SrcSpan { start: 0, end: 23 },
         }
     );
 }
@@ -494,7 +494,7 @@ fn alternative_case_clause_pattern_variable_usage() {
 pub fn main(s) {
   case s {
     [a] | [a, _] -> a
-    _ -> 0 
+    _ -> 0
   }
 }"
     );
@@ -537,9 +537,9 @@ fn double_unary_integer_literal() {
 fn double_unary_integer_variable() {
     assert_warning!(
         r#"
-        pub fn main() { 
+        pub fn main() {
             let x = 7
-            let _ = --x 
+            let _ = --x
         }
         "#
     );
@@ -556,9 +556,9 @@ fn double_unary_bool_literal() {
 fn double_unary_bool_variable() {
     assert_warning!(
         r#"
-        pub fn main() { 
+        pub fn main() {
             let x = True
-            let _ = !!x 
+            let _ = !!x
         }
         "#
     );

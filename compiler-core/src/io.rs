@@ -9,6 +9,21 @@ use tar::{Archive, Entry};
 
 use camino::{Utf8Path, Utf8PathBuf};
 
+/// Takes in a source path and a target path and determines a relative path
+/// from source -> target.
+/// If given a relative target path, no calculation occurs.
+/// # Panics
+/// The provided source path should be absolute, otherwise will panic.
+pub fn make_relative(source_path: &Utf8Path, target_path: &Utf8Path) -> Utf8PathBuf {
+    assert!(source_path.is_absolute());
+    match target_path.is_absolute() {
+        true => pathdiff::diff_utf8_paths(target_path, source_path)
+            .expect("Should not fail on two absolute paths"),
+
+        false => target_path.into(),
+    }
+}
+
 pub trait Reader: std::io::Read {
     /// A wrapper around `std::io::Read` that has Gleam's error handling.
     fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize> {

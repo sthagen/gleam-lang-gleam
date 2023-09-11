@@ -79,7 +79,10 @@ lsp-server = "0.5"
 lsp-types = "0.92"
 # Pubgrub dependency resolution algorithm
 pubgrub = "0.2"
+# Drop in replacement for std::path but with only utf-8
 camino = { version = "1.1.6", features = ["serde1"] }
+# Used for converting absolute path to relative path
+pathdiff = { version = "0.2.1", features = ["camino"] }
 
 [build-dependencies]
 # Data (de)serialisation

@@ -21,10 +21,16 @@ use self::import::{Imports, Member};
 
 const INDENT: isize = 2;
 
-pub const PRELUDE: &str = include_str!("../templates/prelude.js");
-pub const PRELUDE_TS_DEF: &str = include_str!("../templates/prelude.d.ts");
+pub const PRELUDE: &str = include_str!("../templates/prelude.mjs");
+pub const PRELUDE_TS_DEF: &str = include_str!("../templates/prelude.d.mts");
 
 pub type Output<'a> = Result<Document<'a>, Error>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JavaScriptCodegenTarget {
+    JavaScript,
+    TypeScriptDeclarations,
+}
 
 #[derive(Debug)]
 pub struct Generator<'a> {
@@ -134,9 +140,14 @@ impl<'a> Generator<'a> {
             statements.push(line());
             Ok(statements.to_doc())
         } else if statements.is_empty() {
-            Ok(imports.into_doc())
+            Ok(imports.into_doc(JavaScriptCodegenTarget::JavaScript))
         } else {
-            Ok(docvec![imports.into_doc(), line(), statements, line()])
+            Ok(docvec![
+                imports.into_doc(JavaScriptCodegenTarget::JavaScript),
+                line(),
+                statements,
+                line()
+            ])
         }
     }
 

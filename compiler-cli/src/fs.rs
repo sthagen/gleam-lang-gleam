@@ -27,9 +27,15 @@ use crate::{dependencies::UseManifest, lsp::LspLocker};
 #[cfg(test)]
 mod tests;
 
-pub fn get_current_directory() -> Result<Utf8PathBuf, &'static str> {
-    let curr_dir = std::env::current_dir().map_err(|_| "Failed to get current directory")?;
-    Utf8PathBuf::from_path_buf(curr_dir).map_err(|_| "Non Utf8 Path")
+/// Return the current directory as a UTF-8 Path
+pub fn get_current_directory() -> Result<Utf8PathBuf, Error> {
+    let curr_dir = std::env::current_dir().map_err(|e| Error::FileIo {
+        kind: FileKind::Directory,
+        action: FileIoAction::Open,
+        path: ".".into(),
+        err: Some(e.to_string()),
+    })?;
+    Utf8PathBuf::from_path_buf(curr_dir.clone()).map_err(|_| Error::NonUtf8Path { path: curr_dir })
 }
 
 /// A `FileWriter` implementation that writes to the file system.

@@ -164,7 +164,7 @@ impl<'module> Generator<'module> {
 
             TypedExpr::Var {
                 name, constructor, ..
-            } => Ok(self.variable(name, constructor)),
+            } => self.variable(name, constructor),
 
             TypedExpr::Pipeline {
                 assignments,
@@ -353,18 +353,17 @@ impl<'module> Generator<'module> {
         .group()
     }
 
-    fn variable<'a>(
-        &mut self,
-        name: &'a SmolStr,
-        constructor: &'a ValueConstructor,
-    ) -> Document<'a> {
+    fn variable<'a>(&mut self, name: &'a SmolStr, constructor: &'a ValueConstructor) -> Output<'a> {
         match &constructor.variant {
+            ValueConstructorVariant::LocalConstant { literal } => {
+                constant_expression(self.tracker, literal)
+            }
             ValueConstructorVariant::Record { arity, .. } => {
-                self.record_constructor(constructor.type_.clone(), None, name, *arity)
+                Ok(self.record_constructor(constructor.type_.clone(), None, name, *arity))
             }
             ValueConstructorVariant::ModuleFn { .. }
             | ValueConstructorVariant::ModuleConstant { .. }
-            | ValueConstructorVariant::LocalVariable { .. } => self.local_var(name),
+            | ValueConstructorVariant::LocalVariable { .. } => Ok(self.local_var(name)),
         }
     }
 
@@ -631,10 +630,7 @@ impl<'module> Generator<'module> {
             // We can remove this when we get exhaustiveness checking.
             doc = doc
                 .append(" else {")
-                .append(
-                    docvec!(line(), self.case_no_match(location, subjects.into_iter())?)
-                        .nest(INDENT),
-                )
+                .append(docvec!(line(), self.case_no_match(location, subjects)?).nest(INDENT))
                 .append(line())
                 .append("}")
         }
