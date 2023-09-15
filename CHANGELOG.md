@@ -21,12 +21,16 @@
   as having an overly general type.
 - Fixed a bug where recursive type constructors could incorrectly infer a type
   error.
+- Fixed a bug where some mutually recursive functions would be inferred as
+  having too general a type.
 - Fixed a bug where constants where not being correctly inlined when used in the 
   size option of a bitstring pattern match.
 - Fixed a bug where anonymous functions could parse successfully when missing a
   body.
 - Fixed a bug where incorrect unused variable warnings could be emitted for code
   that doesn't type check.
+- Fixed a bug where packages defaulting to the JavaScript target could have
+  modules missing from their HTML documentation when published.
 - Corrected some outdated links in error messages.
 - Hovering over a function definition will now display the function signature,
   or the type of the hovered argument.
