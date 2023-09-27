@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Module access can now be used in case clause guards.
+- The JS target now supports bit syntax for module consts.
+
 ## v0.31.0 - 2023-09-25
 
 - New Gleam projects are created with `gleam_stdlib` v0.31, `actions/checkout`
