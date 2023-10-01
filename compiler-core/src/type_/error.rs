@@ -20,8 +20,8 @@ pub enum Error {
         test_module: crate::error::Name,
     },
 
-    BitStringSegmentError {
-        error: crate::bit_string::ErrorType,
+    BitArraySegmentError {
+        error: crate::bit_array::ErrorType,
         location: SrcSpan,
     },
     UnknownLabels {
@@ -397,6 +397,10 @@ pub enum Warning {
         location: SrcSpan,
         message: SmolStr,
     },
+
+    DeprecatedBitString {
+        location: SrcSpan,
+    },
 }
 
 impl Error {
@@ -632,7 +636,7 @@ fn unify_enclosed_type_test() {
             crate::type_::float(),
             Err(UnifyError::CouldNotUnify {
                 expected: crate::type_::string(),
-                given: crate::type_::bit_string(),
+                given: crate::type_::bits(),
                 situation: Some(UnifyErrorSituation::CaseClauseMismatch)
             })
         )

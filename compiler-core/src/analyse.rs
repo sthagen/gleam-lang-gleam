@@ -1,12 +1,15 @@
 #[cfg(test)]
 mod tests;
 
-use crate::ast::{UntypedArg, UntypedStatement};
+use crate::ast::{
+    TypeAstConstructor, TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, UntypedArg,
+    UntypedStatement,
+};
 use crate::type_::error::MissingAnnotation;
 use crate::type_::Deprecation;
 use crate::{
     ast::{
-        self, BitStringSegmentOption, CustomType, Definition, DefinitionLocation, Function,
+        self, BitArrayOption, CustomType, Definition, DefinitionLocation, Function,
         GroupedStatements, Import, Layer, ModuleConstant, RecordConstructor, RecordConstructorArg,
         SrcSpan, TypeAlias, TypeAst, TypedDefinition, TypedModule, UnqualifiedImport,
         UntypedModule,
@@ -97,7 +100,7 @@ pub fn infer_module<A>(
     // anywhere in the module.
     // TODO: Extract an ImportRegistrar class to perform this.
     for s in &statements.imports {
-        register_import(s, &name, origin, &mut env)?;
+        register_import(s, &name, origin, warnings, &mut env)?;
     }
 
     // Register types so they can be used in constructors and functions
@@ -220,6 +223,7 @@ pub fn register_import(
     import: &Import<()>,
     current_module: &str,
     origin: Origin,
+    warnings: &TypeWarningEmitter,
     environment: &mut Environment<'_>,
 ) -> Result<(), Error> {
     // Determine local alias of imported module
@@ -263,6 +267,12 @@ pub fn register_import(
         let mut type_imported = false;
         let mut value_imported = false;
         let mut variant = None;
+
+        if name == "BitString" && module == "gleam" {
+            warnings.emit(type_::Warning::DeprecatedBitString {
+                location: *location,
+            });
+        }
 
         let imported_name = as_name.as_ref().unwrap_or(name);
 
@@ -841,7 +851,7 @@ fn insert_type_alias(
         ..
     } = t;
     let typ = environment
-        .get_type_constructor(&None, &alias)
+        .get_type_constructor(&None, &alias, location)
         .expect("Could not find existing type for type alias")
         .typ
         .clone();
@@ -922,7 +932,7 @@ fn infer_custom_type(
         )
         .collect();
     let typed_parameters = environment
-        .get_type_constructor(&None, &name)
+        .get_type_constructor(&None, &name, location)
         .expect("Could not find preregistered type constructor ")
         .parameters
         .clone();
@@ -1049,71 +1059,53 @@ fn infer_module_constant(
     }))
 }
 
-pub fn infer_bit_string_segment_option<UntypedValue, TypedValue, Typer>(
-    segment_option: BitStringSegmentOption<UntypedValue>,
+pub fn infer_bit_array_option<UntypedValue, TypedValue, Typer>(
+    segment_option: BitArrayOption<UntypedValue>,
     mut type_check: Typer,
-) -> Result<BitStringSegmentOption<TypedValue>, Error>
+) -> Result<BitArrayOption<TypedValue>, Error>
 where
     Typer: FnMut(UntypedValue, Arc<Type>) -> Result<TypedValue, Error>,
 {
     match segment_option {
-        BitStringSegmentOption::Size {
+        BitArrayOption::Size {
             value,
             location,
             short_form,
             ..
         } => {
             let value = type_check(*value, int())?;
-            Ok(BitStringSegmentOption::Size {
+            Ok(BitArrayOption::Size {
                 location,
                 short_form,
                 value: Box::new(value),
             })
         }
 
-        BitStringSegmentOption::Unit { location, value } => {
-            Ok(BitStringSegmentOption::Unit { location, value })
-        }
+        BitArrayOption::Unit { location, value } => Ok(BitArrayOption::Unit { location, value }),
 
-        BitStringSegmentOption::Binary { location } => {
-            Ok(BitStringSegmentOption::Binary { location })
+        BitArrayOption::Binary { location } => Ok(BitArrayOption::Binary { location }),
+        BitArrayOption::BitString { location } => Ok(BitArrayOption::BitString { location }),
+        BitArrayOption::Bytes { location } => Ok(BitArrayOption::Bytes { location }),
+        BitArrayOption::Int { location } => Ok(BitArrayOption::Int { location }),
+        BitArrayOption::Float { location } => Ok(BitArrayOption::Float { location }),
+        BitArrayOption::Bits { location } => Ok(BitArrayOption::Bits { location }),
+        BitArrayOption::Utf8 { location } => Ok(BitArrayOption::Utf8 { location }),
+        BitArrayOption::Utf16 { location } => Ok(BitArrayOption::Utf16 { location }),
+        BitArrayOption::Utf32 { location } => Ok(BitArrayOption::Utf32 { location }),
+        BitArrayOption::Utf8Codepoint { location } => {
+            Ok(BitArrayOption::Utf8Codepoint { location })
         }
-        BitStringSegmentOption::Int { location } => Ok(BitStringSegmentOption::Int { location }),
-        BitStringSegmentOption::Float { location } => {
-            Ok(BitStringSegmentOption::Float { location })
+        BitArrayOption::Utf16Codepoint { location } => {
+            Ok(BitArrayOption::Utf16Codepoint { location })
         }
-        BitStringSegmentOption::BitString { location } => {
-            Ok(BitStringSegmentOption::BitString { location })
+        BitArrayOption::Utf32Codepoint { location } => {
+            Ok(BitArrayOption::Utf32Codepoint { location })
         }
-        BitStringSegmentOption::Utf8 { location } => Ok(BitStringSegmentOption::Utf8 { location }),
-        BitStringSegmentOption::Utf16 { location } => {
-            Ok(BitStringSegmentOption::Utf16 { location })
-        }
-        BitStringSegmentOption::Utf32 { location } => {
-            Ok(BitStringSegmentOption::Utf32 { location })
-        }
-        BitStringSegmentOption::Utf8Codepoint { location } => {
-            Ok(BitStringSegmentOption::Utf8Codepoint { location })
-        }
-        BitStringSegmentOption::Utf16Codepoint { location } => {
-            Ok(BitStringSegmentOption::Utf16Codepoint { location })
-        }
-        BitStringSegmentOption::Utf32Codepoint { location } => {
-            Ok(BitStringSegmentOption::Utf32Codepoint { location })
-        }
-        BitStringSegmentOption::Signed { location } => {
-            Ok(BitStringSegmentOption::Signed { location })
-        }
-        BitStringSegmentOption::Unsigned { location } => {
-            Ok(BitStringSegmentOption::Unsigned { location })
-        }
-        BitStringSegmentOption::Big { location } => Ok(BitStringSegmentOption::Big { location }),
-        BitStringSegmentOption::Little { location } => {
-            Ok(BitStringSegmentOption::Little { location })
-        }
-        BitStringSegmentOption::Native { location } => {
-            Ok(BitStringSegmentOption::Native { location })
-        }
+        BitArrayOption::Signed { location } => Ok(BitArrayOption::Signed { location }),
+        BitArrayOption::Unsigned { location } => Ok(BitArrayOption::Unsigned { location }),
+        BitArrayOption::Big { location } => Ok(BitArrayOption::Big { location }),
+        BitArrayOption::Little { location } => Ok(BitArrayOption::Little { location }),
+        BitArrayOption::Native { location } => Ok(BitArrayOption::Native { location }),
     }
 }
 
@@ -1214,9 +1206,11 @@ fn make_type_vars(
     environment: &mut Environment<'_>,
 ) -> Result<Vec<Arc<Type>>, Error> {
     args.iter()
-        .map(|arg| TypeAst::Var {
-            location: *location,
-            name: arg.clone(),
+        .map(|arg| {
+            TypeAst::Var(TypeAstVar {
+                location: *location,
+                name: arg.clone(),
+            })
         })
         .map(|ast| hydrator.type_from_ast(&ast, environment))
         .try_collect()
@@ -1328,14 +1322,14 @@ fn get_type_dependencies(typ: &TypeAst) -> Vec<SmolStr> {
     let mut deps = Vec::with_capacity(1);
 
     match typ {
-        TypeAst::Var { .. } => (),
-        TypeAst::Hole { .. } => (),
-        TypeAst::Constructor {
+        TypeAst::Var(TypeAstVar { .. }) => (),
+        TypeAst::Hole(TypeAstHole { .. }) => (),
+        TypeAst::Constructor(TypeAstConstructor {
             name,
             arguments,
             module,
             ..
-        } => {
+        }) => {
             deps.push(match module {
                 Some(module) => format!("{}.{}", name, module).into(),
                 None => name.clone(),
@@ -1345,15 +1339,15 @@ fn get_type_dependencies(typ: &TypeAst) -> Vec<SmolStr> {
                 deps.extend(get_type_dependencies(arg))
             }
         }
-        TypeAst::Fn {
+        TypeAst::Fn(TypeAstFn {
             arguments, return_, ..
-        } => {
+        }) => {
             for arg in arguments {
                 deps.extend(get_type_dependencies(arg))
             }
             deps.extend(get_type_dependencies(return_))
         }
-        TypeAst::Tuple { elems, .. } => {
+        TypeAst::Tuple(TypeAstTuple { elems, .. }) => {
             for elem in elems {
                 deps.extend(get_type_dependencies(elem))
             }
