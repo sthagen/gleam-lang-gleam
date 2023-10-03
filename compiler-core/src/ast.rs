@@ -153,6 +153,16 @@ impl<A> Arg<A> {
     }
 }
 
+impl TypedArg {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        if self.location.contains(byte_index) {
+            Some(Located::Arg(self))
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArgNames {
     Discard { name: SmolStr },
@@ -397,7 +407,8 @@ pub struct Import<PackageName> {
     pub location: SrcSpan,
     pub module: SmolStr,
     pub as_name: Option<ImportName>,
-    pub unqualified: Vec<UnqualifiedImport>,
+    pub unqualified_values: Vec<UnqualifiedImport>,
+    pub unqualified_types: Vec<UnqualifiedImport>,
     pub package: PackageName,
 }
 

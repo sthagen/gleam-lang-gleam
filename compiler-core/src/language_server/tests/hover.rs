@@ -209,3 +209,50 @@ Int
         })
     );
 }
+
+#[test]
+fn hover_variable_in_use_expression() {
+    let code = "
+fn b(fun: fn(Int) -> String) {
+  fun(42)
+}
+
+fn do_stuff() {
+  let c = \"done\"
+
+  use a <- b
+  c
+}
+";
+
+    // hover over `a`
+    assert_eq!(
+        positioned_hover(code, Position::new(8, 6)),
+        Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::String("```gleam\nInt\n```".to_string())),
+            range: Some(Range::new(Position::new(8, 6), Position::new(8, 7))),
+        })
+    );
+
+    // hover over `b`
+    assert_eq!(
+        positioned_hover(code, Position::new(8, 11)),
+        Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::String(
+                "```gleam\nfn(fn(Int) -> String) -> String\n```\n".to_string()
+            )),
+            range: Some(Range::new(Position::new(8, 11), Position::new(8, 12))),
+        })
+    );
+
+    // hover over `c`
+    assert_eq!(
+        positioned_hover(code, Position::new(9, 2)),
+        Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::String(
+                "```gleam\nString\n```\nA locally defined variable.".to_string()
+            )),
+            range: Some(Range::new(Position::new(9, 2), Position::new(9, 3))),
+        })
+    );
+}
