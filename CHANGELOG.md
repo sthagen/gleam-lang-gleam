@@ -10,11 +10,16 @@
   your code.
 - The `binary` and `bit_string` bit array modifier have been deprecated in favour
   of `bytes` and `bits`.
+- The main process started with `gleam run` no longer traps exits on Erlang.
+- The formatting of code in rendered HTML documentation has been improved.
+- The content has been made wider in rendered HTML documentation.
 - The deprecated `todo("...")` syntax has been removed.
 - Module access can now be used in case clause guards.
 - The JS target now supports bit syntax for module consts.
 - The `gleam check` command supports the `target` flag now.
 - Fixed a bug where some hexidecimal numbers would generate incorrect Erlang.
+- The float 0.0 is now rendered in Erlang as `+0.0` to silence warnings in
+  Erlang/OTP 27.
 - A warning is now emitted if a module alias is unused.
 - Variables defined using `use` now show the variable type on hover.
 
