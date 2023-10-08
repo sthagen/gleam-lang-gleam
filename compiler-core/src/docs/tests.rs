@@ -1,17 +1,16 @@
 use std::time::SystemTime;
 
-use camino::Utf8PathBuf;
-use itertools::Itertools;
-use smol_str::SmolStr;
-
 use crate::{
-    build::{Mode, PackageCompiler, StaleTracker, TargetCodegenConfiguration},
+    build::{Mode, NullTelemetry, PackageCompiler, StaleTracker, TargetCodegenConfiguration},
     config::PackageConfig,
     io::{memory::InMemoryFileSystem, FileSystemWriter},
     paths::ProjectPaths,
     uid::UniqueIdGenerator,
     warning::WarningEmitter,
 };
+use camino::Utf8PathBuf;
+use itertools::Itertools;
+use smol_str::SmolStr;
 
 #[test]
 fn hello_docs() {
@@ -25,7 +24,27 @@ pub fn one() {
 }
 "#,
     )];
+    insta::assert_snapshot!(compile(config, modules));
+}
 
+// https://github.com/gleam-lang/gleam/issues/2347
+
+#[test]
+fn tables() {
+    let config = PackageConfig::default();
+    let modules = vec![(
+        "app.gleam",
+        r#"
+/// | heading 1    | heading 2    |
+/// |--------------|--------------|
+/// | row 1 cell 1 | row 1 cell 2 |
+/// | row 2 cell 1 | row 2 cell 2 |
+///
+pub fn one() {
+  1
+}
+"#,
+    )];
     insta::assert_snapshot!(compile(config, modules));
 }
 
@@ -84,6 +103,7 @@ fn compile(config: PackageConfig, modules: Vec<(&str, &str)>) -> SmolStr {
             &mut type_manifests,
             &mut defined_modules,
             &mut StaleTracker::default(),
+            &NullTelemetry,
         )
         .unwrap();
 

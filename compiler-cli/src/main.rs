@@ -239,7 +239,11 @@ enum Command {
 pub enum ExportTarget {
     /// Precompiled Erlang, suitable for deployment.
     ErlangShipment,
+    /// The package bundled into a tarball, suitable for publishing to Hex.
     HexTarball,
+    /// The JavaScript prelude module.
+    JavascriptPrelude,
+    TypescriptPrelude,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -285,6 +289,17 @@ pub struct CompilePackage {
     /// A directories of precompiled Gleam projects
     #[clap(long = "lib")]
     libraries_directory: Utf8PathBuf,
+
+    /// The location of the JavaScript prelude module, relative to the `out`
+    /// directory.
+    ///
+    /// Required when compiling to JavaScript.
+    ///
+    /// This likely wants to be a `.mjs` file as NodeJS does not permit
+    /// importing of other JavaScript file extentions.
+    ///
+    #[clap(long = "javascript-prelude")]
+    javascript_prelude: Option<Utf8PathBuf>,
 
     /// Skip Erlang to BEAM bytecode compilation if given
     #[clap(long = "no-beam")]
@@ -448,6 +463,8 @@ fn main() {
 
         Command::Export(ExportTarget::ErlangShipment) => export::erlang_shipment(),
         Command::Export(ExportTarget::HexTarball) => export::hex_tarball(),
+        Command::Export(ExportTarget::JavascriptPrelude) => export::javascript_prelude(),
+        Command::Export(ExportTarget::TypescriptPrelude) => export::typescript_prelude(),
     };
 
     match result {

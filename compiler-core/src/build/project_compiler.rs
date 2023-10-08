@@ -151,6 +151,9 @@ where
         // verify that this version is appropriate.
         self.check_gleam_version()?;
 
+        // The JavaScript target requires a prelude module to be written.
+        self.write_prelude()?;
+
         // Dependencies are compiled first.
         let compiled_dependency_modules = self.compile_dependencies()?;
 
@@ -228,9 +231,34 @@ where
         Ok(modules)
     }
 
-    fn load_cache_or_compile_package(&mut self, name: &str) -> Result<Vec<Module>, Error> {
-        self.telemetry.compiling_package(name);
+    fn write_prelude(&self) -> Result<()> {
+        // Only the JavaScript target has a prelude to write.
+        if !self.target().is_javascript() {
+            return Ok(());
+        }
 
+        let build = self
+            .paths
+            .build_directory_for_target(self.mode(), self.target());
+
+        // Write the JavaScript prelude
+        let path = build.join("prelude.mjs");
+        if !self.io.is_file(&path) {
+            self.io.write(&path, crate::javascript::PRELUDE)?;
+        }
+
+        // Write the TypeScript prelude, if asked for
+        if self.config.javascript.typescript_declarations {
+            let path = build.join("prelude.d.mts");
+            if !self.io.is_file(&path) {
+                self.io.write(&path, crate::javascript::PRELUDE_TS_DEF)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn load_cache_or_compile_package(&mut self, name: &str) -> Result<Vec<Module>, Error> {
         // TODO: We could remove this clone if we split out the compilation of
         // packages into their own classes and then only mutate self after we no
         // longer need to have the package borrowed from self.packages.
@@ -278,6 +306,9 @@ where
             tracing::debug!(%name, "skipping_rebar3_build_for_non_erlang_target");
             return Ok(());
         }
+
+        // Print that work is being done
+        self.telemetry.compiling_package(name);
 
         let package = self.paths.build_packages_package(name);
         let build_packages = self.paths.build_directory_for_target(mode, target);
@@ -343,6 +374,9 @@ where
             tracing::debug!(%name, "skipping_mix_build_for_non_erlang_target");
             return Ok(());
         }
+
+        // Print that work is being done
+        self.telemetry.compiling_package(name);
 
         let build_dir = self.paths.build_directory_for_target(mode, target);
         let project_dir = self.paths.build_packages_package(name);
@@ -476,6 +510,8 @@ where
             },
             Target::JavaScript => super::TargetCodegenConfiguration::JavaScript {
                 emit_typescript_definitions: self.config.javascript.typescript_declarations,
+                // This path is relative to each package output directory
+                prelude_location: Utf8PathBuf::from("../prelude.mjs"),
             },
         };
         let mut compiler = PackageCompiler::new(
@@ -500,6 +536,7 @@ where
             &mut self.importable_modules,
             &mut self.defined_modules,
             &mut self.stale_modules,
+            self.telemetry.as_ref(),
         )?;
 
         Ok(compiled)
