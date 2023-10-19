@@ -16,11 +16,15 @@
   been improved.
 - The error message for when the elements of a list's tail don't match the
   previous ones has been improved.
+- The error message for when one tries to access an unknown field has been
+  improved.
 - The `__gleam_prelude_variant__` property has been removed from the classes
   defined in the JavaScript prelude.
 - The deprecated `todo("...")` syntax has been removed.
 - Module access can now be used in case clause guards.
 - The JS target now supports bit syntax for module constants.
+- The Erlang compiler will no longer emit a duplicate warning for unused
+  functions.
 - A warning is now emitted if a module alias is unused.
 
 ### Language server changes
@@ -45,6 +49,7 @@
   commands have been added to export a copy of the prelude. This command may be
   useful for build tools that use the compiler via the `gleam compile-package`
   API.
+- Fixed a bug where some deprecation messages would not be printed.
 - The content has been made wider in rendered HTML documentation.
 - Dependencies that can be built with both `mix` and `rebar3` are now built
   with `mix` if it exists on the system, and with `rebar3` if it doesn't.
