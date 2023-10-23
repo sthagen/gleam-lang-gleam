@@ -468,6 +468,7 @@ pub struct CustomType<T> {
     pub public: bool,
     pub constructors: Vec<RecordConstructor<T>>,
     pub documentation: Option<SmolStr>,
+    pub deprecation: Deprecation,
     pub opaque: bool,
     /// The names of the type parameters.
     pub parameters: Vec<SmolStr>,
@@ -504,6 +505,7 @@ pub struct TypeAlias<T> {
     pub type_: T,
     pub public: bool,
     pub documentation: Option<SmolStr>,
+    pub deprecation: Deprecation,
 }
 
 pub type TypedDefinition = Definition<Arc<Type>, TypedExpr, SmolStr, SmolStr>;
