@@ -44,8 +44,8 @@ type X =
 #[test]
 fn import_aliased() {
     assert_eq!(
-        fix("import gleam.{BitString as B}"),
-        "import gleam.{BitArray as B}\n"
+        fix("import gleam.{type BitString as B}"),
+        "import gleam.{type BitArray as B}\n"
     );
 }
 
@@ -374,5 +374,41 @@ pub fn main(x) {
   }
 }
 "
+    );
+}
+
+#[test]
+fn aliased_type_import() {
+    assert_eq!(
+        fix("import x.{X as Y}
+
+pub type Z =
+  Y
+"),
+        "import x.{type X as Y}
+
+pub type Z =
+  Y
+"
+    );
+}
+
+#[test]
+fn already_fixed() {
+    assert_eq!(
+        fix("import x.{type X, X}
+
+pub const x = X
+
+pub type Z =
+  X
+"),
+        "import x.{type X, X}
+
+pub const x = X
+
+pub type Z =
+  X
+",
     );
 }
