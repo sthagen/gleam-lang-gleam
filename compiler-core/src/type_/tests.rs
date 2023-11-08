@@ -22,6 +22,7 @@ mod errors;
 mod functions;
 mod guards;
 mod imports;
+mod pipes;
 mod pretty;
 mod type_alias;
 mod use_;
@@ -155,6 +156,20 @@ fn get_printed_warnings(src: &str, deps: Vec<DependencyModule<'_>>) -> String {
         warning.pretty(&mut nocolor);
     }
     String::from_utf8(nocolor.into_inner()).expect("Error printing produced invalid utf8")
+}
+
+#[macro_export]
+macro_rules! assert_warnings_with_imports {
+    ($(($name:literal, $module_src:literal)),+; $src:literal, $($warning:expr),+) => {
+        let warnings = $crate::type_::tests::get_warnings(
+            $src,
+            vec![
+                $(("thepackage", $name, $module_src)),*
+            ],
+        );
+        assert!(!warnings.is_empty());
+        assert_eq!(vec![$($warning),*], warnings);
+    };
 }
 
 #[macro_export]
