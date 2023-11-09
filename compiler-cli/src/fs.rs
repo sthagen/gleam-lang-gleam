@@ -534,7 +534,9 @@ pub fn copy_dir(
     fs_extra::dir::copy(
         path.as_ref(),
         to.as_ref(),
-        &fs_extra::dir::CopyOptions::new(),
+        &fs_extra::dir::CopyOptions::new()
+            .copy_inside(false)
+            .content_only(true),
     )
     .map_err(|err| Error::FileIo {
         action: FileIoAction::Copy,
