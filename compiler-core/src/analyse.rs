@@ -29,7 +29,10 @@ use crate::{
 };
 use ecow::EcoString;
 use itertools::Itertools;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+};
 use vec1::Vec1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -488,23 +491,28 @@ fn assert_valid_javascript_external(
     location: SrcSpan,
 ) -> Result<(), Error> {
     use regex::Regex;
-    lazy_static::lazy_static! {
-        static ref MODULE: Regex = Regex::new("^[a-zA-Z0-9\\./:_-]+$").expect("regex");
-        static ref FUNCTION: Regex = Regex::new("^[a-zA-Z_][a-zA-Z0-9_]*$").expect("regex");
-    }
+
+    static MODULE: OnceLock<Regex> = OnceLock::new();
+    static FUNCTION: OnceLock<Regex> = OnceLock::new();
 
     let (module, function) = match external_javascript {
         None => return Ok(()),
         Some(external) => external,
     };
-    if !MODULE.is_match(module) {
+    if !MODULE
+        .get_or_init(|| Regex::new("^[a-zA-Z0-9\\./:_-]+$").expect("regex"))
+        .is_match(module)
+    {
         return Err(Error::InvalidExternalJavascriptModule {
             location,
             module: module.clone(),
             name: function_name.clone(),
         });
     }
-    if !FUNCTION.is_match(function) {
+    if !FUNCTION
+        .get_or_init(|| Regex::new("^[a-zA-Z_][a-zA-Z0-9_]*$").expect("regex"))
+        .is_match(function)
+    {
         return Err(Error::InvalidExternalJavascriptFunction {
             location,
             function: function.clone(),
