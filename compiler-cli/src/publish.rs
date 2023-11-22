@@ -11,7 +11,7 @@ use gleam_core::{
 use hexpm::version::{Range, Version};
 use itertools::Itertools;
 use sha2::Digest;
-use std::{io::Write, time::Instant};
+use std::{io::Write, path::PathBuf, time::Instant};
 
 use crate::{build, cli, docs, fs, hex::ApiKeyCommand, http::HttpClient};
 
@@ -35,6 +35,21 @@ impl PublishCommand {
     pub fn setup(replace: bool, i_am_sure: bool) -> Result<Option<Self>> {
         let paths = crate::project_paths_at_current_directory();
         let config = crate::config::root_config()?;
+
+        // Ask for confirmation if the package name if `gleam_*`
+        if config.name.starts_with("gleam_") && !config.name.starts_with("gleam_community_") {
+            println!(
+                "You are about to publish a package with a name that starts with
+the prefix `gleam_`, which is for packages maintained by the Gleam
+core team.",
+            );
+            let should_publish =
+                i_am_sure || cli::confirm("\nAre you sure you want to use this package name?")?;
+            if !should_publish {
+                println!("Not publishing.");
+                std::process::exit(0);
+            }
+        }
 
         // Ask for confirmation if the package is below version 1
         if config.version.major == 0 {
@@ -125,6 +140,23 @@ impl ApiKeyCommand for PublishCommand {
             "\nView your package at https://hex.pm/packages/{}",
             &self.config.name
         );
+
+        // Prompt the user to make a git tag if they have not.
+        let has_repo = self.config.repository.url().is_some();
+        let git = PathBuf::from(".git");
+        let version = format!("v{}", &self.config.version);
+        let git_tag = git.join("refs").join("tags").join(&version);
+        if has_repo && git.exists() && !git_tag.exists() {
+            println!(
+                "
+Please push a git tag for this release so source code links in the
+HTML documentation will work:
+
+    git tag v{version}
+    git push origin v{version}
+"
+            )
+        }
         Ok(())
     }
 }

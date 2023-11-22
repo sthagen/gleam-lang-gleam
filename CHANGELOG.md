@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Language changes
+
+- The `!` operator can now be used in clause guards.
+
 ### Build tool changes
 
 - The `gleam run` and `gleam test` commands gain the `-t` flag, which is an
@@ -11,6 +15,8 @@
 - The `gleam new` command now creates packages at version 1.0.0.
 - The `gleam publish` command now asks for confirmation if the package being
   published is not yet version 1.0.0.
+- The `gleam publish` command now asks for confirmation if the package name is
+  one that implies the package is maintained by the Gleam core team.
 
 ### Bug fixes
 
