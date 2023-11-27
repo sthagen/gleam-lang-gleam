@@ -568,7 +568,12 @@ impl<'comments> Formatter<'comments> {
             Some(t) => header.append(" -> ").append(self.type_ast(t)),
         };
 
-        header.append(" ").append(wrap_block(body)).group()
+        header
+            .append(" ")
+            .append(wrap_block(
+                body.next_break_fits(NextBreakFitsMode::Disabled),
+            ))
+            .group()
     }
 
     fn statements<'a>(&mut self, statements: &'a Vec1<UntypedStatement>) -> Document<'a> {
@@ -868,16 +873,29 @@ impl<'comments> Formatter<'comments> {
             | UntypedExpr::NegateInt { .. } => self.expr(fun),
         };
 
-        match args {
-            [arg] if is_breakable_expr(&arg.value) && !self.any_comments(arg.location.start) => {
-                expr.append("(")
-                    .append(self.call_arg(arg))
-                    .append(")")
+        match init_and_last(args) {
+            Some((initial_args, last_arg))
+                if is_breakable_argument(&last_arg.value)
+                    && !self.any_comments(last_arg.location.start) =>
+            {
+                let last_arg_doc = self
+                    .call_arg(last_arg)
                     .group()
+                    .next_break_fits(NextBreakFitsMode::Enabled);
+
+                expr.append(wrap_function_call_args(
+                    initial_args
+                        .iter()
+                        .map(|a| self.call_arg(a))
+                        .chain(std::iter::once(last_arg_doc)),
+                ))
+                .group()
             }
 
-            _ => expr
-                .append(wrap_args(args.iter().map(|a| self.call_arg(a))).group())
+            Some(_) | None => expr
+                .append(wrap_function_call_args(
+                    args.iter().map(|a| self.call_arg(a)),
+                ))
                 .group(),
         }
     }
@@ -1229,6 +1247,7 @@ impl<'comments> Formatter<'comments> {
 
             _ => break_("", " ").append(self.expr(expr)).nest(INDENT),
         }
+        .next_break_fits(NextBreakFitsMode::Disabled)
         .group()
     }
 
@@ -1285,7 +1304,8 @@ impl<'comments> Formatter<'comments> {
         } else {
             break_(",", ", ")
         };
-        let elements = join(elements.iter().map(|e| self.expr(e)), comma);
+        let elements = join(elements.iter().map(|e| self.expr(e)), comma)
+            .next_break_fits(NextBreakFitsMode::Disabled);
 
         let doc = break_("[", "[").append(elements);
 
@@ -1314,7 +1334,7 @@ impl<'comments> Formatter<'comments> {
 
             Pattern::String { value, .. } => self.string(value),
 
-            Pattern::Var { name, .. } => name.to_doc(),
+            Pattern::Variable { name, .. } => name.to_doc(),
 
             Pattern::VarUsage { name, .. } => name.to_doc(),
 
@@ -1346,16 +1366,21 @@ impl<'comments> Formatter<'comments> {
                 false,
             ),
 
-            Pattern::Concatenate {
+            Pattern::StringPrefix {
                 left_side_string: left,
                 right_side_assignment: right,
+                left_side_assignment: left_assign,
                 ..
             } => {
+                let left = self.string(left);
                 let right = match right {
                     AssignName::Variable(name) => name.to_doc(),
                     AssignName::Discard(name) => name.to_doc(),
                 };
-                docvec![self.string(left), " <> ", right]
+                match left_assign {
+                    Some((name, _)) => docvec![left, " as ", name, " <> ", right],
+                    None => docvec![left, " <> ", right],
+                }
             }
         };
         commented(doc, comments)
@@ -1589,6 +1614,16 @@ impl<'comments> Formatter<'comments> {
     }
 }
 
+fn init_and_last<T>(vec: &[T]) -> Option<(&[T], &T)> {
+    match vec {
+        [] => None,
+        _ => match vec.split_at(vec.len() - 1) {
+            (init, [last]) => Some((init, last)),
+            _ => panic!("unreachable"),
+        },
+    }
+}
+
 impl<'a> Documentable<'a> for &'a ArgNames {
     fn to_doc(self) -> Document<'a> {
         match self {
@@ -1672,7 +1707,7 @@ where
         return "()".to_doc();
     }
     break_("(", "(")
-        .append(join(args, break_(",", ", ")))
+        .append(join(args, break_(",", ", ")).next_break_fits(NextBreakFitsMode::Disabled))
         .nest(INDENT)
         .append(break_(",", ""))
         .append(")")
@@ -1692,6 +1727,27 @@ where
         .append(break_(",", ", "))
         .append("..")
         .nest(INDENT)
+        .append(break_(",", ""))
+        .append(")")
+        .group()
+}
+
+pub fn wrap_function_call_args<'a, I>(args: I) -> Document<'a>
+where
+    I: IntoIterator<Item = Document<'a>>,
+{
+    let mut args = args.into_iter().peekable();
+    if args.peek().is_none() {
+        return "()".to_doc();
+    }
+
+    let args_doc = break_("", "")
+        .append(join(args, break_(",", ", ")))
+        .nest_if_broken(INDENT)
+        .group();
+
+    "(".to_doc()
+        .append(args_doc)
         .append(break_(",", ""))
         .append(")")
         .group()
@@ -1885,6 +1941,18 @@ fn is_breakable_expr(expr: &UntypedExpr) -> bool {
         UntypedExpr::Fn { .. }
             | UntypedExpr::Block { .. }
             | UntypedExpr::Call { .. }
+            | UntypedExpr::Case { .. }
+            | UntypedExpr::List { .. }
+            | UntypedExpr::Tuple { .. }
+            | UntypedExpr::BitArray { .. }
+    )
+}
+
+fn is_breakable_argument(expr: &UntypedExpr) -> bool {
+    matches!(
+        expr,
+        UntypedExpr::Fn { .. }
+            | UntypedExpr::Block { .. }
             | UntypedExpr::Case { .. }
             | UntypedExpr::List { .. }
             | UntypedExpr::Tuple { .. }

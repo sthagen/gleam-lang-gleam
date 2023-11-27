@@ -25,8 +25,18 @@ struct Module {
   values @2 :List(Property(ValueConstructor));
   accessors @3 :List(Property(AccessorsMap));
   package @4 :Text;
-  typesConstructors @5 :List(Property(List(Text)));
+  typesConstructors @5 :List(Property(List(TypeValueConstructor)));
   unusedImports @6 :List(SrcSpan);
+}
+
+struct TypeValueConstructor {
+  name @0 :Text;
+  parameters @1 :List(TypeValueConstructorParameter);
+}
+
+struct TypeValueConstructorParameter {
+  type @0 :Type;
+  genericTypeParameterIndex @1 :Int16;
 }
 
 struct TypeConstructor {
@@ -107,6 +117,7 @@ struct ValueConstructorVariant {
       module @12 :Text;
       constructorsCount @13 :UInt16;
       documentation @16 :Text;
+      constructorIndex @17 :UInt16;
     }
   }
 }

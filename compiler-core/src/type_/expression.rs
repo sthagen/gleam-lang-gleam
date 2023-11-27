@@ -10,7 +10,9 @@ use crate::{
         UntypedExprBitArraySegment, UntypedMultiPattern, UntypedStatement, Use, UseAssignment,
         USE_ASSIGNMENT_VARIABLE,
     },
+    exhaustiveness,
 };
+use id_arena::Arena;
 use im::hashmap;
 use itertools::Itertools;
 use vec1::Vec1;
@@ -847,20 +849,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 .map_err(|e| convert_unify_error(e, value.type_defining_location()))?;
         }
 
-        // We currently only do only limited exhaustiveness checking of custom types
-        // at the top level of patterns.
         // Do not perform exhaustiveness checking if user explicitly used `let assert ... = ...`.
         if kind.performs_exhaustiveness_check() {
-            if let Err(unmatched) = self
-                .environment
-                .check_exhaustiveness(vec![pattern.clone()], collapse_links(value_typ))
-            {
-                return Err(Error::NotExhaustivePatternMatch {
-                    location,
-                    unmatched,
-                    kind: PatternMatchKind::Assignment,
-                });
-            }
+            self.check_let_exhaustiveness(location, value.type_(), &pattern)?;
         }
 
         Ok(Assignment {
@@ -903,15 +894,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             typed_clauses.push(typed_clause);
         }
 
-        if let Err(unmatched) =
-            self.check_case_exhaustiveness(subjects_count, &subject_types, &typed_clauses)
-        {
-            return Err(Error::NotExhaustivePatternMatch {
-                location,
-                unmatched,
-                kind: PatternMatchKind::Case,
-            });
-        }
+        self.check_case_exhaustiveness(location, &subject_types, &typed_clauses)?;
 
         Ok(TypedExpr::Case {
             location,
@@ -2254,47 +2237,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
-    fn check_case_exhaustiveness(
-        &mut self,
-        subjects_count: usize,
-        subjects: &[Arc<Type>],
-        typed_clauses: &[Clause<TypedExpr, Arc<Type>, EcoString>],
-    ) -> Result<(), Vec<EcoString>> {
-        // Because exhaustiveness checking in presence of multiple subjects is similar
-        // to full exhaustiveness checking of tuples or other nested record patterns,
-        // and we currently only do only limited exhaustiveness checking of custom types
-        // at the top level of patterns, only consider case expressions with one subject.
-        if subjects_count != 1 {
-            return Ok(());
-        }
-        let subject_type = subjects
-            .get(0)
-            .expect("Asserted there's one case subject but found none");
-        let value_typ = collapse_links(subject_type.clone());
-
-        // Currently guards in exhaustiveness checking are assumed that they can fail,
-        // so we go through all clauses and pluck out only the patterns
-        // for clauses that don't have guards.
-        let mut patterns = Vec::new();
-        for clause in typed_clauses {
-            if let Clause { guard: None, .. } = clause {
-                // clause.pattern is a list of patterns for all subjects
-                if let Some(pattern) = clause.pattern.get(0) {
-                    patterns.push(pattern.clone());
-                }
-                // A clause can be built with alternative patterns as well, e.g. `Audio(_) | Text(_) ->`.
-                // We're interested in all patterns so we build a flattened list.
-                for alternative_pattern in &clause.alternative_patterns {
-                    // clause.alternative_pattern is a list of patterns for all subjects
-                    if let Some(pattern) = alternative_pattern.get(0) {
-                        patterns.push(pattern.clone());
-                    }
-                }
-            }
-        }
-        self.environment.check_exhaustiveness(patterns, value_typ)
-    }
-
     fn infer_block(
         &mut self,
         statements: Vec1<UntypedStatement>,
@@ -2307,6 +2249,113 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 location,
             })
         })
+    }
+
+    fn check_let_exhaustiveness(
+        &self,
+        location: SrcSpan,
+        subject: Arc<Type>,
+        pattern: &TypedPattern,
+    ) -> Result<(), Error> {
+        use exhaustiveness::{Body, Column, Compiler, PatternArena, Row};
+
+        let mut compiler = Compiler::new(self.environment, Arena::new());
+        let mut arena = PatternArena::new();
+
+        let subject_variable = compiler.new_variable(subject.clone());
+
+        let mut rows = Vec::with_capacity(1);
+
+        let pattern = arena.register(pattern);
+        let column = Column::new(subject_variable.clone(), pattern);
+        let guard = None;
+        let body = Body::new(0);
+        let row = Row::new(vec![column], guard, body);
+        rows.push(row);
+
+        // Perform exhaustiveness checking, building a decision tree
+        compiler.set_pattern_arena(arena.into_inner());
+        let output = compiler.compile(rows);
+
+        // Emit warnings for missing clauses that would cause a crash
+        if output.diagnostics.missing {
+            self.environment
+                .warnings
+                .emit(Warning::InexhaustiveLetAssignment {
+                    location,
+                    missing: output.missing_patterns(self.environment),
+                })
+        }
+
+        Ok(())
+    }
+
+    fn check_case_exhaustiveness(
+        &self,
+        location: SrcSpan,
+        subject_types: &[Arc<Type>],
+        clauses: &[Clause<TypedExpr, Arc<Type>, EcoString>],
+    ) -> Result<(), Error> {
+        use exhaustiveness::{Body, Column, Compiler, PatternArena, Row};
+
+        let mut compiler = Compiler::new(self.environment, Arena::new());
+        let mut arena = PatternArena::new();
+
+        let subject_variables = subject_types
+            .iter()
+            .map(|t| compiler.new_variable(t.clone()))
+            .collect_vec();
+
+        let mut rows = Vec::with_capacity(clauses.iter().map(Clause::pattern_count).sum::<usize>());
+
+        for (clause_index, clause) in clauses.iter().enumerate() {
+            let mut add = |multi_pattern: &[TypedPattern]| {
+                let mut columns = Vec::with_capacity(multi_pattern.len());
+                for (subject_index, pattern) in multi_pattern.iter().enumerate() {
+                    let pattern = arena.register(pattern);
+                    let var = subject_variables
+                        .get(subject_index)
+                        .expect("Subject variable")
+                        .clone();
+                    columns.push(Column::new(var, pattern));
+                }
+                let guard = clause.guard.as_ref().map(|_| clause_index);
+                let body = Body::new(clause_index as u16);
+                rows.push(Row::new(columns, guard, body));
+            };
+
+            add(&clause.pattern);
+            for multi_pattern in &clause.alternative_patterns {
+                add(multi_pattern);
+            }
+        }
+
+        // Perform exhaustiveness checking, building a decision tree
+        compiler.set_pattern_arena(arena.into_inner());
+        let output = compiler.compile(rows);
+
+        // Emit warnings for missing clauses that would cause a crash
+        if output.diagnostics.missing {
+            self.environment
+                .warnings
+                .emit(Warning::InexhaustiveCaseExpression {
+                    location,
+                    missing: output.missing_patterns(self.environment),
+                })
+        }
+
+        // Emit warnings for unreachable clauses
+        for (clause_index, clause) in clauses.iter().enumerate() {
+            if !output.is_reachable(clause_index) {
+                self.environment
+                    .warnings
+                    .emit(Warning::UnreachableCaseClause {
+                        location: clause.location,
+                    })
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -2417,7 +2466,7 @@ impl UseAssignments {
 
                 // For simple patterns of a single variable we add a regular
                 // function argument.
-                Pattern::Var { name, .. } => assignments.function_arguments.push(Arg {
+                Pattern::Variable { name, .. } => assignments.function_arguments.push(Arg {
                     location,
                     annotation,
                     names: ArgNames::Named { name },
@@ -2435,7 +2484,7 @@ impl UseAssignments {
                 | Pattern::Constructor { .. }
                 | Pattern::Tuple { .. }
                 | Pattern::BitArray { .. }
-                | Pattern::Concatenate { .. }) => {
+                | Pattern::StringPrefix { .. }) => {
                     let name: EcoString = format!("{USE_ASSIGNMENT_VARIABLE}{index}").into();
                     assignments.function_arguments.push(Arg {
                         location,

@@ -525,13 +525,10 @@ fn expr_call() {
 
     assert_format!(
         "fn main() {
-  Ok(
-    1,
-    {
-      1
-      2
-    },
-  )
+  Ok(1, {
+    1
+    2
+  })
 }
 "
     );
@@ -598,11 +595,15 @@ fn compact_single_argument_call() {
 
     assert_format!(
         r#"fn main() {
-  thingy(wiggle(my_function(
-    // ok!
-    one(),
-    two(),
-  )))
+  thingy(
+    wiggle(
+      my_function(
+        // ok!
+        one(),
+        two(),
+      ),
+    ),
+  )
 }
 "#
     );
@@ -4330,13 +4331,10 @@ fn case_in_call() {
     assert_format!(
         "fn clause_guard_tests(_fns) -> List(Test) {
   example(fn() {
-    assert_equal(
-      0,
-      case Nil {
-        _ if yes -> 0
-        _ -> 1
-      },
-    )
+    assert_equal(0, case Nil {
+      _ if yes -> 0
+      _ -> 1
+    })
   })
 }
 "
@@ -4501,7 +4499,11 @@ fn no_newline_before_comments() {
 fn list_at_end_of_long_expr_line() {
     assert_format!(
         "pub fn example() {
-  Ok(RecordConstructorWithALongName(a_field: RecordConstructorWithALongName(a_field: Record(a_field: []))))
+  Ok(
+    RecordConstructorWithALongName(
+      a_field: RecordConstructorWithALongName(a_field: Record(a_field: [])),
+    ),
+  )
 }
 "
     );
@@ -5141,6 +5143,35 @@ fn deprecated_type_alias() {
         r#"@deprecated("Deprecated type")
 pub type Tiger =
   Nil
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2423
+#[test]
+fn prefix_as() {
+    assert_format!(
+        r#"pub fn main(x) {
+  case x {
+    "0" as digit <> rest | "1" as digit <> rest -> rest
+  }
+}
+"#
+    );
+}
+
+#[test]
+fn case_splits_function_on_newline() {
+    assert_format!(
+        r#"pub fn main() {
+  case x {
+    1 ->
+      some_module.some_long_name_function([
+        some_module.some_long_name_function(),
+      ])
+    _ -> todo
+  }
+}
 "#
     );
 }

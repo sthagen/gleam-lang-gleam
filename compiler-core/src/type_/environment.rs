@@ -1,5 +1,4 @@
 use crate::{
-    analyse::Inferred,
     ast::{Layer, PIPE_VARIABLE},
     build::Target,
     uid::UniqueIdGenerator,
@@ -37,7 +36,7 @@ pub struct Environment<'a> {
     pub module_types: HashMap<EcoString, TypeConstructor>,
 
     /// Mapping from types to constructor names in the current module (or the prelude)
-    pub module_types_constructors: HashMap<EcoString, Vec<EcoString>>,
+    pub module_types_constructors: HashMap<EcoString, Vec<TypeValueConstructor>>,
 
     /// Values defined in the current module (or the prelude)
     pub module_values: HashMap<EcoString, ValueConstructor>,
@@ -89,7 +88,7 @@ impl<'a> Environment<'a> {
             ids,
             target,
             module_types: prelude.types.clone(),
-            module_types_constructors: prelude.types_constructors.clone(),
+            module_types_constructors: prelude.types_value_constructors.clone(),
             module_values: HashMap::new(),
             imported_modules: HashMap::new(),
             unused_modules: HashMap::new(),
@@ -295,7 +294,7 @@ impl<'a> Environment<'a> {
     pub fn insert_type_to_constructors(
         &mut self,
         type_name: EcoString,
-        constructors: Vec<EcoString>,
+        constructors: Vec<TypeValueConstructor>,
     ) {
         let _ = self
             .module_types_constructors
@@ -354,11 +353,16 @@ impl<'a> Environment<'a> {
     /// Lookup constructors for type in the current scope.
     ///
     pub fn get_constructors_for_type(
-        &mut self,
-        full_module_name: Option<&str>,
+        &self,
+        module: &EcoString,
         name: &EcoString,
-    ) -> Result<&Vec<EcoString>, UnknownTypeConstructorError> {
-        match full_module_name {
+    ) -> Result<&Vec<TypeValueConstructor>, UnknownTypeConstructorError> {
+        let module = if module.is_empty() || *module == self.current_module {
+            None
+        } else {
+            Some(module)
+        };
+        match module {
             None => self.module_types_constructors.get(name).ok_or_else(|| {
                 UnknownTypeConstructorError::Type {
                     name: name.clone(),
@@ -373,8 +377,7 @@ impl<'a> Environment<'a> {
                         imported_modules: self.importable_modules.keys().cloned().collect(),
                     }
                 })?;
-                let _ = self.unused_modules.remove(m);
-                module.types_constructors.get(name).ok_or_else(|| {
+                module.types_value_constructors.get(name).ok_or_else(|| {
                     UnknownTypeConstructorError::ModuleType {
                         name: name.clone(),
                         module_name: module.name.clone(),
@@ -635,69 +638,6 @@ impl<'a> Environment<'a> {
             .filter(|&t| PIPE_VARIABLE != t)
             .cloned()
             .collect()
-    }
-
-    /// Checks that the given patterns are exhaustive for given type.
-    /// Currently only performs exhaustiveness checking for custom types,
-    /// only at the top level (without recursing into constructor arguments).
-    pub fn check_exhaustiveness(
-        &mut self,
-        patterns: Vec<Pattern<Arc<Type>>>,
-        value_typ: Arc<Type>,
-    ) -> Result<(), Vec<EcoString>> {
-        match &*value_typ {
-            Type::Named {
-                name: type_name,
-                module: module_name,
-                ..
-            } => {
-                let m = if module_name.is_empty() || module_name == &self.current_module {
-                    None
-                } else {
-                    Some(module_name.as_str())
-                };
-
-                if let Ok(constructors) = self.get_constructors_for_type(m, type_name) {
-                    let mut unmatched_constructors: HashSet<EcoString> =
-                        constructors.iter().cloned().collect();
-
-                    for p in &patterns {
-                        // ignore Assign patterns
-                        let mut pattern = p;
-                        while let Pattern::Assign {
-                            pattern: assign_pattern,
-                            ..
-                        } = pattern
-                        {
-                            pattern = assign_pattern;
-                        }
-
-                        match pattern {
-                            // If the pattern is a Discard or Var, all constructors are covered by it
-                            Pattern::Discard { .. } => return Ok(()),
-                            Pattern::Var { .. } => return Ok(()),
-
-                            // If the pattern is a constructor, remove it from unmatched patterns
-                            Pattern::Constructor {
-                                constructor:
-                                    Inferred::Known(PatternConstructor::Record { name, .. }),
-                                ..
-                            } => {
-                                let _ = unmatched_constructors.remove(name);
-                            }
-
-                            _ => return Ok(()),
-                        }
-                    }
-
-                    if !unmatched_constructors.is_empty() {
-                        return Err(unmatched_constructors.into_iter().sorted().collect());
-                    }
-                }
-                Ok(())
-            }
-            _ => Ok(()),
-        }
     }
 }
 

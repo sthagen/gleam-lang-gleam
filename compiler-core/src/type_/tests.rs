@@ -19,6 +19,7 @@ mod assignments;
 mod conditional_compilation;
 mod custom_types;
 mod errors;
+mod exhaustiveness;
 mod functions;
 mod guards;
 mod imports;
@@ -135,7 +136,7 @@ macro_rules! assert_with_module_error {
 
 fn get_warnings(src: &str, deps: Vec<DependencyModule<'_>>) -> Vec<Warning> {
     let warnings = VectorWarningEmitterIO::default();
-    _ = compile_module(src, Some(Arc::new(warnings.clone())), deps);
+    _ = compile_module(src, Some(Arc::new(warnings.clone())), deps).unwrap();
     warnings
         .take()
         .into_iter()
@@ -176,6 +177,7 @@ macro_rules! assert_warnings_with_imports {
 macro_rules! assert_warning {
     ($src:expr) => {
         let output = $crate::type_::tests::get_printed_warnings($src, vec![]);
+        assert!(!output.is_empty());
         insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 
@@ -184,6 +186,7 @@ macro_rules! assert_warning {
             $src,
             vec![$(($package, $name, $module_src)),*]
         );
+        assert!(!output.is_empty());
         insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 
@@ -519,9 +522,46 @@ fn infer_module_type_retention_test() {
             name: "ok".into(),
             // Core type constructors like String and Int are not included
             types: HashMap::new(),
-            types_constructors: HashMap::from([
-                ("Bool".into(), vec!["True".into(), "False".into()]),
-                ("Result".into(), vec!["Ok".into(), "Error".into()])
+            types_value_constructors: HashMap::from([
+                (
+                    "Bool".into(),
+                    vec![
+                        TypeValueConstructor {
+                            name: "True".into(),
+                            parameters: vec![],
+                        },
+                        TypeValueConstructor {
+                            name: "False".into(),
+                            parameters: vec![],
+                        }
+                    ]
+                ),
+                (
+                    "Result".into(),
+                    vec![
+                        TypeValueConstructor {
+                            name: "Ok".into(),
+                            parameters: vec![TypeValueConstructorParameter {
+                                type_: generic_var(1),
+                                generic_type_parameter_index: Some(0)
+                            }]
+                        },
+                        TypeValueConstructor {
+                            name: "Error".into(),
+                            parameters: vec![TypeValueConstructorParameter {
+                                type_: generic_var(2),
+                                generic_type_parameter_index: Some(1)
+                            }]
+                        }
+                    ]
+                ),
+                (
+                    "Nil".into(),
+                    vec![TypeValueConstructor {
+                        name: "Nil".into(),
+                        parameters: vec![]
+                    },]
+                )
             ]),
             values: HashMap::new(),
             accessors: HashMap::new(),

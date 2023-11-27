@@ -2,8 +2,17 @@
 
 ## Unreleased
 
+### Formatter
+
+- The formatter now tries to keep a function body and its arguments on a single
+  line by first trying to split only its last argument on multiple lines
+
 ### Language changes
 
+- Gleam now has full exhaustiveness checking. Exhaustiveness issues have been
+  downgraded from errors to warnings so that existing Gleam code can be
+  upgraded to be exhaustive without breaking existing code. In a future version
+  they will be upgraded to errors.
 - The `!` operator can now be used in clause guards.
 
 ### Build tool changes
@@ -32,6 +41,10 @@
   for the upcoming negative zero float change in Erlang OTP 27.
 - Fixed a bug where using only types from an aliased import, wouldn't stop the
   compiler from emitting an unused alias warning for that import.
+- Fixed a bug where the formatter would remove the ` as name` from string prefix
+  patterns.
+- Fixed a bug where the formatter would misplace comments at the start of a
+  block.
 
 
 ## v0.32.4 - 2023-11-09

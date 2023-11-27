@@ -298,7 +298,17 @@ fn unused_private_type_warnings_test7() {
 
 #[test]
 fn unused_private_type_warnings_test8() {
-    assert_no_warnings!("type X { X } pub fn a() { let b = X case b { X -> 1 } }");
+    assert_no_warnings!(
+        "
+type X { X }
+
+pub fn a() {
+  let b = X
+  case b {
+    X -> 1
+  }
+}"
+    );
 }
 
 #[test]
@@ -516,7 +526,7 @@ fn bit_pattern_var_use() {
     assert_no_warnings!(
         "
 pub fn main(x) {
-  let <<name_size:8, name:binary-size(name_size)>> = x
+  let assert <<name_size:8, name:binary-size(name_size)>> = x
   name
 }",
     );
@@ -887,15 +897,15 @@ pub const x = some_module.x
 
 #[test]
 fn no_unused_warnings_for_broken_code() {
-    assert_no_warnings!(
-        r#"
+    let src = r#"
 pub fn main() {
   let x = 1
   1 + ""
   x
-}
-        "#
-    );
+}"#;
+    let warnings = VectorWarningEmitterIO::default();
+    _ = compile_module(src, Some(Arc::new(warnings.clone())), vec![]).unwrap_err();
+    assert!(warnings.take().is_empty());
 }
 
 #[test]
@@ -1141,11 +1151,8 @@ fn unused_alias_warning_test() {
 #[test]
 fn used_type_with_import_alias_no_warning_test() {
     assert_no_warnings!(
-        ("gleam", "foo", "pub type A"),
-        r#"
-            import foo as bar
-            pub fn fun(a: bar.A) { a }
-        "#
+        ("gleam", "gleam/foo", "pub const one = 1"),
+        "import gleam/foo as _bar"
     );
 }
 

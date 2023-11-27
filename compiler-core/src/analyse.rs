@@ -21,7 +21,8 @@ use crate::{
         hydrator::Hydrator,
         prelude::*,
         AccessorsMap, Deprecation, ModuleInterface, PatternConstructor, RecordAccessor, Type,
-        TypeConstructor, ValueConstructor, ValueConstructorVariant,
+        TypeConstructor, TypeValueConstructor, TypeValueConstructorParameter, ValueConstructor,
+        ValueConstructorVariant,
     },
     uid::UniqueIdGenerator,
     warning::TypeWarningEmitter,
@@ -43,6 +44,14 @@ pub enum Inferred<T> {
 
 impl<T> Inferred<T> {
     pub fn expect(self, message: &str) -> T {
+        match self {
+            Inferred::Known(value) => Some(value),
+            Inferred::Unknown => None,
+        }
+        .expect(message)
+    }
+
+    pub fn expect_ref(&self, message: &str) -> &T {
         match self {
             Inferred::Known(value) => Some(value),
             Inferred::Unknown => None,
@@ -118,7 +127,14 @@ pub fn infer_module<A>(
         register_value_from_function(f, &mut value_names, &mut env, &mut hydrators, &name)?;
     }
     for t in &statements.custom_types {
-        register_values_from_custom_type(t, &mut hydrators, &mut env, &mut value_names, &name)?;
+        register_values_from_custom_type(
+            t,
+            &mut hydrators,
+            &mut env,
+            &mut value_names,
+            &name,
+            &t.parameters,
+        )?;
     }
 
     // Infer the types of each statement in the module
@@ -214,7 +230,7 @@ pub fn infer_module<A>(
         type_info: ModuleInterface {
             name,
             types,
-            types_constructors,
+            types_value_constructors: types_constructors,
             values,
             accessors,
             origin,
@@ -289,7 +305,6 @@ fn register_types_from_custom_type<'a>(
         public,
         parameters,
         location,
-        constructors,
         deprecation,
         ..
     } = t;
@@ -317,8 +332,6 @@ fn register_types_from_custom_type<'a>(
             typ,
         },
     )?;
-    let constructor_names = constructors.iter().map(|c| c.name.clone()).collect();
-    environment.insert_type_to_constructors(name.clone(), constructor_names);
     if !public {
         environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
     };
@@ -331,6 +344,7 @@ fn register_values_from_custom_type(
     environment: &mut Environment<'_>,
     names: &mut HashMap<EcoString, SrcSpan>,
     module_name: &EcoString,
+    type_parameters: &[EcoString],
 ) -> Result<(), Error> {
     let CustomType {
         location,
@@ -361,15 +375,37 @@ fn register_values_from_custom_type(
         };
         environment.insert_accessors(name.clone(), map)
     }
-    for constructor in constructors {
+
+    let mut constructors_data = vec![];
+
+    for (index, constructor) in constructors.iter().enumerate() {
         assert_unique_name(names, &constructor.name, constructor.location)?;
 
         let mut field_map = FieldMap::new(constructor.arguments.len() as u32);
         let mut args_types = Vec::with_capacity(constructor.arguments.len());
+        let mut parameters = Vec::with_capacity(constructor.arguments.len());
+
         for (i, RecordConstructorArg { label, ast, .. }) in constructor.arguments.iter().enumerate()
         {
+            // Build a type from the annotation AST
             let t = hydrator.type_from_ast(ast, environment)?;
+
+            // Determine the parameter index if this is a generic type
+            let generic_type_parameter_index = match &ast {
+                TypeAst::Var(TypeAstVar { name, .. }) => {
+                    type_parameters.iter().position(|p| p == name)
+                }
+                _ => None,
+            };
+            parameters.push(TypeValueConstructorParameter {
+                type_: t.clone(),
+                generic_type_parameter_index,
+            });
+
+            // Register the type for this parameter
             args_types.push(t);
+
+            // Register the label for this parameter, if there is one
             if let Some(label) = label {
                 field_map
                     .insert(label.clone(), i as u32)
@@ -383,7 +419,7 @@ fn register_values_from_custom_type(
         // Insert constructor function into module scope
         let typ = match constructor.arguments.len() {
             0 => typ.clone(),
-            _ => fn_(args_types, typ.clone()),
+            _ => fn_(args_types.clone(), typ.clone()),
         };
         let constructor_info = ValueConstructorVariant::Record {
             documentation: constructor.documentation.clone(),
@@ -393,6 +429,7 @@ fn register_values_from_custom_type(
             field_map: field_map.clone(),
             location: constructor.location,
             module: module_name.clone(),
+            constructor_index: index as u16,
         };
 
         environment.insert_module_value(
@@ -413,6 +450,10 @@ fn register_values_from_custom_type(
             );
         }
 
+        constructors_data.push(TypeValueConstructor {
+            name: constructor.name.clone(),
+            parameters,
+        });
         environment.insert_variable(
             constructor.name.clone(),
             constructor_info,
@@ -421,6 +462,9 @@ fn register_values_from_custom_type(
             deprecation.clone(),
         );
     }
+
+    environment.insert_type_to_constructors(name.clone(), constructors_data);
+
     Ok(())
 }
 
