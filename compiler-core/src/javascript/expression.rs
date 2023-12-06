@@ -188,11 +188,11 @@ impl<'module> Generator<'module> {
 
             TypedExpr::Todo {
                 message, location, ..
-            } => Ok(self.todo(message, location)),
+            } => self.todo(message.as_ref().map(|m| &**m), location),
 
             TypedExpr::Panic {
                 location, message, ..
-            } => Ok(self.panic(location, message.as_deref())),
+            } => self.panic(location, message.as_ref().map(|m| &**m)),
 
             TypedExpr::BitArray { segments, .. } => self.bit_array(segments),
 
@@ -671,7 +671,7 @@ impl<'module> Generator<'module> {
     {
         Ok(self.throw_error(
             "case_no_match",
-            "No case clause matched",
+            &string("No case clause matched"),
             location,
             [("values", array(subjects.into_iter().map(Ok))?)],
         ))
@@ -680,7 +680,7 @@ impl<'module> Generator<'module> {
     fn assignment_no_match<'a>(&mut self, location: SrcSpan, subject: Document<'a>) -> Output<'a> {
         Ok(self.throw_error(
             "assignment_no_match",
-            "Assignment pattern did not match",
+            &string("Assignment pattern did not match"),
             location,
             [("value", subject)],
         ))
@@ -963,40 +963,44 @@ impl<'module> Generator<'module> {
         Ok(docvec!(left, " ", op, " ", right))
     }
 
-    fn todo<'a>(&mut self, message: &'a Option<EcoString>, location: &'a SrcSpan) -> Document<'a> {
+    fn todo<'a>(&mut self, message: Option<&'a TypedExpr>, location: &'a SrcSpan) -> Output<'a> {
         let scope_position = self.scope_position;
         self.scope_position = Position::NotTail;
 
-        let message = message
-            .as_deref()
-            .unwrap_or("This has not yet been implemented");
-        let doc = self.throw_error("todo", message, *location, vec![]);
+        let message = match message {
+            Some(m) => self.expression(m)?,
+            None => string("This has not yet been implemented"),
+        };
+        let doc = self.throw_error("todo", &message, *location, vec![]);
 
         // Reset tail position so later values are returned as needed. i.e.
         // following clauses in a case expression.
         self.scope_position = scope_position;
 
-        doc
+        Ok(doc)
     }
 
-    fn panic<'a>(&mut self, location: &'a SrcSpan, message: Option<&'a str>) -> Document<'a> {
+    fn panic<'a>(&mut self, location: &'a SrcSpan, message: Option<&'a TypedExpr>) -> Output<'a> {
         let scope_position = self.scope_position;
         self.scope_position = Position::NotTail;
-        let message = message.unwrap_or("panic expression evaluated");
 
-        let doc = self.throw_error("todo", message, *location, vec![]);
+        let message = match message {
+            Some(m) => self.expression(m)?,
+            None => string("panic expression evaluated"),
+        };
+        let doc = self.throw_error("todo", &message, *location, vec![]);
 
         // Reset tail position so later values are returned as needed. i.e.
         // following clauses in a case expression.
         self.scope_position = scope_position;
 
-        doc
+        Ok(doc)
     }
 
     fn throw_error<'a, Fields>(
         &mut self,
         error_name: &'a str,
-        message: &'a str,
+        message: &Document<'a>,
         location: SrcSpan,
         fields: Fields,
     ) -> Document<'a>
@@ -1013,6 +1017,7 @@ impl<'module> Generator<'module> {
             .surround("\"", "\"");
         let line = self.line_numbers.line_number(location.start).to_doc();
         let fields = wrap_object(fields.into_iter().map(|(k, v)| (k.to_doc(), Some(v))));
+
         docvec![
             "throw makeError",
             wrap_args([
@@ -1020,7 +1025,7 @@ impl<'module> Generator<'module> {
                 module,
                 line,
                 function,
-                string(message),
+                message.clone(),
                 fields
             ]),
         ]

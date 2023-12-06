@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.33.0-rc1 - 2023-12-06
 
 ### Formatter
 
@@ -21,7 +21,9 @@
   `test` are now reserved for future use. If used they will emit a warning. In
   a future version this may be upgraded to an error.
 - The `\u{...}` syntax can be used in strings to specify unicode codepoints via a
-  hexadecimal number. 2, 4, or 8 digits can be used.
+  hexadecimal number with 1 to 6 digits.
+- The `todo as` and `panic as` syntaxes now accept an expression that evaluates
+  to a string rather than just a string literal.
 
 ### Build tool changes
 
@@ -64,6 +66,8 @@
   patterns.
 - Fixed a bug where the formatter would misplace comments at the start of a
   block.
+- Fixed a bug where using a string prefix pattern in `let assert` would generate
+  incorrect JavaScript.
 
 
 ## v0.32.4 - 2023-11-09

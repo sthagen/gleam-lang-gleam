@@ -72,17 +72,17 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 message: label,
                 kind,
                 ..
-            } => Ok(self.infer_todo(location, kind, label)),
+            } => self.infer_todo(location, kind, label),
 
             // A placeholder is used when the author has not provided a function
             // body, instead only giving an external implementation for this
             // target. This placeholder implementation will never be used so we
             // treat it as a `panic` expression during analysis.
-            UntypedExpr::Placeholder { location } => Ok(self.infer_panic(location, None)),
+            UntypedExpr::Placeholder { location } => self.infer_panic(location, None),
 
             UntypedExpr::Panic {
                 location, message, ..
-            } => Ok(self.infer_panic(location, message)),
+            } => self.infer_panic(location, message),
 
             UntypedExpr::Var { location, name, .. } => self.infer_var(name, location),
 
@@ -188,29 +188,50 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         &mut self,
         location: SrcSpan,
         kind: TodoKind,
-        label: Option<EcoString>,
-    ) -> TypedExpr {
-        let typ = self.new_unbound_var();
+        message: Option<Box<UntypedExpr>>,
+    ) -> Result<TypedExpr, Error> {
+        let type_ = self.new_unbound_var();
         self.environment.warnings.emit(Warning::Todo {
             kind,
             location,
-            typ: typ.clone(),
+            typ: type_.clone(),
         });
-
-        TypedExpr::Todo {
+        let message = match message {
+            Some(message) => {
+                let message = self.infer(*message)?;
+                unify(string(), message.type_())
+                    .map_err(|e| convert_unify_error(e, message.location()))?;
+                Some(Box::new(message))
+            }
+            None => None,
+        };
+        Ok(TypedExpr::Todo {
             location,
-            message: label,
-            type_: typ,
-        }
+            type_,
+            message,
+        })
     }
 
-    fn infer_panic(&mut self, location: SrcSpan, message: Option<EcoString>) -> TypedExpr {
-        let typ = self.new_unbound_var();
-        TypedExpr::Panic {
+    fn infer_panic(
+        &mut self,
+        location: SrcSpan,
+        message: Option<Box<UntypedExpr>>,
+    ) -> Result<TypedExpr, Error> {
+        let type_ = self.new_unbound_var();
+        let message = match message {
+            Some(message) => {
+                let message = self.infer(*message)?;
+                unify(string(), message.type_())
+                    .map_err(|e| convert_unify_error(e, message.location()))?;
+                Some(Box::new(message))
+            }
+            None => None,
+        };
+        Ok(TypedExpr::Panic {
             location,
-            type_: typ,
+            type_,
             message,
-        }
+        })
     }
 
     fn infer_string(&mut self, value: EcoString, location: SrcSpan) -> TypedExpr {

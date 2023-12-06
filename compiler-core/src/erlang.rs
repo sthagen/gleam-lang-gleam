@@ -871,7 +871,7 @@ fn let_assert<'a>(value: &'a TypedExpr, pat: &'a TypedPattern, env: &mut Env<'a>
             line(),
             erlang_error(
                 "let_assert",
-                "Assertion pattern match failed",
+                &string("Assertion pattern match failed"),
                 pat.location(),
                 vec![("value", env.local_var_name(ASSERT_FAIL_VARIABLE))],
                 env,
@@ -1455,21 +1455,25 @@ fn needs_begin_end_wrapping(expression: &TypedExpr) -> bool {
     }
 }
 
-fn todo<'a>(message: &'a Option<EcoString>, location: SrcSpan, env: &Env<'a>) -> Document<'a> {
-    let message = message
-        .as_deref()
-        .unwrap_or("This has not yet been implemented");
-    erlang_error("todo", message, location, vec![], env)
+fn todo<'a>(message: Option<&'a TypedExpr>, location: SrcSpan, env: &mut Env<'a>) -> Document<'a> {
+    let message = match message {
+        Some(m) => expr(m, env),
+        None => string("This has not yet been implemented"),
+    };
+    erlang_error("todo", &message, location, vec![], env)
 }
 
-fn panic<'a>(location: SrcSpan, message: Option<&'a str>, env: &Env<'a>) -> Document<'a> {
-    let message = message.unwrap_or("panic expression evaluated");
-    erlang_error("panic", message, location, vec![], env)
+fn panic<'a>(location: SrcSpan, message: Option<&'a TypedExpr>, env: &mut Env<'a>) -> Document<'a> {
+    let message = match message {
+        Some(m) => expr(m, env),
+        None => string("panic expression evaluated"),
+    };
+    erlang_error("panic", &message, location, vec![], env)
 }
 
 fn erlang_error<'a>(
     name: &'a str,
-    message: &'a str,
+    message: &Document<'a>,
     location: SrcSpan,
     fields: Vec<(&'a str, Document<'a>)>,
     env: &Env<'a>,
@@ -1480,8 +1484,9 @@ fn erlang_error<'a>(
         ",",
         line(),
         "message => ",
-        string(message)
+        message.clone()
     ];
+
     for (key, value) in fields {
         fields_doc = fields_doc
             .append(",")
@@ -1516,7 +1521,7 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
             message: label,
             location,
             ..
-        } => todo(label, *location, env),
+        } => todo(label.as_deref(), *location, env),
 
         TypedExpr::Panic {
             location, message, ..

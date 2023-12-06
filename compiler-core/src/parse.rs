@@ -401,9 +401,9 @@ where
                 let _ = self.next_tok();
                 let mut message = None;
                 if self.maybe_one(&Token::As).is_some() {
-                    let (_, l, e) = self.expect_string()?;
-                    message = Some(l);
-                    end = e;
+                    let msg_expr = self.expect_expression_unit()?;
+                    end = msg_expr.location().end;
+                    message = Some(Box::new(msg_expr));
                 }
                 UntypedExpr::Todo {
                     location: SrcSpan { start, end },
@@ -413,12 +413,12 @@ where
             }
 
             Some((start, Token::Panic, mut end)) => {
-                let mut label = None;
                 let _ = self.next_tok();
+                let mut label = None;
                 if self.maybe_one(&Token::As).is_some() {
-                    let (_, l, e) = self.expect_string()?;
-                    label = Some(l);
-                    end = e;
+                    let msg_expr = self.expect_expression_unit()?;
+                    end = msg_expr.location().end;
+                    label = Some(Box::new(msg_expr));
                 }
                 UntypedExpr::Panic {
                     location: SrcSpan { start, end },
@@ -2524,6 +2524,14 @@ where
 
     fn expect_expression(&mut self) -> Result<UntypedExpr, ParseError> {
         if let Some(e) = self.parse_expression()? {
+            Ok(e)
+        } else {
+            self.next_tok_unexpected(vec!["An expression".into()])
+        }
+    }
+
+    fn expect_expression_unit(&mut self) -> Result<UntypedExpr, ParseError> {
+        if let Some(e) = self.parse_expression_unit()? {
             Ok(e)
         } else {
             self.next_tok_unexpected(vec!["An expression".into()])
