@@ -22,7 +22,7 @@ use ecow::EcoString;
 use heck::ToSnakeCase;
 use itertools::Itertools;
 use pattern::pattern;
-use regex::Regex;
+use regex::{Captures, Regex};
 use std::sync::OnceLock;
 use std::{char, collections::HashMap, ops::Deref, str::FromStr, sync::Arc};
 use vec1::Vec1;
@@ -464,8 +464,31 @@ fn escape_atom_string(value: String) -> String {
     }
 }
 
+fn unicode_escape_sequence_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r#"(\\+)(u)"#).expect("Unicode escape sequence regex cannot be constructed")
+    })
+}
+
 fn string(value: &str) -> Document<'_> {
-    value.to_doc().surround("<<\"", "\"/utf8>>")
+    Document::String(
+        unicode_escape_sequence_pattern()
+            // `\\u`-s should not be affected, so that "\\u..." is not converted to
+            // "\\x...". That's why capturing groups is used to exclude cases that
+            // shouldn't be replaced.
+            .replace_all(value, |caps: &Captures<'_>| {
+                let slashes = caps.get(1).map_or("", |m| m.as_str());
+
+                if slashes.len() % 2 == 0 {
+                    format!("{slashes}u")
+                } else {
+                    format!("{slashes}x")
+                }
+            })
+            .to_string(),
+    )
+    .surround("<<\"", "\"/utf8>>")
 }
 
 fn tuple<'a>(elems: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {

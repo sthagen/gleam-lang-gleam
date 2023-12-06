@@ -7,6 +7,8 @@
 - The formatter now tries to keep a function body and its arguments on a single
   line by first trying to split only its last argument on multiple lines.
 - Fixed a bug where the formatter would move comments out of blocks.
+- `gleam format` now ignores the Gleam build directory by default, even when not
+  in a git repository.
 
 ### Language changes
 
@@ -18,6 +20,8 @@
 - The words `auto`, `delegate`, `derive`, `else`, `implement`, `macro`, and
   `test` are now reserved for future use. If used they will emit a warning. In
   a future version this may be upgraded to an error.
+- The `\u{...}` syntax can be used in strings to specify unicode codepoints via a
+  hexadecimal number. 2, 4, or 8 digits can be used.
 
 ### Build tool changes
 
@@ -30,11 +34,17 @@
   published is not yet version 1.0.0.
 - The `gleam publish` command now asks for confirmation if the package name is
   one that implies the package is maintained by the Gleam core team.
+- The error messages shown when dependency resolution fails have been improved.
 
 ### Compiler WASM API
 
 - The WASM API for the compiler has been rewritten to be simpler.
 - The WASM API for the compiler now exposes warnings.
+
+### HTML documentation generator
+
+- Searching in rendered HTML documentation now also matches words that do not
+  start with the input but do contain it.
 
 ### Bug fixes
 
