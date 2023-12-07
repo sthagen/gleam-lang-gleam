@@ -753,7 +753,7 @@ where
                     let slash_pos = self.get_pos() - 1;
                     if let Some(c) = self.chr0 {
                         match c {
-                            'e' | 'f' | 'n' | 'r' | 't' | '"' | '\\' => {
+                            'f' | 'n' | 'r' | 't' | '"' | '\\' => {
                                 let _ = self.next_char();
                                 string_content.push('\\');
                                 string_content.push(c);
@@ -833,8 +833,7 @@ where
                                 // Checks for i >= 0x110000 || (i >= 0xD800 && i < 0xE000),
                                 // where i is the unicode codepoint.
                                 if char::from_u32(u32::from_str_radix(&hex_digits, 16).expect(
-                                    "Cannot parse codepoint number in Unicode escape
-                                        sequence",
+                                    "Cannot parse codepoint number in Unicode escape sequence",
                                 ))
                                 .is_none()
                                 {
