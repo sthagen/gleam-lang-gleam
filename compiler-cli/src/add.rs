@@ -41,15 +41,16 @@ pub fn command(packages: Vec<String>, dev: bool) -> Result<()> {
 
         // False positive. This package doesn't use the indexing API correctly.
         #[allow(clippy::indexing_slicing)]
-        if dev {
-            gleam_toml["dev-dependencies"][&package_to_add] = toml_edit::value(range.clone());
-        } else {
-            gleam_toml["dependencies"][&package_to_add] = toml_edit::value(range.clone());
-        };
-        // False positive. This package doesn't use the indexing API correctly.
-        manifest_toml["requirements"][&package_to_add]
-            .as_inline_table_mut()
-            .expect("Invalid manifest format")["version"] = range.into();
+        {
+            if dev {
+                gleam_toml["dev-dependencies"][&package_to_add] = toml_edit::value(range.clone());
+            } else {
+                gleam_toml["dependencies"][&package_to_add] = toml_edit::value(range.clone());
+            };
+            manifest_toml["requirements"][&package_to_add]
+                .as_inline_table_mut()
+                .expect("Invalid manifest format")["version"] = range.into();
+        }
 
         cli::print_added(&format!("{package_to_add} v{version}"));
     }
@@ -62,12 +63,12 @@ pub fn command(packages: Vec<String>, dev: bool) -> Result<()> {
 }
 
 fn read_toml_edit(name: &str) -> Result<toml_edit::Document, Error> {
-    Ok(fs::read(name)?
+    fs::read(name)?
         .parse::<toml_edit::Document>()
         .map_err(|e| Error::FileIo {
             kind: FileKind::File,
             action: FileIoAction::Parse,
             path: Utf8PathBuf::from("gleam.toml"),
             err: Some(e.to_string()),
-        })?)
+        })
 }
