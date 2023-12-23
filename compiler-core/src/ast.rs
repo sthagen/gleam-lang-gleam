@@ -689,6 +689,17 @@ pub enum BinOp {
     Concatenate,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OperatorKind {
+    BooleanLogic,
+    Equality,
+    IntComparison,
+    FLoatComparison,
+    IntMath,
+    FloatMath,
+    StringConcatenation,
+}
+
 impl BinOp {
     pub fn precedence(&self) -> u8 {
         // Ensure that this matches the other precedence function for guards
@@ -746,6 +757,30 @@ impl BinOp {
             Self::RemainderInt => "%",
             Self::Concatenate => "<>",
         }
+    }
+
+    pub fn operator_kind(&self) -> OperatorKind {
+        match self {
+            Self::Concatenate => OperatorKind::StringConcatenation,
+            Self::Eq | Self::NotEq => OperatorKind::Equality,
+            Self::And | Self::Or => OperatorKind::BooleanLogic,
+            Self::LtInt | Self::LtEqInt | Self::GtEqInt | Self::GtInt => {
+                OperatorKind::IntComparison
+            }
+            Self::LtFloat | Self::LtEqFloat | Self::GtEqFloat | Self::GtFloat => {
+                OperatorKind::FLoatComparison
+            }
+            Self::AddInt | Self::SubInt | Self::MultInt | Self::RemainderInt | Self::DivInt => {
+                OperatorKind::IntMath
+            }
+            Self::AddFloat | Self::SubFloat | Self::MultFloat | Self::DivFloat => {
+                OperatorKind::FloatMath
+            }
+        }
+    }
+
+    pub fn can_be_grouped_with(&self, other: &BinOp) -> bool {
+        self.operator_kind() == other.operator_kind()
     }
 }
 
