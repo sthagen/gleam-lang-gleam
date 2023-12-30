@@ -1503,6 +1503,7 @@ where
                     })],
                     Some((body, _)) => body,
                 };
+
                 (body, end, rbr_e)
             }
 
