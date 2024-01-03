@@ -1,6 +1,6 @@
 use super::{pipe::PipeTyper, *};
 use crate::{
-    analyse::infer_bit_array_option,
+    analyse::{infer_bit_array_option, TargetSupport},
     ast::{
         Arg, Assignment, AssignmentKind, BinOp, BitArrayOption, BitArraySegment, CallArg, Clause,
         ClauseGuard, Constant, HasLocation, Layer, RecordUpdateSpread, SrcSpan, Statement,
@@ -10,6 +10,7 @@ use crate::{
         UntypedExprBitArraySegment, UntypedMultiPattern, UntypedStatement, Use, UseAssignment,
         USE_ASSIGNMENT_VARIABLE,
     },
+    build::Target,
     exhaustiveness,
 };
 use id_arena::Arena;
@@ -17,21 +18,123 @@ use im::hashmap;
 use itertools::Itertools;
 use vec1::Vec1;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SupportedTargets {
+    erlang: bool,
+    javascript: bool,
+}
+
+impl SupportedTargets {
+    pub fn none() -> SupportedTargets {
+        SupportedTargets {
+            erlang: false,
+            javascript: false,
+        }
+    }
+
+    pub fn all() -> SupportedTargets {
+        SupportedTargets {
+            erlang: true,
+            javascript: true,
+        }
+    }
+
+    pub fn javascript() -> SupportedTargets {
+        SupportedTargets {
+            erlang: false,
+            javascript: true,
+        }
+    }
+
+    pub fn erlang() -> SupportedTargets {
+        SupportedTargets {
+            erlang: true,
+            javascript: false,
+        }
+    }
+
+    pub fn from_target(target: Target) -> SupportedTargets {
+        match target {
+            Target::Erlang => SupportedTargets::erlang(),
+            Target::JavaScript => SupportedTargets::javascript(),
+        }
+    }
+
+    pub fn intersect(&self, targets: SupportedTargets) -> SupportedTargets {
+        SupportedTargets {
+            erlang: self.erlang && targets.erlang,
+            javascript: self.javascript && targets.javascript,
+        }
+    }
+
+    pub fn merge(&self, targets: SupportedTargets) -> SupportedTargets {
+        SupportedTargets {
+            erlang: self.erlang || targets.erlang,
+            javascript: self.javascript || targets.javascript,
+        }
+    }
+
+    pub fn add(&self, target: Target) -> SupportedTargets {
+        match target {
+            Target::Erlang => SupportedTargets {
+                erlang: true,
+                javascript: self.javascript,
+            },
+            Target::JavaScript => SupportedTargets {
+                erlang: self.erlang,
+                javascript: true,
+            },
+        }
+    }
+
+    pub fn supports(&self, target: Target) -> bool {
+        match target {
+            Target::Erlang => self.erlang,
+            Target::JavaScript => self.javascript,
+        }
+    }
+
+    pub fn supports_all_targets(&self) -> bool {
+        self.javascript && self.erlang
+    }
+
+    pub fn to_vec(self) -> Vec<Target> {
+        let SupportedTargets { erlang, javascript } = self;
+        match (erlang, javascript) {
+            (true, true) => vec![Target::Erlang, Target::JavaScript],
+            (true, _) => vec![Target::Erlang],
+            (_, true) => vec![Target::JavaScript],
+            (_, _) => vec![],
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ExprTyper<'a, 'b> {
     pub(crate) environment: &'a mut Environment<'b>,
 
+    pub(crate) supported_targets: SupportedTargets,
+
     // Type hydrator for creating types from annotations
     pub(crate) hydrator: Hydrator,
+
+    external_supported_targets: SupportedTargets,
 }
 
 impl<'a, 'b> ExprTyper<'a, 'b> {
-    pub fn new(environment: &'a mut Environment<'b>) -> Self {
+    pub fn new(
+        environment: &'a mut Environment<'b>,
+        external_supported_targets: SupportedTargets,
+    ) -> Self {
         let mut hydrator = Hydrator::new();
+
         hydrator.permit_holes(true);
         Self {
             hydrator,
             environment,
+            // This will be narrowed down as the expression type is inferred
+            supported_targets: SupportedTargets::all(),
+            external_supported_targets,
         }
     }
 
@@ -560,11 +663,49 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     fn infer_var(&mut self, name: EcoString, location: SrcSpan) -> Result<TypedExpr, Error> {
         let constructor = self.infer_value_constructor(&None, &name, &location)?;
+
+        match constructor.variant {
+            ValueConstructorVariant::ModuleConstant {
+                supported_targets, ..
+            } => self.narrow_supported_targets(supported_targets, location, "constant".into())?,
+
+            ValueConstructorVariant::ModuleFn {
+                supported_targets, ..
+            } => self.narrow_supported_targets(supported_targets, location, "function".into())?,
+
+            // These variants are not narrowing the currently supported targets
+            ValueConstructorVariant::LocalVariable { .. }
+            | ValueConstructorVariant::LocalConstant { .. }
+            | ValueConstructorVariant::Record { .. } => {}
+        }
+
         Ok(TypedExpr::Var {
             constructor,
             location,
             name,
         })
+    }
+
+    fn narrow_supported_targets(
+        &mut self,
+        new_targets: SupportedTargets,
+        location: SrcSpan,
+        kind: EcoString,
+    ) -> Result<(), Error> {
+        self.supported_targets = self.supported_targets.intersect(new_targets);
+        if self.environment.target_support == TargetSupport::Enforced
+            && !new_targets
+                .merge(self.external_supported_targets)
+                .supports(self.environment.target)
+        {
+            Err(Error::UnsupportedTarget {
+                target: self.environment.target,
+                location,
+                kind,
+            })
+        } else {
+            Ok(())
+        }
     }
 
     fn infer_field_access(

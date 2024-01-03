@@ -6,6 +6,8 @@
 
 - Warn about function body not being used, because it already has external
   implementations for all targets.
+- It's now possible to compile a project with external functions that are not
+  supported by the compilation target as long as those are not actually used.
 
 ### Language Server Changes
 
@@ -23,6 +25,7 @@
 - The `repository` section now supports additional VCS types in the form of
   codeberg, forgejo and gitea allowing a `user`, `repo` and additionally a
   `host` url.
+- TypeScript declaration for the prelude exports previously missing functions and classes. Additionally, swaps interfaces for classes and adds missing attributes to classes.
 
 ### Bug fixes
 
@@ -36,6 +39,8 @@
 - Fixed a bug with the `isEqual` function in `prelude.js` where RegExps were
   being incorrectly structurally compared and being falsely reported as being
   equal.
+- JavaScript: export from `prelude.d.mts` in `gleam.d.mts` to fix the error:
+  "Type 'Result' is not generic".
 
 
 ## v0.33.0 - 2023-12-18
