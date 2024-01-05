@@ -643,13 +643,10 @@ fn compact_single_argument_call() {
 fn expr_tuple() {
     assert_format!(
         r#"fn main(one, two, three) {
-  #(
-    1,
-    {
-      1
-      2
-    },
-  )
+  #(1, {
+    1
+    2
+  })
 }
 "#
     );
@@ -5336,6 +5333,45 @@ fn single_argument_call_nested_nested() {
         some_long_variable_name_to_force_wrapping,
       )),
     ),
+  )
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2512
+#[test]
+fn list_with_pipe_format() {
+    assert_format!(
+        r#"pub fn main() {
+  [
+    "Success!"
+    |> ansi(apply: [1, 31]),
+    "",
+    "Wrote `" <> bin <> "`, `" <> pwsh_bin <> "`",
+  ]
+}
+"#
+    );
+}
+
+#[test]
+fn function_call_close_to_line_limit() {
+    assert_format!(
+        r#"pub fn main() {
+  function_call(
+    that,
+    is,
+    super,
+    close,
+    to,
+    the,
+    max,
+    line,
+    limit,
+    of,
+    80,
+    chars,
   )
 }
 "#

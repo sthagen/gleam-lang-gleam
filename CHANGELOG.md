@@ -9,13 +9,24 @@
 - It's now possible to compile a project with external functions that are not
   supported by the compilation target as long as those are not actually used.
 
+### Build tool changes
+
+- The `gleam new` command now accepts any existing path, as long as there are
+  no conflicts with already existing files. Examples: `gleam new .`, `gleam new
+  ..`, `gleam new ~/projects/test`.
+- The format for the README created by `gleam new` has been altered.
+
 ### Language Server Changes
 
-- Added a `View on HexDocs` link on function hover
+- Added a `View on HexDocs` link on function hover.
 
 ### Formatter
 
 - Fixed some quirk with the formatting of binary operators.
+- Fixed a bug where the formatter would move a function call's closed
+  parentheses on a new line instead of splitting the function's arguments.
+- Now the formatter will format tuples as if they were functions, trying to
+  first split just the last element before splitting the whole tuple.
 
 ### Build tool
 
@@ -25,13 +36,19 @@
 - The `repository` section now supports additional VCS types in the form of
   codeberg, forgejo and gitea allowing a `user`, `repo` and additionally a
   `host` url.
-- TypeScript declaration for the prelude exports previously missing functions and classes. Additionally, swaps interfaces for classes and adds missing attributes to classes.
+- TypeScript declaration for the prelude exports previously missing functions
+  and classes. Additionally, swaps interfaces for classes and adds missing
+  attributes to classes.
+- `gleam` commands now look in parent directories for a `gleam.toml` file.
 
 ### Bug fixes
 
 - Fixed a bug where `gleam add` would not update `manifest.toml` correctly.
+- Fixed a bug where `fn() { Nil }()` could generate invalid JavaScript code.
 - Fixed a bug where the build tool would make unnecessary calls to the Hex API
   when path dependencies are used.
+- Fixed a bug where `gleam new` would generate a gitignore with `build` rather
+  than `/build`.
 - Fixed where the types of generic constants could be incorrecly inferred.
 - `Utf8Codepoint` has been renamed to `UtfCodepoint` in `prelude.d.mts`.
 - Fixed a bug where `gleam deps list` would look in filesystem root instead of
