@@ -95,6 +95,12 @@ struct Attributes {
     external_javascript: Option<(EcoString, EcoString)>,
 }
 
+impl Attributes {
+    fn has_function_only(&self) -> bool {
+        self.external_erlang.is_some() || self.external_javascript.is_some()
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Warning {
     ReservedWord { location: SrcSpan, word: EcoString },
@@ -240,7 +246,7 @@ where
 
     fn parse_definition(&mut self) -> Result<Option<TargetedDefinition>, ParseError> {
         let mut attributes = Attributes::default();
-        self.parse_attributes(&mut attributes)?;
+        let location = self.parse_attributes(&mut attributes)?;
 
         let def = match (self.tok0.take(), self.tok1.as_ref()) {
             // Imports
@@ -293,10 +299,30 @@ where
             }
         }?;
 
-        Ok(def.map(|definition| TargetedDefinition {
-            definition,
-            target: attributes.target,
-        }))
+        match (def, location) {
+            (Some(definition), _) if definition.is_function() => Ok(Some(TargetedDefinition {
+                definition,
+                target: attributes.target,
+            })),
+
+            (Some(definition), None) => Ok(Some(TargetedDefinition {
+                definition,
+                target: attributes.target,
+            })),
+
+            (_, Some(location)) if attributes.has_function_only() => {
+                parse_error(ParseErrorType::ExpectedFunctionDefinition, location)
+            }
+
+            (Some(definition), _) => Ok(Some(TargetedDefinition {
+                definition,
+                target: attributes.target,
+            })),
+
+            (_, Some(location)) => parse_error(ParseErrorType::ExpectedDefinition, location),
+
+            (None, None) => Ok(None),
+        }
     }
 
     //
@@ -2804,29 +2830,45 @@ where
         }
     }
 
-    fn parse_attributes(&mut self, attributes: &mut Attributes) -> Result<(), ParseError> {
-        while let Some((start, _)) = self.maybe_one(&Token::At) {
-            self.parse_attribute(start, attributes)?;
+    fn parse_attributes(
+        &mut self,
+        attributes: &mut Attributes,
+    ) -> Result<Option<SrcSpan>, ParseError> {
+        let mut attributes_span = None;
+
+        while let Some((start, end)) = self.maybe_one(&Token::At) {
+            if attributes_span.is_none() {
+                attributes_span = Some(SrcSpan { start, end });
+            }
+
+            let end = self.parse_attribute(start, attributes)?;
+            attributes_span = attributes_span.map(|span| SrcSpan {
+                start: span.start,
+                end,
+            });
         }
-        Ok(())
+
+        Ok(attributes_span)
     }
 
     fn parse_attribute(
         &mut self,
         start: u32,
         attributes: &mut Attributes,
-    ) -> Result<(), ParseError> {
+    ) -> Result<u32, ParseError> {
         // Parse the name of the attribute.
 
         let (_, name, end) = self.expect_name()?;
         let _ = self.expect_one(&Token::LeftParen)?;
 
-        match name.as_str() {
+        let end = match name.as_str() {
             "external" => self.parse_external_attribute(start, end, attributes),
             "target" => self.parse_target_attribute(start, end, attributes),
             "deprecated" => self.parse_deprecated_attribute(start, end, attributes),
             _ => parse_error(ParseErrorType::UnknownAttribute, SrcSpan { start, end }),
-        }
+        }?;
+
+        Ok(end)
     }
 
     fn parse_target_attribute(
@@ -2834,7 +2876,7 @@ where
         start: u32,
         end: u32,
         attributes: &mut Attributes,
-    ) -> Result<(), ParseError> {
+    ) -> Result<u32, ParseError> {
         let target = self.expect_target()?;
         if attributes.target.is_some() {
             return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
@@ -2844,7 +2886,7 @@ where
             return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
         }
         attributes.target = Some(target);
-        Ok(())
+        Ok(end)
     }
 
     fn parse_external_attribute(
@@ -2852,7 +2894,7 @@ where
         start: u32,
         end: u32,
         attributes: &mut Attributes,
-    ) -> Result<(), ParseError> {
+    ) -> Result<u32, ParseError> {
         let (_, name, _) = self.expect_name()?;
 
         match name.as_str() {
@@ -2867,7 +2909,7 @@ where
                     return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
                 }
                 attributes.external_erlang = Some((module, function));
-                Ok(())
+                Ok(end)
             }
 
             "javascript" => {
@@ -2881,7 +2923,7 @@ where
                     return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan { start, end });
                 }
                 attributes.external_javascript = Some((module, function));
-                Ok(())
+                Ok(end)
             }
 
             _ => parse_error(ParseErrorType::UnknownAttribute, SrcSpan::new(start, end)),
@@ -2893,14 +2935,14 @@ where
         start: u32,
         end: u32,
         attributes: &mut Attributes,
-    ) -> Result<(), ParseError> {
+    ) -> Result<u32, ParseError> {
         if attributes.deprecated.is_deprecated() {
             return parse_error(ParseErrorType::DuplicateAttribute, SrcSpan::new(start, end));
         }
         let (_, message, _) = self.expect_string()?;
-        let (_, _) = self.expect_one(&Token::RightParen)?;
+        let (_, end) = self.expect_one(&Token::RightParen)?;
         attributes.deprecated = Deprecation::Deprecated { message };
-        Ok(())
+        Ok(end)
     }
 }
 

@@ -8,6 +8,8 @@
   implementations for all targets.
 - It's now possible to compile a project with external functions that are not
   supported by the compilation target as long as those are not actually used.
+- The error message for when one imports a constructor instead of an homonymous
+  type has been improved.
 
 ### Build tool changes
 
@@ -15,6 +17,8 @@
   no conflicts with already existing files. Examples: `gleam new .`, `gleam new
   ..`, `gleam new ~/projects/test`.
 - The format for the README created by `gleam new` has been altered.
+- The `gleam.toml` created by `gleam new` now has a link to the full reference
+  for its available options.
 
 ### Language Server Changes
 
@@ -27,6 +31,7 @@
   parentheses on a new line instead of splitting the function's arguments.
 - Now the formatter will format tuples as if they were functions, trying to
   first split just the last element before splitting the whole tuple.
+- Improved the formatting of multiline strings in string concatenation.
 
 ### Build tool
 
@@ -58,6 +63,7 @@
   equal.
 - JavaScript: export from `prelude.d.mts` in `gleam.d.mts` to fix the error:
   "Type 'Result' is not generic".
+- Not providing a definition after some attributes is now a parse error.
 
 
 ## v0.33.0 - 2023-12-18
