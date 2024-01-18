@@ -2,12 +2,22 @@
 
 ## Unreleased
 
+### Build tool
+
+- If a package contains a `todo` expression then the build tool will now refuse
+  to publish it to Hex.
+
+
+## v0.34.1 - 2023-01-17
+
 ### Build tool changes
 
 - Support has been added for using SourceHut as a repository.
 
 ### Bug fixes
 
+- Fixed a bug where long function headers with external implementations could
+  format incorrectly.
 - The `@deprecated` attribute can now be used to annotate module constants.
   This will cause a warning to be emitted when the constant is used.
 
