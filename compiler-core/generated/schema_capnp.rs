@@ -2561,7 +2561,7 @@ pub mod value_constructor {
   }
 }
 
-pub mod supported_targets {
+pub mod implementations {
   #[derive(Copy, Clone)]
   pub struct Owned(());
   impl <'a> ::capnp::traits::Owned<'a> for Owned { type Reader = Reader<'a>; type Builder = Builder<'a>; }
@@ -2608,12 +2608,16 @@ pub mod supported_targets {
       self.reader.total_size()
     }
     #[inline]
-    pub fn get_erlang(self) -> bool {
+    pub fn get_gleam(self) -> bool {
       self.reader.get_bool_field(0)
     }
     #[inline]
-    pub fn get_javascript(self) -> bool {
+    pub fn get_erlang(self) -> bool {
       self.reader.get_bool_field(1)
+    }
+    #[inline]
+    pub fn get_javascript(self) -> bool {
+      self.reader.get_bool_field(2)
     }
   }
 
@@ -2666,20 +2670,28 @@ pub mod supported_targets {
       self.builder.into_reader().total_size()
     }
     #[inline]
-    pub fn get_erlang(self) -> bool {
+    pub fn get_gleam(self) -> bool {
       self.builder.get_bool_field(0)
     }
     #[inline]
-    pub fn set_erlang(&mut self, value: bool)  {
+    pub fn set_gleam(&mut self, value: bool)  {
       self.builder.set_bool_field(0, value);
     }
     #[inline]
-    pub fn get_javascript(self) -> bool {
+    pub fn get_erlang(self) -> bool {
       self.builder.get_bool_field(1)
     }
     #[inline]
-    pub fn set_javascript(&mut self, value: bool)  {
+    pub fn set_erlang(&mut self, value: bool)  {
       self.builder.set_bool_field(1, value);
+    }
+    #[inline]
+    pub fn get_javascript(self) -> bool {
+      self.builder.get_bool_field(2)
+    }
+    #[inline]
+    pub fn set_javascript(&mut self, value: bool)  {
+      self.builder.set_bool_field(2, value);
     }
   }
 
@@ -2694,7 +2706,7 @@ pub mod supported_targets {
   mod _private {
     use capnp::private::layout;
     pub const STRUCT_SIZE: layout::StructSize = layout::StructSize { data: 1, pointers: 0 };
-    pub const TYPE_ID: u64 = 0xda80_1514_9b62_7317;
+    pub const TYPE_ID: u64 = 0x9b1d_9ffc_763a_a0df;
   }
 }
 
@@ -2975,11 +2987,11 @@ pub mod value_constructor_variant {
         !self.reader.get_pointer_field(3).is_null()
       }
       #[inline]
-      pub fn get_supported_targets(self) -> ::capnp::Result<crate::schema_capnp::supported_targets::Reader<'a>> {
+      pub fn get_implementations(self) -> ::capnp::Result<crate::schema_capnp::implementations::Reader<'a>> {
         ::capnp::traits::FromPointerReader::get_from_pointer(&self.reader.get_pointer_field(4), ::core::option::Option::None)
       }
       #[inline]
-      pub fn has_supported_targets(&self) -> bool {
+      pub fn has_implementations(&self) -> bool {
         !self.reader.get_pointer_field(4).is_null()
       }
     }
@@ -3097,19 +3109,19 @@ pub mod value_constructor_variant {
         !self.builder.get_pointer_field(3).is_null()
       }
       #[inline]
-      pub fn get_supported_targets(self) -> ::capnp::Result<crate::schema_capnp::supported_targets::Builder<'a>> {
+      pub fn get_implementations(self) -> ::capnp::Result<crate::schema_capnp::implementations::Builder<'a>> {
         ::capnp::traits::FromPointerBuilder::get_from_pointer(self.builder.get_pointer_field(4), ::core::option::Option::None)
       }
       #[inline]
-      pub fn set_supported_targets(&mut self, value: crate::schema_capnp::supported_targets::Reader<'_>) -> ::capnp::Result<()> {
+      pub fn set_implementations(&mut self, value: crate::schema_capnp::implementations::Reader<'_>) -> ::capnp::Result<()> {
         ::capnp::traits::SetPointerBuilder::set_pointer_builder(self.builder.get_pointer_field(4), value, false)
       }
       #[inline]
-      pub fn init_supported_targets(self, ) -> crate::schema_capnp::supported_targets::Builder<'a> {
+      pub fn init_implementations(self, ) -> crate::schema_capnp::implementations::Builder<'a> {
         ::capnp::traits::FromPointerBuilder::init_pointer(self.builder.get_pointer_field(4), 0)
       }
       #[inline]
-      pub fn has_supported_targets(&self) -> bool {
+      pub fn has_implementations(&self) -> bool {
         !self.builder.get_pointer_field(4).is_null()
       }
     }
@@ -3127,7 +3139,7 @@ pub mod value_constructor_variant {
       pub fn get_location(&self) -> crate::schema_capnp::src_span::Pipeline {
         ::capnp::capability::FromTypelessPipeline::new(self._typeless.get_pointer_field(1))
       }
-      pub fn get_supported_targets(&self) -> crate::schema_capnp::supported_targets::Pipeline {
+      pub fn get_implementations(&self) -> crate::schema_capnp::implementations::Pipeline {
         ::capnp::capability::FromTypelessPipeline::new(self._typeless.get_pointer_field(4))
       }
     }
@@ -3229,11 +3241,11 @@ pub mod value_constructor_variant {
         !self.reader.get_pointer_field(4).is_null()
       }
       #[inline]
-      pub fn get_supported_targets(self) -> ::capnp::Result<crate::schema_capnp::supported_targets::Reader<'a>> {
+      pub fn get_implementations(self) -> ::capnp::Result<crate::schema_capnp::implementations::Reader<'a>> {
         ::capnp::traits::FromPointerReader::get_from_pointer(&self.reader.get_pointer_field(5), ::core::option::Option::None)
       }
       #[inline]
-      pub fn has_supported_targets(&self) -> bool {
+      pub fn has_implementations(&self) -> bool {
         !self.reader.get_pointer_field(5).is_null()
       }
     }
@@ -3375,19 +3387,19 @@ pub mod value_constructor_variant {
         !self.builder.get_pointer_field(4).is_null()
       }
       #[inline]
-      pub fn get_supported_targets(self) -> ::capnp::Result<crate::schema_capnp::supported_targets::Builder<'a>> {
+      pub fn get_implementations(self) -> ::capnp::Result<crate::schema_capnp::implementations::Builder<'a>> {
         ::capnp::traits::FromPointerBuilder::get_from_pointer(self.builder.get_pointer_field(5), ::core::option::Option::None)
       }
       #[inline]
-      pub fn set_supported_targets(&mut self, value: crate::schema_capnp::supported_targets::Reader<'_>) -> ::capnp::Result<()> {
+      pub fn set_implementations(&mut self, value: crate::schema_capnp::implementations::Reader<'_>) -> ::capnp::Result<()> {
         ::capnp::traits::SetPointerBuilder::set_pointer_builder(self.builder.get_pointer_field(5), value, false)
       }
       #[inline]
-      pub fn init_supported_targets(self, ) -> crate::schema_capnp::supported_targets::Builder<'a> {
+      pub fn init_implementations(self, ) -> crate::schema_capnp::implementations::Builder<'a> {
         ::capnp::traits::FromPointerBuilder::init_pointer(self.builder.get_pointer_field(5), 0)
       }
       #[inline]
-      pub fn has_supported_targets(&self) -> bool {
+      pub fn has_implementations(&self) -> bool {
         !self.builder.get_pointer_field(5).is_null()
       }
     }
@@ -3405,7 +3417,7 @@ pub mod value_constructor_variant {
       pub fn get_location(&self) -> crate::schema_capnp::src_span::Pipeline {
         ::capnp::capability::FromTypelessPipeline::new(self._typeless.get_pointer_field(3))
       }
-      pub fn get_supported_targets(&self) -> crate::schema_capnp::supported_targets::Pipeline {
+      pub fn get_implementations(&self) -> crate::schema_capnp::implementations::Pipeline {
         ::capnp::capability::FromTypelessPipeline::new(self._typeless.get_pointer_field(5))
       }
     }

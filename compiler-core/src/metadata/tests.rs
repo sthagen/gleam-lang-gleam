@@ -9,7 +9,7 @@ use crate::{
     },
     build::Origin,
     type_::{
-        self, expression::SupportedTargets, Deprecation, ModuleInterface, Type, TypeConstructor,
+        self, expression::Implementations, Deprecation, ModuleInterface, Type, TypeConstructor,
         TypeValueConstructor, ValueConstructor, ValueConstructorVariant,
     },
     uid::UniqueIdGenerator,
@@ -47,7 +47,11 @@ fn constant_module(constant: TypedConstant) -> ModuleInterface {
                     literal: constant,
                     location: SrcSpan::default(),
                     module: "one/two".into(),
-                    supported_targets: SupportedTargets::all(),
+                    implementations: Implementations {
+                        gleam: true,
+                        uses_erlang_externals: false,
+                        uses_javascript_externals: false,
+                    },
                 },
             },
         )]
@@ -332,7 +336,11 @@ fn module_fn_value() {
                         start: 535,
                         end: 1100,
                     },
-                    supported_targets: SupportedTargets::all(),
+                    implementations: Implementations {
+                        gleam: true,
+                        uses_erlang_externals: false,
+                        uses_javascript_externals: false,
+                    },
                 },
             },
         )]
@@ -370,7 +378,11 @@ fn deprecated_module_fn_value() {
                         start: 535,
                         end: 1100,
                     },
-                    supported_targets: SupportedTargets::all(),
+                    implementations: Implementations {
+                        gleam: true,
+                        uses_erlang_externals: false,
+                        uses_javascript_externals: false,
+                    },
                 },
             },
         )]
@@ -406,7 +418,11 @@ fn private_module_fn_value() {
                         start: 535,
                         end: 1100,
                     },
-                    supported_targets: SupportedTargets::all(),
+                    implementations: Implementations {
+                        gleam: true,
+                        uses_erlang_externals: false,
+                        uses_javascript_externals: false,
+                    },
                 },
             },
         )]
@@ -444,7 +460,11 @@ fn module_fn_value_regression() {
                         start: 52,
                         end: 1100,
                     },
-                    supported_targets: SupportedTargets::all(),
+                    implementations: Implementations {
+                        gleam: true,
+                        uses_erlang_externals: false,
+                        uses_javascript_externals: false,
+                    },
                 },
             },
         )]
@@ -481,7 +501,11 @@ fn module_fn_value_with_field_map() {
                     module: "a".into(),
                     arity: 5,
                     location: SrcSpan { start: 2, end: 11 },
-                    supported_targets: SupportedTargets::all(),
+                    implementations: Implementations {
+                        gleam: true,
+                        uses_erlang_externals: false,
+                        uses_javascript_externals: false,
+                    },
                 },
             },
         )]
@@ -776,7 +800,11 @@ fn constant_var() {
                 literal: one_original.clone(),
                 location: SrcSpan::default(),
                 module: "one/two".into(),
-                supported_targets: SupportedTargets::all(),
+                implementations: Implementations {
+                    gleam: true,
+                    uses_erlang_externals: false,
+                    uses_javascript_externals: false,
+                },
             },
         })),
     };
@@ -802,7 +830,11 @@ fn constant_var() {
                         literal: one,
                         location: SrcSpan::default(),
                         module: "one/two".into(),
-                        supported_targets: SupportedTargets::all(),
+                        implementations: Implementations {
+                            gleam: true,
+                            uses_erlang_externals: false,
+                            uses_javascript_externals: false,
+                        },
                     },
                 },
             ),
@@ -817,7 +849,11 @@ fn constant_var() {
                         literal: one_original,
                         location: SrcSpan::default(),
                         module: "one/two".into(),
-                        supported_targets: SupportedTargets::all(),
+                        implementations: Implementations {
+                            gleam: true,
+                            uses_erlang_externals: false,
+                            uses_javascript_externals: false,
+                        },
                     },
                 },
             ),
@@ -1027,5 +1063,46 @@ fn contains_todo() {
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
     };
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn module_fn_value_with_external_implementations() {
+    let module = ModuleInterface {
+        contains_todo: false,
+        package: "some_package".into(),
+        origin: Origin::Src,
+        name: "a/b/c".into(),
+        types: HashMap::new(),
+        types_value_constructors: HashMap::new(),
+        unused_imports: Vec::new(),
+        accessors: HashMap::new(),
+        values: [(
+            "one".into(),
+            ValueConstructor {
+                public: true,
+                deprecation: Deprecation::NotDeprecated,
+                type_: type_::int(),
+                variant: ValueConstructorVariant::ModuleFn {
+                    documentation: Some("wabble!".into()),
+                    name: "one".into(),
+                    field_map: None,
+                    module: "a".into(),
+                    arity: 5,
+                    location: SrcSpan {
+                        start: 52,
+                        end: 1100,
+                    },
+                    implementations: Implementations {
+                        gleam: false,
+                        uses_erlang_externals: true,
+                        uses_javascript_externals: true,
+                    },
+                },
+            },
+        )]
+        .into(),
+    };
+
     assert_eq!(roundtrip(&module), module);
 }

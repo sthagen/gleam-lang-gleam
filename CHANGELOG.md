@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Build tool changes
+
+- The search bar in generated docs now has a darker background color.
+
+### Formatter
+
+- Now the formatter will nest pipelines and binary operators that are used as
+  function arguments, list items or as tuple items.
+
 ### Build tool
 
 - If a package contains a `todo` expression then the build tool will now refuse

@@ -21,6 +21,7 @@ mod conditional_compilation;
 mod custom_types;
 mod errors;
 mod exhaustiveness;
+mod expression;
 mod functions;
 mod guards;
 mod imports;
@@ -259,7 +260,11 @@ fn compile_statement_sequence(src: &str) -> Result<Vec1<TypedStatement>, crate::
             &TypeWarningEmitter::null(),
             TargetSupport::Enforced,
         ),
-        SupportedTargets::none(),
+        Implementations {
+            gleam: false,
+            uses_erlang_externals: false,
+            uses_javascript_externals: false,
+        },
     )
     .infer_statements(ast)
 }
