@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Language changes
+
+- Using a reserved word is now a compile error, not a warning.
+- Inexhaustive matches are now compile errors, not warnings.
+
 ### Build tool changes
 
 - The search bar in generated docs now has a darker background color.
