@@ -1,0 +1,25 @@
+---
+source: compiler-core/src/package_interface/tests.rs
+expression: "pub opaque type Foo { Bar }"
+---
+{
+  "name": "my_package",
+  "version": "11.10.9-1.foo+build",
+  "gleam-version-constraint": "1.0.0",
+  "modules": {
+    "my/module": {
+      "documentation": [],
+      "type-aliases": {},
+      "types": {
+        "Foo": {
+          "documentation": null,
+          "deprecation": null,
+          "parameters": 0,
+          "constructors": []
+        }
+      },
+      "constants": {},
+      "functions": {}
+    }
+  }
+}

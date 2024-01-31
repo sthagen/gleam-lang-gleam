@@ -1,0 +1,31 @@
+---
+source: compiler-core/src/package_interface/tests.rs
+expression: pub type Foo(a) = Int
+---
+{
+  "name": "my_package",
+  "version": "11.10.9-1.foo+build",
+  "gleam-version-constraint": "1.0.0",
+  "modules": {
+    "my/module": {
+      "documentation": [],
+      "type-aliases": {
+        "Foo": {
+          "documentation": null,
+          "deprecation": null,
+          "parameters": 1,
+          "alias": {
+            "kind": "named",
+            "name": "Int",
+            "package": "",
+            "module": "gleam",
+            "parameters": []
+          }
+        }
+      },
+      "types": {},
+      "constants": {},
+      "functions": {}
+    }
+  }
+}
