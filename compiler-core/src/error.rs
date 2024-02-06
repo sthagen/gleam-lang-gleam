@@ -2301,6 +2301,7 @@ The missing patterns are:\n"
                         text.push_str("\n    ");
                         text.push_str(missing);
                     }
+                    text.push('\n');
 
                     Diagnostic {
                         title: "Inexhaustive pattern".into(),
@@ -2336,7 +2337,7 @@ The missing patterns are:\n"
                         title: "Inexhaustive patterns".into(),
                         text,
                         hint: None,
-                        level: Level::Warning,
+                        level: Level::Error,
                         location: Some(Location {
                             src: src.clone(),
                             path: path.to_path_buf(),
