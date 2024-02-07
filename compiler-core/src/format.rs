@@ -559,7 +559,24 @@ impl<'comments> Formatter<'comments> {
         return_annotation: Option<&'a TypeAst>,
         body: &'a Vec1<UntypedStatement>,
     ) -> Document<'a> {
-        let args = wrap_args(args.iter().map(|e| self.fn_arg(e))).group();
+        let args = wrap_args(args.iter().map(|e| self.fn_arg(e)))
+            .group()
+            .next_break_fits(NextBreakFitsMode::Disabled);
+        //   ^^^ We add this so that when an expression function is passed as
+        //       the last argument of a function and it goes over the line
+        //       limit with just its arguments we don't get some strange
+        //       splitting.
+        //       See https://github.com/gleam-lang/gleam/issues/2571
+        //
+        // There's many ways we could be smarter than this. For example:
+        //  - still split the arguments like it did in the example shown in the
+        //    issue if the expr_fn has more than one argument
+        //  - make sure that an anonymous function whose body is made up of a
+        //    single expression doesn't get split (I think that could boil down
+        //    to wrapping the body with a `next_break_fits(Disabled)`)
+        //
+        // These are some of the ways we could tweak the look of expression
+        // functions in the future if people are not satisfied with it.
         let body = self.statements(body);
         let header = "fn".to_doc().append(args);
 
@@ -1267,17 +1284,29 @@ impl<'comments> Formatter<'comments> {
     }
 
     // Will always print the types, even if they were implicit in the original source
-    pub fn docs_fn_args<'a>(
+    fn docs_fn_args<'a>(
         &mut self,
         args: &'a [TypedArg],
         printer: &mut type_::pretty::Printer,
     ) -> Document<'a> {
         wrap_args(args.iter().map(|arg| {
-            arg.names
-                .to_doc()
+            self.docs_fn_arg_name(arg)
                 .append(": ".to_doc().append(printer.print(&arg.type_)))
                 .group()
         }))
+    }
+
+    fn docs_fn_arg_name<'a>(&mut self, arg: &'a TypedArg) -> Document<'a> {
+        match &arg.names {
+            ArgNames::Named { name } => name.to_doc(),
+            ArgNames::NamedLabelled { label, name } => docvec![label, " ", name],
+            // We remove the underscore from discarded function arguments since we don't want to
+            // expose this kind of detail: https://github.com/gleam-lang/gleam/issues/2561
+            ArgNames::Discard { name } => name.strip_prefix('_').unwrap_or(name).to_doc(),
+            ArgNames::LabelledDiscard { label, name } => {
+                docvec![label, " ", name.strip_prefix('_').unwrap_or(name).to_doc()]
+            }
+        }
     }
 
     fn call_arg<'a>(&mut self, arg: &'a CallArg<UntypedExpr>, arity: usize) -> Document<'a> {

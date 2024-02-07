@@ -8,11 +8,15 @@
 - Inexhaustive matches are now compile errors, not warnings.
 - The warning for an unused module alias now shows how to not assign a name to
   the module.
+- Type aliases with unused type parameters now emit an error.
+- Type definitions with duplicate type parameters now emit an error.
 
 ### Formatter
 
 - Now the formatter will nest pipelines and binary operators that are used as
   function arguments, list items or as tuple items.
+- The format function literals used as the last argument in a function call
+  on long lines has been improved.
 
 ### Build tool
 
@@ -23,6 +27,11 @@
   containing metadata about the root package.
 - `gleam docs build` now creates a json file containing metadata about the root
   package.
+- The order of dependencies in `manifest.toml` is now in alphabetical order.
+- The search bar in generated docs now has a darker background color.
+- The generated docs no longer shows whether an argument is discarded or
+  not in a function signature.
+
 
 ### Bug fixes
 
