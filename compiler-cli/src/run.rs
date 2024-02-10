@@ -3,7 +3,8 @@ use std::sync::OnceLock;
 use camino::Utf8PathBuf;
 use ecow::EcoString;
 use gleam_core::{
-    build::{Codegen, Mode, Options, Runtime, Target},
+    analyse::TargetSupport,
+    build::{Built, Codegen, Mode, Options, Runtime, Target},
     config::{DenoFlag, PackageConfig},
     error::Error,
     io::{CommandExecutor, Stdio},
@@ -11,7 +12,7 @@ use gleam_core::{
     type_::ModuleFunction,
 };
 
-use crate::fs::ProjectIO;
+use crate::{config::PackageKind, fs::ProjectIO};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Which {
@@ -42,12 +43,14 @@ pub fn command(
     let manifest = crate::build::download_dependencies()?;
 
     // Get the config for the module that is being run to check the target.
-    let mod_config = match &module {
+    // Also get the kind of the package the module belongs to: wether the module
+    // belongs to a dependency or to the root package.
+    let (mod_config, package_kind) = match &module {
         Some(mod_path) => {
-            crate::config::find_package_config_for_module(mod_path, &manifest, &paths)
+            crate::config::find_package_config_for_module(mod_path, &manifest, &paths)?
         }
-        _ => crate::config::root_config(),
-    }?;
+        _ => (crate::config::root_config()?, PackageKind::Root),
+    };
 
     // The root config is required to run the project.
     let root_config = crate::config::root_config()?;
@@ -60,19 +63,25 @@ pub fn command(
 
     let target = target.unwrap_or(mod_config.target);
 
-    // Build project so we have bytecode to run
-    let built = crate::build::main(
-        Options {
-            warnings_as_errors: false,
-            codegen: Codegen::All,
-            mode: Mode::Dev,
-            target: Some(target),
+    let options = Options {
+        warnings_as_errors: false,
+        codegen: Codegen::All,
+        mode: Mode::Dev,
+        target: Some(target),
+        root_target_support: match package_kind {
+            // The module we want to run is in the root package, so we make sure that the package
+            // can compile successfully for the current target.
+            PackageKind::Root => TargetSupport::Enforced,
+            // On the other hand, if we're trying to run a module that belongs to a dependency, we
+            // only care if the dependency can compile for the current target.
+            PackageKind::Dependency => TargetSupport::NotEnforced,
         },
-        manifest,
-    )?;
+    };
+
+    let built = crate::build::main(options, manifest)?;
 
     // A module can not be run if it does not exist or does not have a public main function.
-    let main_function = get_or_suggest_main_function(built, &module)?;
+    let main_function = get_or_suggest_main_function(built, &module, target)?;
 
     // Don't exit on ctrl+c as it is used by child erlang shell
     ctrlc::set_handler(move || {}).expect("Error setting Ctrl-C handler");
@@ -275,11 +284,12 @@ fn is_gleam_module(module: &str) -> bool {
 
 /// If provided module is not executable, suggest a possible valid module.
 fn get_or_suggest_main_function(
-    built: gleam_core::build::Built,
+    built: Built,
     module: &str,
+    target: Target,
 ) -> Result<ModuleFunction, Error> {
     // Check if the module exists
-    let error = match built.get_main_function(&EcoString::from(module)) {
+    let error = match built.get_main_function(&module.into(), target) {
         Ok(main_fn) => return Ok(main_fn),
         Err(error) => error,
     };
@@ -290,7 +300,7 @@ fn get_or_suggest_main_function(
             Some(other) => other.into(),
             None => continue,
         };
-        if built.get_main_function(&other).is_ok() {
+        if built.get_main_function(&other, target).is_ok() {
             return Err(Error::ModuleDoesNotExist {
                 module: EcoString::from(module),
                 suggestion: Some(other),

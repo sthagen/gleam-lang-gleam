@@ -3,6 +3,7 @@ use ecow::EcoString;
 use itertools::Itertools;
 
 use crate::{
+    analyse::TargetSupport,
     build::{self, Mode, Module, NullTelemetry, ProjectCompiler},
     config::PackageConfig,
     io::{CommandExecutor, FileSystemReader, FileSystemWriter, Stdio},
@@ -69,6 +70,7 @@ where
             mode: build::Mode::Lsp,
             target: None,
             codegen: build::Codegen::None,
+            root_target_support: TargetSupport::Enforced,
         };
         let mut project_compiler = ProjectCompiler::new(
             config,

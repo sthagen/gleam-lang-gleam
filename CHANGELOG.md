@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.0.0-rc1 - 2024-02-10
 
 ### Language changes
 
@@ -31,14 +31,19 @@
 - The search bar in generated docs now has a darker background color.
 - The generated docs no longer shows whether an argument is discarded or
   not in a function signature.
-
+- It is now possible to use `gleam run -m` to run a dependency module even if
+  that dependency uses a compile target that your project does not support.
 
 ### Bug fixes
 
+- Fixed a bug the build tool could be make to attempt to run a main function
+  that does not support the current target in some circumstances.
 - Fixed a bug where the exhaustiveness checker could crash when checking nested
   values inserted into the parent type using type parameters.
 - Fixed a bug where `functionname(_name)` would incorrectly parse as a function
   capture instead of a syntax error.
+- Fixed a bug where external only functions would "successfully" compile for a
+  target they do not support, leading to a runtime error.
 
 
 ## v0.34.1 - 2023-01-17

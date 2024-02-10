@@ -22,6 +22,7 @@ mod custom_types;
 mod errors;
 mod exhaustiveness;
 mod expression;
+mod externals;
 mod functions;
 mod guards;
 mod imports;
@@ -78,8 +79,11 @@ macro_rules! assert_module_infer {
 #[macro_export]
 macro_rules! assert_js_module_infer {
     ($src:expr, $module:expr $(,)?) => {{
-        let constructors =
-            $crate::type_::tests::infer_module_with_target($src, vec![], Target::JavaScript);
+        let constructors = $crate::type_::tests::infer_module_with_target(
+            $src,
+            vec![],
+            crate::build::Target::JavaScript,
+        );
         let expected = $crate::type_::tests::stringify_tuple_strs($module);
         assert_eq!(($src, constructors), ($src, expected));
     }};
@@ -96,8 +100,11 @@ macro_rules! assert_module_error {
 #[macro_export]
 macro_rules! assert_js_module_error {
     ($src:expr) => {
-        let output =
-            $crate::type_::tests::module_error_with_target($src, vec![], Target::JavaScript);
+        let output = $crate::type_::tests::module_error_with_target(
+            $src,
+            vec![],
+            crate::build::Target::JavaScript,
+        );
         insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 }
@@ -1964,214 +1971,6 @@ fn block_maths() {
     );
 }
 
-// https://github.com/gleam-lang/gleam/issues/2324
-#[test]
-fn javascript_only_function_used_by_erlang_module() {
-    let module = r#"@external(javascript, "foo", "bar")
-pub fn js_only() -> Int
-
-pub fn main() {
-  js_only()
-}
-"#;
-    assert_module_error!(module);
-    assert_js_module_infer!(
-        module,
-        vec![("js_only", "fn() -> Int"), ("main", "fn() -> Int")]
-    );
-}
-
-#[test]
-fn erlang_only_function_used_by_javascript_module() {
-    let module = r#"@external(erlang, "foo", "bar")
-pub fn erlang_only() -> Int
-
-pub fn main() {
-  erlang_only()
-}
-"#;
-    assert_js_module_error!(module);
-    assert_module_infer!(
-        module,
-        vec![("erlang_only", "fn() -> Int"), ("main", "fn() -> Int")]
-    );
-}
-
-#[test]
-fn unused_javascript_only_function_is_not_rejected_on_erlang_target() {
-    assert_module_infer!(
-        r#"@external(javascript, "foo", "bar")
-pub fn js_only() -> Int
-
-pub fn main() {
-  10
-}
-"#,
-        vec![("js_only", "fn() -> Int"), ("main", "fn() -> Int")]
-    );
-}
-
-#[test]
-fn unused_erlang_only_function_is_not_rejected_on_javascript_target() {
-    assert_js_module_infer!(
-        r#"@external(erlang, "foo", "bar")
-pub fn erlang_only() -> Int
-
-pub fn main() {
-  10
-}
-"#,
-        vec![("erlang_only", "fn() -> Int"), ("main", "fn() -> Int")]
-    );
-}
-
-#[test]
-fn erlang_only_function_with_javascript_external() {
-    let module = r#"
-@external(erlang, "foo", "bar")
-pub fn erlang_only() -> Int
-
-@external(javascript, "foo", "bar")
-pub fn all_targets() -> Int {
-  erlang_only()
-}
-
-pub fn main() {
-  all_targets()
-}
-    "#;
-
-    let expected = vec![
-        ("all_targets", "fn() -> Int"),
-        ("erlang_only", "fn() -> Int"),
-        ("main", "fn() -> Int"),
-    ];
-
-    assert_module_infer!(module, expected.clone());
-    assert_js_module_infer!(module, expected);
-}
-
-#[test]
-fn javascript_only_function_with_erlang_external() {
-    let module = r#"
-@external(javascript, "foo", "bar")
-pub fn javascript_only() -> Int
-
-@external(erlang, "foo", "bar")
-pub fn all_targets() -> Int {
-  javascript_only()
-}
-
-pub fn main() {
-  all_targets()
-}
-    "#;
-
-    let expected = vec![
-        ("all_targets", "fn() -> Int"),
-        ("javascript_only", "fn() -> Int"),
-        ("main", "fn() -> Int"),
-    ];
-
-    assert_module_infer!(module, expected.clone());
-    assert_js_module_infer!(module, expected);
-}
-
-#[test]
-fn javascript_only_function_with_javascript_external() {
-    let module = r#"@external(javascript, "foo", "bar")
-pub fn javascript_only() -> Int
-
-@external(javascript, "foo", "bar")
-pub fn uh_oh() -> Int {
-  javascript_only()
-}
-"#;
-    assert_js_module_infer!(
-        module,
-        vec![("javascript_only", "fn() -> Int"), ("uh_oh", "fn() -> Int")]
-    );
-    assert_module_error!(module);
-}
-
-#[test]
-fn erlang_only_function_with_erlang_external() {
-    let module = r#"@external(erlang, "foo", "bar")
-pub fn erlang_only() -> Int
-
-@external(erlang, "foo", "bar")
-pub fn uh_oh() -> Int {
-  erlang_only()
-}
-"#;
-    assert_js_module_error!(module);
-    assert_module_infer!(
-        module,
-        vec![("erlang_only", "fn() -> Int"), ("uh_oh", "fn() -> Int")]
-    );
-}
-
-#[test]
-fn erlang_targeted_function_cant_contain_javascript_only_function() {
-    let module = r#"@target(erlang)
-pub fn erlang_only() -> Int {
-  javascript_only()
-}
-
-@external(javascript, "foo", "bar")
-pub fn javascript_only() -> Int
-    "#;
-    assert_js_module_infer!(module, vec![("javascript_only", "fn() -> Int")]);
-    assert_module_error!(module);
-}
-
-#[test]
-fn javascript_targeted_function_cant_contain_erlang_only_function() {
-    let module = r#"@target(javascript)
-pub fn javascript_only() -> Int {
-  erlang_only()
-}
-
-@external(erlang, "foo", "bar")
-pub fn erlang_only() -> Int
-    "#;
-    assert_module_infer!(module, vec![("erlang_only", "fn() -> Int")]);
-    assert_js_module_error!(module);
-}
-
-#[test]
-fn imported_javascript_only_function() {
-    assert_with_module_error!(
-        (
-            "module",
-            r#"@external(javascript, "foo", "bar")
-pub fn javascript_only() -> Int"#
-        ),
-        "import module
-pub fn main() {
-  module.javascript_only()
-}",
-    );
-}
-
-#[test]
-fn javascript_only_constant() {
-    assert_with_module_error!(
-        (
-            "module",
-            r#"@external(javascript, "foo", "bar")
-fn javascript_only() -> Int
-const constant = javascript_only
-pub const javascript_only_constant = constant 
-"#
-        ),
-        "import module
-pub fn main() {
-  module.javascript_only_constant()
-}",
-    );
-}
-
 #[test]
 fn contains_todo_true() {
     let module = compile_module("pub fn main() { 1 }", None, vec![]).unwrap();
@@ -2182,4 +1981,120 @@ fn contains_todo_true() {
 fn contains_todo_false() {
     let module = compile_module("pub fn main() { todo }", None, vec![]).unwrap();
     assert!(module.type_info.contains_todo);
+}
+
+#[test]
+fn assert_suitable_main_function_not_module_function() {
+    let value = ValueConstructor {
+        public: true,
+        deprecation: Deprecation::NotDeprecated,
+        type_: fn_(vec![], int()),
+        variant: ValueConstructorVariant::ModuleConstant {
+            documentation: None,
+            location: Default::default(),
+            module: "module".into(),
+            literal: Constant::Int {
+                location: Default::default(),
+                value: "1".into(),
+            },
+            implementations: Implementations {
+                gleam: true,
+                uses_erlang_externals: false,
+                uses_javascript_externals: false,
+            },
+        },
+    };
+    assert!(assert_suitable_main_function(&value, &"module".into(), Target::Erlang).is_err(),);
+}
+
+#[test]
+fn assert_suitable_main_function_wrong_arity() {
+    let value = ValueConstructor {
+        public: true,
+        deprecation: Deprecation::NotDeprecated,
+        type_: fn_(vec![], int()),
+        variant: ValueConstructorVariant::ModuleFn {
+            name: "name".into(),
+            field_map: None,
+            arity: 1,
+            documentation: None,
+            location: Default::default(),
+            module: "module".into(),
+            implementations: Implementations {
+                gleam: true,
+                uses_erlang_externals: false,
+                uses_javascript_externals: false,
+            },
+        },
+    };
+    assert!(assert_suitable_main_function(&value, &"module".into(), Target::Erlang).is_err(),);
+}
+
+#[test]
+fn assert_suitable_main_function_ok() {
+    let value = ValueConstructor {
+        public: true,
+        deprecation: Deprecation::NotDeprecated,
+        type_: fn_(vec![], int()),
+        variant: ValueConstructorVariant::ModuleFn {
+            name: "name".into(),
+            field_map: None,
+            arity: 0,
+            documentation: None,
+            location: Default::default(),
+            module: "module".into(),
+            implementations: Implementations {
+                gleam: true,
+                uses_erlang_externals: false,
+                uses_javascript_externals: false,
+            },
+        },
+    };
+    assert!(assert_suitable_main_function(&value, &"module".into(), Target::Erlang).is_ok(),);
+}
+
+#[test]
+fn assert_suitable_main_function_erlang_not_supported() {
+    let value = ValueConstructor {
+        public: true,
+        deprecation: Deprecation::NotDeprecated,
+        type_: fn_(vec![], int()),
+        variant: ValueConstructorVariant::ModuleFn {
+            name: "name".into(),
+            field_map: None,
+            arity: 0,
+            documentation: None,
+            location: Default::default(),
+            module: "module".into(),
+            implementations: Implementations {
+                gleam: false,
+                uses_erlang_externals: false,
+                uses_javascript_externals: true,
+            },
+        },
+    };
+    assert!(assert_suitable_main_function(&value, &"module".into(), Target::Erlang).is_err(),);
+}
+
+#[test]
+fn assert_suitable_main_function_javascript_not_supported() {
+    let value = ValueConstructor {
+        public: true,
+        deprecation: Deprecation::NotDeprecated,
+        type_: fn_(vec![], int()),
+        variant: ValueConstructorVariant::ModuleFn {
+            name: "name".into(),
+            field_map: None,
+            arity: 0,
+            documentation: None,
+            location: Default::default(),
+            module: "module".into(),
+            implementations: Implementations {
+                gleam: false,
+                uses_erlang_externals: true,
+                uses_javascript_externals: false,
+            },
+        },
+    };
+    assert!(assert_suitable_main_function(&value, &"module".into(), Target::JavaScript).is_err(),);
 }

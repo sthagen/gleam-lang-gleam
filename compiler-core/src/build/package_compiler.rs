@@ -122,7 +122,7 @@ where
 
         // Load the cached modules that have previously been compiled
         for module in loaded.cached.into_iter() {
-            _ = existing_modules.insert(module.name.clone(), module.clone());
+            _ = existing_modules.insert(module.name.clone(), module);
         }
 
         if !loaded.to_compile.is_empty() {
@@ -150,7 +150,6 @@ where
         tracing::debug!("performing_code_generation");
         self.perform_codegen(&modules)?;
         self.encode_and_write_metadata(&modules)?;
-
         Ok(modules)
     }
 

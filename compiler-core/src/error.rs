@@ -145,8 +145,11 @@ pub enum Error {
     #[error("{module} does not have a main function")]
     ModuleDoesNotHaveMainFunction { module: EcoString },
 
-    #[error("{module} has the wrong arity so it can not be run.")]
+    #[error("{module}'s main function has the wrong arity so it can not be run")]
     MainFunctionHasWrongArity { module: EcoString, arity: usize },
+
+    #[error("{module}'s main function does not support the current target")]
+    MainFunctionDoesNotSupportTarget { module: EcoString, target: Target },
 
     #[error("{input} is not a valid version. {error}")]
     InvalidVersionFormat { input: String, error: String },
@@ -540,6 +543,17 @@ forward slash and must not end with a slash."
                     "Add a public `main` function to \
 to `src/{module}.gleam`."
                 )),
+            },
+
+            Error::MainFunctionDoesNotSupportTarget { module, target } => Diagnostic {
+                title: "Target not supported".into(),
+                text: wrap_format!(
+                    "`{module}` has a main function, but it does not support the {target} \
+target, so it cannot be run."
+                ),
+                level: Level::Error,
+                location: None,
+                hint: None,
             },
 
             Error::MainFunctionHasWrongArity { module, arity } => Diagnostic {
@@ -2350,7 +2364,7 @@ The missing patterns are:\n"
                     }
                 }
 
-                TypeError::UnsupportedTarget {
+                TypeError::UnsupportedExpressionTarget {
                     location,
                     target: current_target,
                 } => {
@@ -2361,6 +2375,37 @@ and there is no implementation for the {} target.",
                             Target::Erlang => "Erlang",
                             Target::JavaScript => "JavaScript",
                         }
+                    );
+                    Diagnostic {
+                        title: "Unsupported target".into(),
+                        text,
+                        hint: None,
+                        level: Level::Error,
+                        location: Some(Location {
+                            path: path.clone(),
+                            src: src.clone(),
+                            label: Label {
+                                text: None,
+                                span: *location,
+                            },
+                            extra_labels: vec![],
+                        }),
+                    }
+                }
+
+                TypeError::UnsupportedPublicFunctionTarget {
+                    location,
+                    name,
+                    target,
+                } => {
+                    let target = match target {
+                        Target::Erlang => "Erlang",
+                        Target::JavaScript => "JavaScript",
+                    };
+                    let text = wrap_format!(
+                        "The `{name}` function is public but doesn't have an \
+implementation for the {target} target. All public functions of a package \
+must be able to compile for a module to be valid."
                     );
                     Diagnostic {
                         title: "Unsupported target".into(),
