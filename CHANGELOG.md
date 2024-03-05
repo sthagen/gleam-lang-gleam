@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+## Language changes
+
+- Optimised prepending to lists in JavaScript (`[x, ..xs]` syntax).
+
+### Formatter
+
+- Fixed a bug where the formatter would move comments from the end of bounded
+  expressions like lists, tuples, case expressions or function calls.
+- Fixed a bug where a record update's arguments would not be indented correctly.
+
+### Build tool
+
+- Fixed a bug where bit arrays would break syntax highlighting in the generated
+  HTML documentation.
+
+
 ## v1.0.0 - 2024-03-04
 
 ### Language changes
