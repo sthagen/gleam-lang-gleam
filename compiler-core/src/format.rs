@@ -96,6 +96,13 @@ impl<'comments> Formatter<'comments> {
             .unwrap_or(false)
     }
 
+    fn any_empty_lines(&self, limit: u32) -> bool {
+        self.empty_lines
+            .first()
+            .map(|line| *line < limit)
+            .unwrap_or(false)
+    }
+
     /// Pop comments that occur before a byte-index in the source, consuming
     /// and retaining any empty lines contained within.
     fn pop_comments(&mut self, limit: u32) -> impl Iterator<Item = Option<&'comments str>> {
@@ -150,21 +157,30 @@ impl<'comments> Formatter<'comments> {
 
     pub(crate) fn module<'a>(&mut self, module: &'a UntypedModule) -> Document<'a> {
         let mut documents = vec![];
-        let mut previous_was_import = false;
+        let mut previous_was_a_definition = false;
 
-        for definition in &module.definitions {
-            let is_import = definition.definition.is_import();
-
-            if documents.is_empty() {
-                // We don't insert empty lines before the first definition
-            } else if previous_was_import && is_import {
-                documents.push(lines(1));
+        // Here we take consecutive groups of imports so that they can be sorted
+        // alphabetically.
+        for (is_import_group, definitions) in &module
+            .definitions
+            .iter()
+            .group_by(|definition| definition.definition.is_import())
+        {
+            if is_import_group {
+                if previous_was_a_definition {
+                    documents.push(lines(2));
+                }
+                documents.append(&mut self.imports(definitions.collect_vec()));
+                previous_was_a_definition = false;
             } else {
-                documents.push(lines(2));
-            };
-
-            documents.push(self.targeted_definition(definition));
-            previous_was_import = is_import;
+                for definition in definitions {
+                    if !documents.is_empty() {
+                        documents.push(lines(2));
+                    }
+                    documents.push(self.targeted_definition(definition));
+                }
+                previous_was_a_definition = true;
+            }
         }
 
         let definitions = concat(documents);
@@ -202,6 +218,100 @@ impl<'comments> Formatter<'comments> {
             .filter(|doc| !doc.is_empty());
 
         join(non_empty, line()).append(line())
+    }
+
+    /// Separates the imports in groups delimited by comments or empty lines and
+    /// sorts each group alphabetically.
+    ///
+    fn imports<'a>(&mut self, imports: Vec<&'a TargetedDefinition>) -> Vec<Document<'a>> {
+        // The formatter needs to play nicely with import groups defined by the
+        // programmer. If one puts a comment before an import then that's a clue
+        // for the formatter that it has run into a gorup of related imports.
+        //
+        // So we can't just sort `imports` and format each one, we have to be a
+        // bit smarter and see if each import is preceded by a comment.
+        // Once we find a comment we know we're done with the current import
+        // group and a new one has started.
+        //
+        // ```gleam
+        // // This is an import group.
+        // import gleam/int
+        // import gleam/string
+        //
+        // // This marks the beginning of a new import group that can't
+        // // be mushed together with the previous one!
+        // import wibble
+        // import wobble
+        // ```
+        let mut documents = vec![];
+        let mut current_group = vec![];
+        let mut group_comments = None;
+
+        for import in imports {
+            let start = import.definition.location().start;
+            // If the import is preceded by a comment then we want to put it
+            // into a new group and we can print the current one.
+            if !current_group.is_empty()
+                && (self.any_comments(start) || self.any_empty_lines(start))
+            {
+                documents.append(&mut self.sorted_import_group(&mut current_group, group_comments));
+                documents.push(lines(2));
+                // We pop the comment introducing the group and save it for
+                // later for when the group is over and we can actually print
+                // it.
+                // We have to immediately pop the comment as soon as we start
+                // with a new group or it would still be present in
+                // `self.comments` messing up `self.any_comments` for the next
+                // imports in the group.
+                group_comments = printed_comments(self.pop_comments(start), false);
+            }
+            let _ = self.pop_empty_lines(start);
+            current_group.push(import);
+        }
+
+        // Let's not forget about the last import group!
+        if !current_group.is_empty() {
+            documents.append(&mut self.sorted_import_group(&mut current_group, group_comments));
+        }
+
+        documents
+    }
+
+    /// Prints the imports as a single sorted group of import statements
+    /// draining the given vector.
+    ///
+    /// `group_comment` is the comment preceding the current group.
+    /// It might be missing since a group could also be defined by simply having
+    /// an empty line between imports.
+    ///
+    fn sorted_import_group<'a>(
+        &mut self,
+        imports: &mut Vec<&'a TargetedDefinition>,
+        group_comment: Option<Document<'a>>,
+    ) -> Vec<Document<'a>> {
+        let mut documents = Vec::with_capacity(imports.len() * 2);
+
+        // If the group is defined with a single comment we print it as the
+        // first thing.
+        if let Some(comment) = group_comment {
+            documents.push(comment)
+        };
+
+        imports.sort_by(|one, other| match (&one.definition, &other.definition) {
+            (Definition::Import(one), Definition::Import(other)) => one.module.cmp(&other.module),
+            // It shouldn't really be possible for a non import to be here so
+            // we just return a default value.
+            _ => std::cmp::Ordering::Equal,
+        });
+
+        for import in imports.iter() {
+            if !documents.is_empty() {
+                documents.push(lines(1))
+            }
+            documents.push(self.targeted_definition(import));
+        }
+        imports.clear();
+        documents
     }
 
     fn definition<'a>(&mut self, statement: &'a UntypedDefinition) -> Document<'a> {
@@ -1412,26 +1522,41 @@ impl<'comments> Formatter<'comments> {
     fn clause<'a>(&mut self, clause: &'a UntypedClause, index: u32) -> Document<'a> {
         let space_before = self.pop_empty_lines(clause.location.start);
         let comments = self.pop_comments(clause.location.start);
-        let clause_doc = join(
-            std::iter::once(&clause.pattern)
-                .chain(&clause.alternative_patterns)
-                .map(|p| join(p.iter().map(|p| self.pattern(p)), ", ".to_doc())),
-            break_("", " ").append("| "),
-        )
-        .group();
 
         let clause_doc = match &clause.guard {
-            None => clause_doc,
-            Some(guard) => clause_doc
-                .append(break_("", " "))
+            None => self.alternative_patterns(clause),
+            Some(guard) => self
+                .alternative_patterns(clause)
+                .append(break_("", " ").nest(INDENT))
                 .append("if ")
-                .append(self.clause_guard(guard).group())
-                .nest(INDENT),
+                .append(self.clause_guard(guard).group().nest(INDENT)),
         };
 
         let clause_doc = match printed_comments(comments, false) {
             Some(comments) => comments.append(line()).append(clause_doc),
             None => clause_doc,
+        };
+
+        // In case there's a guard or multiple subjects, if we decide to break
+        // the patterns on multiple lines we also want the arrow to end up on
+        // its own line to improve legibility.
+        //
+        // This looks like this:
+        // ```gleam
+        // case wibble, wobble {
+        //   Wibble(_),  // pretend this goes over the line limit
+        //     Wobble(_)
+        //   -> todo
+        //   // Notice how the arrow is broken on its own line, the same goes
+        //   // for patterns with `if` guards.
+        // }
+        // ```
+        let has_guard = clause.guard.is_some();
+        let has_multiple_subjects = clause.pattern.len() > 1;
+        let arrow_break = if has_guard || has_multiple_subjects {
+            break_("", " ")
+        } else {
+            " ".to_doc()
         };
 
         if index == 0 {
@@ -1441,13 +1566,58 @@ impl<'comments> Formatter<'comments> {
         } else {
             lines(1).append(clause_doc)
         }
-        .append(match &clause.guard {
-            None => " ".to_doc(),
-            Some(_) => break_("", " "),
-        })
+        .append(arrow_break)
         .group()
         .append("->")
         .append(self.case_clause_value(&clause.then))
+    }
+
+    fn alternative_patterns<'a>(&mut self, clause: &'a UntypedClause) -> Document<'a> {
+        let has_guard = clause.guard.is_some();
+        let has_multiple_subjects = clause.pattern.len() > 1;
+
+        // In case there's an `if` guard but no multiple subjects we want to add
+        // additional indentation before the vartical bar separating alternative
+        // patterns `|`.
+        // We're not adding the indentation if there's multiple subjects as that
+        // would make things harder to read, aligning the vertical bar with the
+        // different subjects:
+        // ```
+        // case wibble, wobble {
+        //   Wibble,
+        //     Wobble
+        //     | Wibble, // <- we don't want this indentation!
+        //     Wobble -> todo
+        // }
+        // ```
+        let alternatives_separator = if has_guard && !has_multiple_subjects {
+            break_("", " ").nest(INDENT).append("| ")
+        } else {
+            break_("", " ").append("| ")
+        };
+
+        let alternative_patterns = std::iter::once(&clause.pattern)
+            .chain(&clause.alternative_patterns)
+            .map(|p| {
+                // Here `p` is a single pattern that can be comprised of
+                // multiple subjects.
+                // ```gleam
+                // case wibble, wobble {
+                //   True, False
+                // //^^^^^^^^^^^ This is a single pattern with multiple subjects
+                //   | _, _ -> todo
+                // }
+                // ```
+                //
+                // We turn each subject pattern into a document and join those
+                // with a breakable comma (that's also going to be nested).
+                // Then we make sure that the formatter tries to keep each
+                // alternative on a single line by making it a group!
+                let patterns = p.iter().map(|p| self.pattern(p));
+                join(patterns, break_(",", ", ")).group().nest(INDENT)
+            });
+
+        join(alternative_patterns, alternatives_separator).group()
     }
 
     fn list<'a>(

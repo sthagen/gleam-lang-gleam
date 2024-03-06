@@ -4,16 +4,20 @@
 
 ## Language changes
 
-- Optimised prepending to lists in JavaScript (`[x, ..xs]` syntax).
+- Prepending to lists in JavaScript (`[x, ..xs]` syntax) has been optimised.
+- Function stubs are no longer generated for functions that do not have an
+  implementation for the current targeting being compiled for.
 
 ### Formatter
 
+- The formatting of case expressions with multiple subjects has been improved.
 - Fixed a bug where the formatter would move comments from the end of bounded
   expressions like lists, tuples, case expressions or function calls.
 - Fixed a bug where a record update's arguments would not be indented correctly.
 
 ### Build tool
 
+- New projects are created with the GitHub `actions/checkout` v4 action.
 - Fixed a bug where bit arrays would break syntax highlighting in the generated
   HTML documentation.
 
@@ -29,6 +33,8 @@
 
 - Fixed a bug where the exported package interface would not have a module's
   documentation.
+- Fixed a bug where the `export package interface` command would always
+  recompile the project ignoring the cache.
 
 ## v1.0.0-rc2 - 2024-02-14
 
@@ -40,6 +46,9 @@
 ### Formatter
 
 - The format used by the formatter has been improved in some niche cases.
+- Improved the formatting of long case guards.
+- The formatter can now format groups of imports alphabetically.
+
 
 ## v1.0.0-rc1 - 2024-02-10
 
