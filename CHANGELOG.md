@@ -2,11 +2,13 @@
 
 ## Unreleased
 
-## Language changes
+## Compiler
 
 - Prepending to lists in JavaScript (`[x, ..xs]` syntax) has been optimised.
 - Function stubs are no longer generated for functions that do not have an
   implementation for the current targeting being compiled for.
+- Fixed a bug where some functions would not result in a compile error when
+  compiled for a target that they do not support.
 
 ### Formatter
 
@@ -25,6 +27,15 @@
 - Dependencies that use Erlang-only bit options can now compile on JavaScript,
   though the functions that use them will not be available for use in the root
   package.
+- Generated documentation no longer exposes the constructors of opaque types,
+  no longer exposes the values of constants, and indicates which types are
+  opaque.
+
+## Language Server
+
+- The `Compiling Gleam` message is no longer emitted each time code is compiled.
+  This is to reduce noise in editors that show this message prominently such as
+  Neovim.
 
 
 ## v1.0.0 - 2024-03-04
