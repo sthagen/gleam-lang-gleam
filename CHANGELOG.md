@@ -2,13 +2,17 @@
 
 ## Unreleased
 
-## Compiler
+### Compiler
 
 - Prepending to lists in JavaScript (`[x, ..xs]` syntax) has been optimised.
 - Function stubs are no longer generated for functions that do not have an
   implementation for the current targeting being compiled for.
 - Fixed a bug where some functions would not result in a compile error when
   compiled for a target that they do not support.
+- Fixed a bug where sometimes a warning would not be emitted when a result is
+  discarded.
+- Fixed a bug with JavaScript code generation of pattern matching guards.
+- URLs in error messages have been updated for the new language tour.
 
 ### Formatter
 
@@ -31,11 +35,13 @@
   no longer exposes the values of constants, and indicates which types are
   opaque.
 
-## Language Server
+### Language Server
 
 - The `Compiling Gleam` message is no longer emitted each time code is compiled.
   This is to reduce noise in editors that show this message prominently such as
   Neovim.
+- Fixed a bug where hovering over an expression in the middle of a pipe would
+  give the wrong node.
 
 
 ## v1.0.0 - 2024-03-04
