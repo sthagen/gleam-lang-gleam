@@ -15,6 +15,9 @@
 - URLs in error messages have been updated for the new language tour.
 - Improved error message when erroneously trying to append items to a list using
   the spread syntax (like `[..rest, last]`).
+- Generate [type references](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html#-reference-types-)
+  when compiling to JavaScript with TypeScript definitions enabled.
+
 
 ### Formatter
 
