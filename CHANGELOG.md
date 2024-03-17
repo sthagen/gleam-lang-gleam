@@ -21,6 +21,8 @@
   result of nested blocks.
 - Fix a bug where JavaScript code generation would not properly handle functions
   returned by blocks.
+- Fix a bug where Erlang code generation would not properly handle list case patterns
+  with no head and a spread tail.
 
 ### Formatter
 
@@ -42,6 +44,7 @@
 - Generated documentation no longer exposes the constructors of opaque types,
   no longer exposes the values of constants, and indicates which types are
   opaque.
+- Generated HTML documentation now includes a link to the package on Hex.
 - Terminal colors can now be forced by setting the `FORCE_COLOR` environment
   variable to any non-empty value.
 - Rust's Reqwest's `webpki-roots` are now used for TLS verification.
