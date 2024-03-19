@@ -32,6 +32,8 @@
 - Fixed a bug where `tuple.0.1` was not recognised as a nested tuple access
   expression
 - Error messages are more clear about expecting values instead of types.
+- Fixed a bug where pattern matching on a string would cause the program to
+  crash on the JavaScript target.
 
 ### Formatter
 
@@ -52,6 +54,7 @@
   package.
 - The output format of the command line help messages have been changed
   slightly.
+- The command line help text now lists valid targets and runtimes.
 - Generated documentation no longer exposes the constructors of opaque types,
   no longer exposes the values of constants, and indicates which types are
   opaque.

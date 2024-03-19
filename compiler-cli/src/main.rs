@@ -110,6 +110,7 @@ use strum::VariantNames;
         .usage(styling::AnsiColor::Yellow.on_default())
         .literal(styling::AnsiColor::Green.on_default())
 )]
+
 enum Command {
     /// Build the project
     Build {
@@ -117,15 +118,13 @@ enum Command {
         #[arg(long)]
         warnings_as_errors: bool,
 
-        /// The platform to target
-        #[arg(short, long, ignore_case = true)]
+        #[arg(short, long, ignore_case = true, help = target_doc())]
         target: Option<Target>,
     },
 
     /// Type check the project
     Check {
-        /// The platform to target
-        #[arg(short, long, ignore_case = true)]
+        #[arg(short, long, ignore_case = true, help = target_doc())]
         target: Option<Target>,
     },
 
@@ -184,11 +183,10 @@ enum Command {
     /// Run the project
     #[command(trailing_var_arg = true)]
     Run {
-        /// The platform to target
-        #[arg(short, long, ignore_case = true)]
+        #[arg(short, long, ignore_case = true, help = target_doc())]
         target: Option<Target>,
 
-        #[arg(long, ignore_case = true)]
+        #[arg(long, ignore_case = true, help = runtime_doc())]
         runtime: Option<Runtime>,
 
         /// The module to run
@@ -201,11 +199,10 @@ enum Command {
     /// Run the project tests
     #[command(trailing_var_arg = true)]
     Test {
-        /// The platform to target
-        #[arg(short, long, ignore_case = true)]
+        #[arg(short, long, ignore_case = true, help = target_doc())]
         target: Option<Target>,
 
-        #[arg(long, ignore_case = true)]
+        #[arg(long, ignore_case = true, help = runtime_doc())]
         runtime: Option<Runtime>,
 
         arguments: Vec<String>,
@@ -247,6 +244,14 @@ enum Command {
     /// Export something useful from the Gleam project
     #[command(subcommand)]
     Export(ExportTarget),
+}
+
+fn target_doc() -> String {
+    format!("The platform to target ({})", Target::VARIANTS.join("|"))
+}
+
+fn runtime_doc() -> String {
+    format!("The runtime to target ({})", Runtime::VARIANTS.join("|"))
 }
 
 #[derive(Subcommand, Debug, Clone)]
