@@ -36,6 +36,7 @@
   crash on the JavaScript target.
 - Allow compilation of packages that require `"rebar"` using the rebar3 compiler.
 - A warning is now emitted when defining an opaque external type.
+- Improve error message when using incorrect quotes (`'`) to define a string
 
 ### Formatter
 
@@ -45,6 +46,8 @@
 - Fixed a bug where a record update's arguments would not be indented correctly.
 - Fixed a bug where function call arguments, tuple items and list items would be
   needlessly indented if preceded by a comment.
+- Line endings other than `\n` are now handled by the formatter, preserving
+  blank lines and converting them to `\n`.
 
 ### Build tool
 
@@ -67,6 +70,7 @@
   variable to any non-empty value.
 - Rust's Reqwest's `webpki-roots` are now used for TLS verification.
 - Update Deno config to allow passing `--location` runtime flag.
+- Fixed a bug with dependency resolution of exact versions of RC releases.
 
 ### Language Server
 
