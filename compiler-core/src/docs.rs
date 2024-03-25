@@ -7,13 +7,14 @@ use std::time::SystemTime;
 use camino::Utf8PathBuf;
 
 use crate::{
-    ast::{CustomType, Definition, Function, ModuleConstant, TypeAlias, TypedDefinition},
+    ast::{
+        CustomType, Definition, Function, ModuleConstant, Publicity, TypeAlias, TypedDefinition,
+    },
     build::{Module, Package},
     config::{DocsPage, PackageConfig},
     docs::source_links::SourceLinker,
     format,
-    io::Content,
-    io::OutputFile,
+    io::{Content, OutputFile},
     package_interface::PackageInterface,
     paths::ProjectPaths,
     pretty,
@@ -148,6 +149,7 @@ pub fn generate_html(
             .ast
             .definitions
             .iter()
+            .filter(|statement| !statement.is_internal())
             .flat_map(|statement| function(&source_links, statement))
             .sorted()
             .collect();
@@ -156,6 +158,7 @@ pub fn generate_html(
             .ast
             .definitions
             .iter()
+            .filter(|statement| !statement.is_internal())
             .flat_map(|statement| type_(&source_links, statement))
             .sorted()
             .collect();
@@ -164,6 +167,7 @@ pub fn generate_html(
             .ast
             .definitions
             .iter()
+            .filter(|statement| !statement.is_internal())
             .flat_map(|statement| constant(&source_links, statement))
             .sorted()
             .collect();
@@ -499,7 +503,7 @@ fn function<'a>(
 
     match statement {
         Definition::Function(Function {
-            public: true,
+            publicity: Publicity::Public,
             name,
             documentation: doc,
             arguments: args,
@@ -513,7 +517,7 @@ fn function<'a>(
             text_documentation: text_documentation(doc),
             signature: print(
                 formatter
-                    .docs_fn_signature(true, name, args, ret.clone())
+                    .docs_fn_signature(Publicity::Public, name, args, ret.clone())
                     .group(),
             ),
             source_url: source_links.url(*location),
@@ -559,7 +563,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedDefinition) -> Opt
     let mut formatter = format::Formatter::new();
 
     match statement {
-        Definition::CustomType(ct) if ct.public && !ct.opaque => Some(Type {
+        Definition::CustomType(ct) if ct.publicity.is_importable() && !ct.opaque => Some(Type {
             name: &ct.name,
             // TODO: Don't use the same printer for docs as for the formatter.
             // We are not interested in showing the exact implementation in the
@@ -595,7 +599,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedDefinition) -> Opt
         }),
 
         Definition::CustomType(CustomType {
-            public: true,
+            publicity: Publicity::Public,
             opaque: true,
             name,
             parameters,
@@ -607,7 +611,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedDefinition) -> Opt
             name,
             definition: print(
                 formatter
-                    .docs_opaque_custom_type(true, name, parameters, location)
+                    .docs_opaque_custom_type(Publicity::Public, name, parameters, location)
                     .group(),
             ),
             documentation: markdown_documentation(doc),
@@ -622,7 +626,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedDefinition) -> Opt
         }),
 
         Definition::TypeAlias(TypeAlias {
-            public: true,
+            publicity: Publicity::Public,
             alias: name,
             type_ast: typ,
             documentation: doc,
@@ -634,7 +638,7 @@ fn type_<'a>(source_links: &SourceLinker, statement: &'a TypedDefinition) -> Opt
             name,
             definition: print(
                 formatter
-                    .type_alias(true, name, args, typ, deprecation)
+                    .type_alias(Publicity::Public, name, args, typ, deprecation)
                     .group(),
             ),
             documentation: markdown_documentation(doc),
@@ -659,7 +663,7 @@ fn constant<'a>(
     let mut formatter = format::Formatter::new();
     match statement {
         Definition::ModuleConstant(ModuleConstant {
-            public: true,
+            publicity: Publicity::Public,
             documentation: doc,
             name,
             value,
@@ -667,7 +671,7 @@ fn constant<'a>(
             ..
         }) => Some(Constant {
             name,
-            definition: print(formatter.docs_const_expr(true, name, value)),
+            definition: print(formatter.docs_const_expr(Publicity::Public, name, value)),
             documentation: markdown_documentation(doc),
             text_documentation: text_documentation(doc),
             source_url: source_links.url(*location),

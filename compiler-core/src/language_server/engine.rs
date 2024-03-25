@@ -1,6 +1,7 @@
 use crate::{
     ast::{
-        Arg, Definition, Function, Import, ModuleConstant, TypedDefinition, TypedExpr, TypedPattern,
+        Arg, Definition, Function, Import, ModuleConstant, Publicity, TypedDefinition, TypedExpr,
+        TypedPattern,
     },
     build::{Located, Module},
     config::PackageConfig,
@@ -365,8 +366,16 @@ where
 
             // Qualified types
             for (name, type_) in &module.types {
-                if !type_.public {
-                    continue;
+                match type_.publicity {
+                    // We skip private types as we never want those to appear in
+                    // completions.
+                    Publicity::Private => continue,
+                    // We only skip internal types if those are not defined in
+                    // the root package.
+                    Publicity::Internal if module.package != self.root_package_name() => continue,
+                    Publicity::Internal => {}
+                    // We never skip public types.
+                    Publicity::Public => {}
                 }
 
                 let module = import.used_name();
@@ -377,10 +386,12 @@ where
 
             // Unqualified types
             for unqualified in &import.unqualified_types {
-                let Some(type_) = module.get_public_type(&unqualified.name) else {
-                    continue;
-                };
-                completions.push(type_completion(None, unqualified.used_name(), type_));
+                match module.get_public_type(&unqualified.name) {
+                    Some(type_) => {
+                        completions.push(type_completion(None, unqualified.used_name(), type_))
+                    }
+                    None => continue,
+                }
             }
         }
 
@@ -392,6 +403,9 @@ where
 
         // Module functions
         for (name, value) in &module.ast.type_info.values {
+            // Here we do not check for the internal attribute: we always want
+            // to show autocompletions for values defined in the same module,
+            // even if those are internal.
             completions.push(value_completion(None, name, value));
         }
 
@@ -406,8 +420,16 @@ where
 
             // Qualified values
             for (name, value) in &module.values {
-                if !value.public {
-                    continue;
+                match value.publicity {
+                    // We skip private values as we never want those to appear in
+                    // completions.
+                    Publicity::Private => continue,
+                    // We only skip internal values if those are not defined in
+                    // the root package.
+                    Publicity::Internal if module.package != self.root_package_name() => continue,
+                    Publicity::Internal => {}
+                    // We never skip public values.
+                    Publicity::Public => {}
                 }
 
                 let module = import.used_name();
@@ -418,14 +440,20 @@ where
 
             // Unqualified values
             for unqualified in &import.unqualified_values {
-                let Some(value) = module.get_public_value(&unqualified.name) else {
-                    continue;
-                };
-                completions.push(value_completion(None, unqualified.used_name(), value));
+                match module.get_public_value(&unqualified.name) {
+                    Some(value) => {
+                        completions.push(value_completion(None, unqualified.used_name(), value))
+                    }
+                    None => continue,
+                }
             }
         }
 
         completions
+    }
+
+    fn root_package_name(&self) -> &str {
+        self.compiler.project_compiler.config.name.as_str()
     }
 }
 
@@ -640,7 +668,7 @@ fn get_expr_qualified_name(expression: &TypedExpr) -> Option<(&EcoString, &EcoSt
     match expression {
         TypedExpr::Var {
             name, constructor, ..
-        } if constructor.public => match &constructor.variant {
+        } if constructor.publicity.is_importable() => match &constructor.variant {
             ValueConstructorVariant::ModuleFn {
                 module: module_name,
                 ..
