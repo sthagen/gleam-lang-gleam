@@ -37,6 +37,10 @@
 - Allow compilation of packages that require `"rebar"` using the rebar3 compiler.
 - A warning is now emitted when defining an opaque external type.
 - Improve error message when using incorrect quotes (`'`) to define a string
+- Fixed a bug where an imported module named `prepend` would conflict with the
+  `prepend` function imported from the prelude in the JavaScript target.
+- Fixed string prefix matching producing wrong results on the JavaScript target
+  when the prefix had a Unicode codepoint escape sequence (`\u{...}`).
 
 ### Formatter
 
@@ -71,6 +75,10 @@
 - Rust's Reqwest's `webpki-roots` are now used for TLS verification.
 - Update Deno config to allow passing `--location` runtime flag.
 - Fixed a bug with dependency resolution of exact versions of RC releases.
+- Fixed a bug where the documentation of a labelled record constructor could be
+  assigned to the wrong definition in the doc site.
+- Fixed a bug where the code blocks in the generated documentation's site would
+  have a wrong indentation.
 
 ### Language Server
 
@@ -80,6 +88,7 @@
 - Fixed a bug where hovering over an expression in the middle of a pipe would
   give the wrong node.
 - Go to definition now works for values in dependency Gleam modules.
+- Completions are now provided for module imports.
 
 
 ## v1.0.0 - 2024-03-04
@@ -95,7 +104,6 @@
   documentation.
 - Fixed a bug where the `export package interface` command would always
   recompile the project ignoring the cache.
-
 
 ## v1.0.0-rc2 - 2024-02-14
 

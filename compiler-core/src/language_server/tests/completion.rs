@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use lsp_types::{
-    CompletionItem, CompletionItemKind, Documentation, MarkupContent, MarkupKind, Position,
-    TextDocumentIdentifier, TextDocumentPositionParams, Url,
+    CompletionItem, CompletionItemKind, CompletionTextEdit, Documentation, MarkupContent,
+    MarkupKind, Position, Range, TextDocumentPositionParams, TextEdit,
 };
 
 use super::*;
@@ -10,6 +10,8 @@ struct Completions<'a> {
     src: &'a str,
     root_package_modules: Vec<(&'a str, &'a str)>,
     dependency_modules: Vec<(&'a str, &'a str)>,
+    test_modules: Vec<(&'a str, &'a str)>,
+    hex_modules: Vec<(&'a str, &'a str)>,
 }
 
 impl<'a> Completions<'a> {
@@ -18,6 +20,8 @@ impl<'a> Completions<'a> {
             src,
             root_package_modules: vec![],
             dependency_modules: vec![],
+            test_modules: vec![],
+            hex_modules: vec![],
         }
     }
 
@@ -39,8 +43,26 @@ impl<'a> Completions<'a> {
         }
     }
 
+    pub fn add_test_module(self, name: &'a str, src: &'a str) -> Self {
+        let mut test_modules = self.test_modules;
+        test_modules.push((name, src));
+        Completions {
+            test_modules,
+            ..self
+        }
+    }
+
+    pub fn add_hex_module(self, name: &'a str, src: &'a str) -> Self {
+        let mut hex_modules = self.hex_modules;
+        hex_modules.push((name, src));
+        Completions {
+            hex_modules,
+            ..self
+        }
+    }
+
     pub fn at(self, position: Position) -> Vec<CompletionItem> {
-        let io = LanguageServerTestIO::new();
+        let mut io = LanguageServerTestIO::new();
         let mut engine = setup_engine(&io);
 
         // Add an external dependency and all its modules
@@ -53,6 +75,19 @@ impl<'a> Completions<'a> {
         self.root_package_modules.iter().for_each(|(name, code)| {
             let _ = io.src_module(name, code);
         });
+
+        // Add all the test modules
+        self.test_modules.iter().for_each(|(name, code)| {
+            let _ = io.test_module(name, code);
+        });
+
+        io.add_hex_package("hex");
+        self.hex_modules.iter().for_each(|(name, code)| {
+            _ = io.hex_dep_module("hex", name, code);
+        });
+        for package in &io.manifest.packages {
+            add_package_from_manifest(&mut engine, package.clone());
+        }
 
         // Add the final module we're going to be positioning the cursor in.
         _ = io.src_module("app", self.src);
@@ -68,10 +103,10 @@ impl<'a> Completions<'a> {
 
         let url = Url::from_file_path(path).unwrap();
 
-        let response = engine.completion(TextDocumentPositionParams::new(
-            TextDocumentIdentifier::new(url),
-            position,
-        ));
+        let response = engine.completion(
+            TextDocumentPositionParams::new(TextDocumentIdentifier::new(url), position),
+            self.src.into(),
+        );
 
         let mut completions = response.result.unwrap().unwrap_or_default();
         completions.sort_by(|a, b| a.label.cmp(&b.label));
@@ -89,29 +124,33 @@ impl<'a> Completions<'a> {
     }
 }
 
-fn add_path_dep<B>(engine: &mut LanguageServerEngine<LanguageServerTestIO, B>, name: &str) {
-    let path = engine.paths.root().join(name);
-    let compiler = &mut engine.compiler.project_compiler;
-    _ = compiler
-        .config
-        .dependencies
-        .insert(name.into(), Requirement::Path { path: path.clone() });
-    _ = compiler.packages.insert(
-        name.into(),
-        ManifestPackage {
-            name: name.into(),
-            version: Version::new(1, 0, 0),
-            build_tools: vec!["gleam".into()],
-            otp_app: None,
-            requirements: vec![],
-            source: ManifestPackageSource::Local { path: path.clone() },
-        },
+fn positioned_with_io_completions_in_test(
+    src: &str,
+    test: &str,
+    position: Position,
+    io: &LanguageServerTestIO,
+) -> Vec<CompletionItem> {
+    _ = io.test_module("my_test", test);
+    let (mut engine, position_param) = positioned_with_io(src, position, io);
+
+    let path = Utf8PathBuf::from(if cfg!(target_family = "windows") {
+        r"\\?\C:\test\my_test.gleam"
+    } else {
+        "/test/my_test.gleam"
+    });
+
+    let url = Url::from_file_path(path).unwrap();
+
+    let document = TextDocumentIdentifier { uri: url };
+
+    let response = engine.completion(
+        TextDocumentPositionParams::new(document, position_param.position),
+        src.into(),
     );
-    let toml = format!(
-        r#"name = "{name}"
-version = "1.0.0""#
-    );
-    _ = compiler.io.write(&path.join("gleam.toml"), &toml);
+
+    let mut completions = response.result.unwrap().unwrap_or_default();
+    completions.sort_by(|a, b| a.label.cmp(&b.label));
+    completions
 }
 
 fn prelude_type_completions() -> Vec<CompletionItem> {
@@ -1044,5 +1083,275 @@ fn internal_values_from_a_dependency_are_ignored() {
             .add_dep_module("dep", dep)
             .at_default_position(),
         vec![]
+    );
+}
+
+#[test]
+fn completions_for_an_import() {
+    let code = "import dep
+
+pub fn main() {
+  0
+}";
+    let dep = "";
+
+    assert_eq!(
+        Completions::for_source(code)
+            .add_dep_module("dep", dep)
+            .at(Position::new(0, 10)),
+        vec![CompletionItem {
+            label: "gleam".into(),
+            kind: Some(CompletionItemKind::MODULE),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 7
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 11
+                    }
+                },
+                new_text: "gleam".into()
+            })),
+            ..Default::default()
+        }]
+    );
+}
+
+#[test]
+fn completions_for_an_import_no_test() {
+    let code = "import gleam
+
+pub fn main() {
+  0
+}";
+    let test = "
+import gleam
+
+pub fn main() {
+  0
+}
+";
+
+    assert_eq!(
+        Completions::for_source(code)
+            .add_test_module("my_tests", test)
+            .at(Position::new(0, 10)),
+        vec![]
+    );
+}
+
+#[test]
+fn completions_for_an_import_while_in_test() {
+    let code = "import gleam
+
+pub fn main() {
+  0
+}";
+    let test = "
+import gleam
+
+pub fn main() {
+  0
+}
+";
+    let test_helper = "
+pub fn test_helper() {
+  0
+}
+";
+
+    let io = LanguageServerTestIO::new();
+    _ = io.test_module("test_helper", test_helper);
+
+    assert_eq!(
+        positioned_with_io_completions_in_test(code, test, Position::new(0, 10), &io),
+        vec![
+            CompletionItem {
+                label: "app".into(),
+                kind: Some(CompletionItemKind::MODULE),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 7
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 13
+                        }
+                    },
+                    new_text: "app".into()
+                })),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "test_helper".into(),
+                kind: Some(CompletionItemKind::MODULE),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 7
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 13
+                        }
+                    },
+                    new_text: "test_helper".into()
+                })),
+                ..Default::default()
+            }
+        ]
+    );
+}
+
+#[test]
+fn completions_for_an_import_with_docs() {
+    let code = "import gleam
+
+pub fn main() {
+  0
+}";
+    let dep = "//// Some package
+//// documentation!
+
+pub fn main() { 1 }
+    ";
+
+    assert_eq!(
+        Completions::for_source(code)
+            .add_dep_module("dep", dep)
+            .at(Position::new(0, 10)),
+        vec![CompletionItem {
+            label: "dep".into(),
+            kind: Some(CompletionItemKind::MODULE),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 7
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 13
+                    }
+                },
+                new_text: "dep".into()
+            })),
+            ..Default::default()
+        }]
+    );
+}
+
+#[test]
+fn completions_for_an_import_from_dependency() {
+    let code = "import gleam
+
+pub fn main() {
+  0
+}";
+    let dep = "";
+
+    assert_eq!(
+        Completions::for_source(code)
+            .add_hex_module("example_module", dep)
+            .at(Position::new(0, 10)),
+        vec![CompletionItem {
+            label: "example_module".into(),
+            kind: Some(CompletionItemKind::MODULE),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 7
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 13
+                    }
+                },
+                new_text: "example_module".into()
+            })),
+            ..Default::default()
+        }]
+    );
+}
+
+#[test]
+fn completions_for_an_import_from_dependency_with_docs() {
+    let code = "//// Main package
+//// documentation!
+
+import gleam
+
+pub fn main() {
+  0
+}";
+    let dep = "//// Some package
+//// documentation!
+
+pub fn main() { 1 }
+    ";
+
+    assert_eq!(
+        Completions::for_source(code)
+            .add_hex_module("example_module", dep)
+            .at(Position::new(3, 10)),
+        vec![CompletionItem {
+            label: "example_module".into(),
+            kind: Some(CompletionItemKind::MODULE),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 3,
+                        character: 7
+                    },
+                    end: Position {
+                        line: 3,
+                        character: 13
+                    }
+                },
+                new_text: "example_module".into()
+            })),
+            ..Default::default()
+        }]
+    );
+}
+
+#[test]
+fn completions_for_an_import_start() {
+    let code = "import gleam
+
+pub fn main() {
+  0
+}";
+    let dep = "";
+
+    assert_eq!(
+        Completions::for_source(code)
+            .add_dep_module("dep", dep)
+            .at(Position::new(0, 0)),
+        vec![CompletionItem {
+            label: "dep".into(),
+            kind: Some(CompletionItemKind::MODULE),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 7
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 13
+                    }
+                },
+                new_text: "dep".into()
+            })),
+            ..Default::default()
+        }]
     );
 }
