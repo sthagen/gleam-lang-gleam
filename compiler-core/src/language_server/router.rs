@@ -115,6 +115,12 @@ where
     let is_module = path.extension().map(|x| x == "gleam").unwrap_or(false);
     let mut directory = path.to_path_buf();
 
+    // If we are finding the gleam project of a directory then we want to check the directory itself
+    let is_directory = path.extension().is_none();
+    if is_directory {
+        directory.push("src");
+    }
+
     while let Some(root) = directory.parent() {
         // If there's no gleam.toml in the root then we continue to the next parent.
         if !io.is_file(&root.join("gleam.toml")) {
@@ -165,6 +171,16 @@ mod find_gleam_project_parent_tests {
         io.write(Utf8Path::new("/app/gleam.toml"), "").unwrap();
         assert_eq!(
             find_gleam_project_parent(&io, Utf8Path::new("/app/gleam.toml")),
+            Some(Utf8PathBuf::from("/app"))
+        );
+    }
+
+    #[test]
+    fn directory_with_gleam_toml() {
+        let io = InMemoryFileSystem::new();
+        io.write(Utf8Path::new("/app/gleam.toml"), "").unwrap();
+        assert_eq!(
+            find_gleam_project_parent(&io, Utf8Path::new("/app")),
             Some(Utf8PathBuf::from("/app"))
         );
     }
