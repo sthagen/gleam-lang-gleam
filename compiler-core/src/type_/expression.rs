@@ -391,13 +391,16 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             self.environment.warnings.emit(Warning::UnusedLiteral {
                 location: discarded.location(),
             });
-        }
-        if discarded.type_().is_result() {
+        } else if discarded.type_().is_result() {
             self.environment
                 .warnings
                 .emit(Warning::ImplicitlyDiscardedResult {
                     location: discarded.location(),
                 });
+        } else if discarded.is_pure_value_constructor() {
+            self.environment.warnings.emit(Warning::UnusedValue {
+                location: discarded.location(),
+            })
         }
     }
 
