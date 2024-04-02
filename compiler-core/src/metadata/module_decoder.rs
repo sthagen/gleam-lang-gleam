@@ -9,6 +9,7 @@ use crate::{
         TypedConstantBitArraySegment, TypedConstantBitArraySegmentOption,
     },
     build::Origin,
+    line_numbers::LineNumbers,
     schema_capnp::{self as schema, *},
     type_::{
         self, expression::Implementations, AccessorsMap, Deprecation, FieldMap, ModuleInterface,
@@ -78,6 +79,7 @@ impl ModuleDecoder {
             ),
             accessors: read_hashmap!(reader.get_accessors()?, self, accessors_map),
             unused_imports: read_vec!(reader.get_unused_imports()?, self, src_span),
+            line_numbers: self.line_numbers(&reader.get_line_numbers()?)?,
         })
     }
 
@@ -523,6 +525,17 @@ impl ModuleDecoder {
             index: reader.get_index() as u64,
             label: reader.get_label()?.into(),
             type_: self.type_(&reader.get_type()?)?,
+        })
+    }
+
+    fn line_starts(&mut self, i: &u32) -> Result<u32> {
+        Ok(*i)
+    }
+
+    fn line_numbers(&mut self, reader: &line_numbers::Reader<'_>) -> Result<LineNumbers> {
+        Ok(LineNumbers {
+            length: reader.get_length(),
+            line_starts: read_vec!(reader.get_line_starts()?, self, line_starts),
         })
     }
 }

@@ -8,6 +8,7 @@ use crate::{
         TypedConstantBitArraySegmentOption,
     },
     build::Origin,
+    line_numbers::LineNumbers,
     type_::{
         self, expression::Implementations, Deprecation, ModuleInterface, Type, TypeConstructor,
         TypeValueConstructor, TypeValueConstructorField, TypeVariantConstructors, ValueConstructor,
@@ -57,6 +58,7 @@ fn constant_module(constant: TypedConstant) -> ModuleInterface {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     }
 }
 
@@ -87,6 +89,28 @@ fn empty_module() {
         values: HashMap::new(),
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
+    };
+    assert_eq!(roundtrip(&module), module);
+}
+
+#[test]
+fn with_line_numbers() {
+    let module = ModuleInterface {
+        contains_todo: false,
+        package: "some_package".into(),
+        origin: Origin::Src,
+        name: "one/two".into(),
+        types: HashMap::new(),
+        types_value_constructors: HashMap::new(),
+        values: HashMap::new(),
+        unused_imports: Vec::new(),
+        accessors: HashMap::new(),
+        line_numbers: LineNumbers::new(
+            "const a = 1
+        const b = 2
+        const c = 3",
+        ),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -114,6 +138,7 @@ fn module_with_private_type() {
         values: HashMap::new(),
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -133,6 +158,7 @@ fn module_with_unused_import() {
         ],
         accessors: HashMap::new(),
         values: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -160,6 +186,7 @@ fn module_with_app_type() {
         values: HashMap::new(),
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -187,6 +214,7 @@ fn module_with_fn_type() {
         values: HashMap::new(),
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -214,6 +242,7 @@ fn module_with_tuple_type() {
         values: HashMap::new(),
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -247,6 +276,7 @@ fn module_with_generic_type() {
             values: HashMap::new(),
             unused_imports: Vec::new(),
             accessors: HashMap::new(),
+            line_numbers: LineNumbers::new(""),
         }
     }
 
@@ -280,6 +310,7 @@ fn module_with_type_links() {
             values: HashMap::new(),
             unused_imports: Vec::new(),
             accessors: HashMap::new(),
+            line_numbers: LineNumbers::new(""),
         }
     }
 
@@ -308,6 +339,7 @@ fn module_type_to_constructors_mapping() {
         unused_imports: Default::default(),
         accessors: HashMap::new(),
         values: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -349,6 +381,7 @@ fn module_fn_value() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -391,6 +424,7 @@ fn deprecated_module_fn_value() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -431,6 +465,7 @@ fn private_module_fn_value() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -473,6 +508,7 @@ fn module_fn_value_regression() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -514,6 +550,7 @@ fn module_fn_value_with_field_map() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -554,6 +591,7 @@ fn record_value() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -597,6 +635,7 @@ fn record_value_with_field_map() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -658,6 +697,7 @@ fn accessors() {
             ),
         ]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -863,6 +903,7 @@ fn constant_var() {
             ),
         ]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -1049,6 +1090,7 @@ fn deprecated_type() {
         values: HashMap::new(),
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -1066,6 +1108,7 @@ fn contains_todo() {
         values: HashMap::new(),
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
+        line_numbers: LineNumbers::new(""),
     };
     assert_eq!(roundtrip(&module), module);
 }
@@ -1106,6 +1149,7 @@ fn module_fn_value_with_external_implementations() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -1147,6 +1191,7 @@ fn internal_module_fn() {
             },
         )]
         .into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     assert_eq!(roundtrip(&module), module);
@@ -1184,6 +1229,7 @@ fn type_variable_ids_in_constructors_are_shared() {
         unused_imports: Vec::new(),
         accessors: HashMap::new(),
         values: [].into(),
+        line_numbers: LineNumbers::new(""),
     };
 
     let expected = HashMap::from([(
