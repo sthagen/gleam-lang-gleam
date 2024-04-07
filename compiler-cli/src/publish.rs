@@ -58,9 +58,9 @@ core team.",
             println!(
                 "You are about to publish a release that is below version 1.0.0.
 
-Semantic versioning doesn't apply to version 0.x.x releases, so your 
+Semantic versioning doesn't apply to version 0.x.x releases, so your
 users will not be protected from breaking changes. This can result
-in a poor user experience where packages can break unexpectedly with 
+in a poor user experience where packages can break unexpectedly with
 updates that would normally be safe."
             );
             let should_publish = i_am_sure || cli::confirm("\nDo you wish to continue?")?;
@@ -227,6 +227,20 @@ fn do_build_hex_tarball(paths: &ProjectPaths, config: &PackageConfig) -> Result<
         .collect_vec();
     if !unfinished.is_empty() {
         return Err(Error::CannotPublishTodo { unfinished });
+    }
+
+    // If any of the modules in the package contain a leaked internal type then
+    // refuse to publish as the package is not yet finished.
+    let unfinished = built
+        .root_package
+        .modules
+        .iter()
+        .filter(|module| module.ast.type_info.leaks_internal_types)
+        .map(|module| module.name.clone())
+        .sorted()
+        .collect_vec();
+    if !unfinished.is_empty() {
+        return Err(Error::CannotPublishLeakedInternalType { unfinished });
     }
 
     // Collect all the files we want to include in the tarball
