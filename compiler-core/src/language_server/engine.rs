@@ -494,6 +494,21 @@ where
         start: lsp::Position,
         end: lsp::Position,
     ) -> Vec<lsp::CompletionItem> {
+        let mut direct_dep_packages: std::collections::HashSet<&EcoString> =
+            std::collections::HashSet::from_iter(
+                self.compiler.project_compiler.config.dependencies.keys(),
+            );
+        if !current_module.origin.is_src() {
+            // In tests we can import direct dev dependencies
+            direct_dep_packages.extend(
+                self.compiler
+                    .project_compiler
+                    .config
+                    .dev_dependencies
+                    .keys(),
+            )
+        }
+
         let already_imported: std::collections::HashSet<EcoString> =
             std::collections::HashSet::from_iter(current_module.dependencies_list());
         self.compiler
@@ -501,11 +516,13 @@ where
             .get_importable_modules()
             .iter()
             //
-            // You cannot import yourself
-            .filter(|(name, _)| *name != &current_module.name)
-            //
-            // You cannot import a module twice
-            .filter(|(name, _)| !already_imported.contains(*name))
+            // It is possible to import modules from dependencies of dependencies
+            // but it's not recommended so we don't include them in completions
+            .filter(|(_, module)| {
+                let is_root_or_prelude =
+                    module.package == self.root_package_name() || module.package.is_empty();
+                is_root_or_prelude || direct_dep_packages.contains(&module.package)
+            })
             //
             // src/ cannot import test/
             .filter(|(_, module)| module.origin.is_src() || !current_module.origin.is_src())
@@ -513,6 +530,12 @@ where
             // It is possible to import internal modules from other packages,
             // but it's not recommended so we don't include them in completions
             .filter(|(_, module)| module.package == self.root_package_name() || !module.is_internal)
+            //
+            // You cannot import a module twice
+            .filter(|(name, _)| !already_imported.contains(*name))
+            //
+            // You cannot import yourself
+            .filter(|(name, _)| *name != &current_module.name)
             //
             // Everything else we suggest as a completion
             .map(|(name, _)| lsp::CompletionItem {

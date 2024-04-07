@@ -6,7 +6,7 @@ use lsp_types::{
 
 use super::*;
 
-fn completion<'a>(tester: TestProject<'a>, position: Position) -> Vec<CompletionItem> {
+fn completion(tester: TestProject<'_>, position: Position) -> Vec<CompletionItem> {
     tester.at(position, |engine, param, src| {
         let response = engine.completion(param, src);
 
@@ -16,7 +16,7 @@ fn completion<'a>(tester: TestProject<'a>, position: Position) -> Vec<Completion
     })
 }
 
-fn completion_at_default_position<'a>(tester: TestProject<'a>) -> Vec<CompletionItem> {
+fn completion_at_default_position(tester: TestProject<'_>) -> Vec<CompletionItem> {
     let src = &format!("fn typing_in_here() {{\n  0\n}}\n {}", tester.src);
     let tester = TestProject { src, ..tester };
     completion(tester, Position::new(1, 0))
@@ -1141,6 +1141,167 @@ pub fn main() {
             })),
             ..Default::default()
         }]
+    );
+}
+
+#[test]
+fn completions_for_an_import_not_from_indirect_dependency() {
+    let code = "import gleam
+
+pub fn main() {
+  0
+}";
+    let dep = "";
+
+    assert_eq!(
+        completion(
+            TestProject::for_source(code)
+                .add_hex_module("example_module", dep)
+                .add_indirect_hex_module("indirect_module", ""),
+            Position::new(0, 10)
+        ),
+        vec![CompletionItem {
+            label: "example_module".into(),
+            kind: Some(CompletionItemKind::MODULE),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 7
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 13
+                    }
+                },
+                new_text: "example_module".into()
+            })),
+            ..Default::default()
+        }]
+    );
+}
+
+#[test]
+fn completions_for_an_import_not_from_dev_dependency() {
+    let code = "import gleam
+
+pub fn main() {
+  0
+}";
+    let dep = "";
+
+    assert_eq!(
+        completion(
+            TestProject::for_source(code)
+                .add_hex_module("example_module", dep)
+                .add_dev_hex_module("indirect_module", ""),
+            Position::new(0, 10)
+        ),
+        vec![CompletionItem {
+            label: "example_module".into(),
+            kind: Some(CompletionItemKind::MODULE),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 7
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 13
+                    }
+                },
+                new_text: "example_module".into()
+            })),
+            ..Default::default()
+        }]
+    );
+}
+
+#[test]
+fn completions_for_an_import_not_from_dev_dependency_in_test() {
+    let code = "import gleam
+
+pub fn main() {
+  0
+}";
+    let test = "import gleam
+
+pub fn main() {
+  0
+}
+";
+    let dep = "";
+
+    let (mut engine, position_param) = TestProject::for_source(code)
+        .add_test_module("my_test", test)
+        .add_hex_module("example_module", dep)
+        .add_dev_hex_module("indirect_module", "")
+        .positioned_with_io_in_test(Position::new(0, 10), "my_test");
+
+    let response = engine.completion(position_param, code.into());
+
+    let mut completions = response.result.unwrap().unwrap_or_default();
+    completions.sort_by(|a, b| a.label.cmp(&b.label));
+
+    assert_eq!(
+        completions,
+        vec![
+            CompletionItem {
+                label: "app".into(),
+                kind: Some(CompletionItemKind::MODULE),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 7
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 13
+                        }
+                    },
+                    new_text: "app".into()
+                })),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "example_module".into(),
+                kind: Some(CompletionItemKind::MODULE),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 7
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 13
+                        }
+                    },
+                    new_text: "example_module".into()
+                })),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "indirect_module".into(),
+                kind: Some(CompletionItemKind::MODULE),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 7
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 13
+                        }
+                    },
+                    new_text: "indirect_module".into()
+                })),
+                ..Default::default()
+            }
+        ]
     );
 }
 
