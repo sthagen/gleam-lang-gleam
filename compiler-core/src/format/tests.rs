@@ -3732,8 +3732,8 @@ fn commented_binop() {
     assert_format!(
         "fn main() {
   1
-  + // hello
-  2
+  // hello
+  + 2
 }
 "
     );
@@ -3742,10 +3742,10 @@ fn commented_binop() {
         "fn main() {
   // one
   1
-  + // two
-  2
-  + // three
-  3
+  // two
+  + 2
+  // three
+  + 3
 }
 "
     );
@@ -5784,6 +5784,138 @@ fn list_items_after_comment_are_not_indented() {
     // Wobble
     1 + 1,
     "wibble",
+  ]
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2990
+#[test]
+fn comments_are_not_moved_out_of_empty_list() {
+    assert_format!(
+        r#"pub fn main() {
+  // This is an empty list!
+  [
+    // Nothing here...
+  ]
+}
+"#
+    );
+}
+
+#[test]
+fn empty_lists_with_comment_inside_are_indented_properly() {
+    assert_format!(
+        r#"pub fn main() {
+  fun(
+    [
+      // Nothing here...
+    ],
+    wibble_wobble_wibble_wobble_wibble_wobble_wibble_wobble,
+    [
+      // Nothing here as well!
+    ],
+  )
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2890
+#[test]
+fn piped_blocks_are_not_needlessly_indented() {
+    assert_format!(
+        r#"pub fn main() {
+  #(
+    1,
+    {
+      "long enough to need to wrap. blah blah blah blah blah blah blah blah blah"
+    }
+      |> foo,
+    3,
+  )
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2890
+#[test]
+fn piped_lists_are_not_needlessly_indented() {
+    assert_format!(
+        r#"pub fn main() {
+  fun(
+    [
+      ["wibble wobble", "wibble", "wobble"],
+      ["long enough to go over", "line limit"],
+    ]
+      |> list.concat,
+    todo,
+  )
+}
+"#
+    );
+}
+
+#[test]
+fn comments_inside_nested_pipe_chain() {
+    assert_format!(
+        r#"pub fn main() {
+  fun(
+    thing
+      // A comment
+      |> wibble
+      // Another comment
+      |> wobble,
+    thing,
+  )
+}
+"#
+    );
+}
+
+#[test]
+fn comments_inside_nested_binop_chain() {
+    assert_format!(
+        r#"pub fn main() {
+  fun(
+    thing
+      // A comment
+      <> wibble
+      // Another comment
+      <> wobble,
+    thing,
+  )
+}
+"#
+    );
+}
+
+#[test]
+fn comments_inside_binop_chain() {
+    assert_format!(
+        r#"pub fn main() {
+  thing
+  // A comment
+  <> wibble
+  // Another comment
+  <> wobble
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2911
+#[test]
+fn comments_are_not_moved_out_of_const_lists() {
+    assert_format!(
+        r#"pub fn main() {
+  let x = [
+    // A comment!
+    1, 2, 3,
+    // Another comment!!
+    4, 5,
   ]
 }
 "#
