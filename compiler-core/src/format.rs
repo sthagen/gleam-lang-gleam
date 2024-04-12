@@ -1149,7 +1149,7 @@ impl<'comments> Formatter<'comments> {
         let constructor_doc = self.expr(constructor);
         let comments = self.pop_comments(spread.base.location().start);
         let spread_doc = commented("..".to_doc().append(self.expr(&spread.base)), comments);
-        let arg_docs = args.iter().map(|a| self.record_update_arg(a));
+        let arg_docs = args.iter().map(|a| self.record_update_arg(a).group());
         let all_arg_docs = once(spread_doc).chain(arg_docs);
         constructor_doc.append(wrap_args(all_arg_docs)).group()
     }
@@ -2175,7 +2175,8 @@ impl<'a> Documentable<'a> for &'a ArgNames {
 fn pub_(publicity: Publicity) -> Document<'static> {
     match publicity {
         Publicity::Public => "pub ".to_doc(),
-        Publicity::Private | Publicity::Internal => nil(),
+        Publicity::Private => nil(),
+        Publicity::Internal => "@internal".to_doc().append(line()).append("pub "),
     }
 }
 
