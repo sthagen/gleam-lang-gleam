@@ -11,6 +11,7 @@ mod external_types;
 mod function;
 mod guards;
 mod imports;
+mod pipeline;
 mod record_update;
 mod tuple;
 mod use_;
@@ -27,11 +28,11 @@ macro_rules! assert_format {
 
 #[macro_export]
 macro_rules! assert_format_rewrite {
-    ($src:expr, $output:expr  $(,)?) => {
+    ($src:expr, $expected:expr  $(,)?) => {
         let mut writer = String::new();
         $crate::format::pretty(&mut writer, &$src.into(), camino::Utf8Path::new("<stdin>"))
             .unwrap();
-        assert_eq!(writer, $output);
+        assert_eq!(writer, $expected);
     };
 }
 
@@ -4499,7 +4500,9 @@ fn empty_lines_work_with_trailing_space() {
   2
 }
 ";
-    assert_format!(expected); // Sanity check
+    // We first make extra sure we've not messed up the expected output and
+    // check it's well formatted.
+    assert_format!(expected);
 
     assert_format_rewrite!(src, expected);
 }
@@ -4539,7 +4542,10 @@ fn empty_lines_work_with_eol_normalisation() {
   2
 }
 ";
-    assert_format!(expected); // Sanity check
+
+    // We first make extra sure we've not messed up the expected output and
+    // check it's well formatted.
+    assert_format!(expected);
 
     assert_format_rewrite!(&src.replace('\n', "\r\n"), expected);
     assert_format_rewrite!(&src.replace('\n', "\r"), expected);
@@ -4580,9 +4586,12 @@ fn empty_lines_work_with_trailing_space_and_eol_normalisation() {
   2
 }
 ";
-    assert_format!(expected); // Sanity check
 
-    assert_format_rewrite!(&src.replace('\n', "\r\n"), expected);
+    // We first make extra sure we've not messed up the expected output and
+    // check it's well formatted.
+    assert_format!(expected);
+
+    assert_format_rewrite!(src.replace('\n', "\r\n"), expected);
     assert_format_rewrite!(&src.replace('\n', "\r"), expected);
 }
 #[test]

@@ -8,6 +8,7 @@ pub struct ModuleExtra {
     pub doc_comments: Vec<SrcSpan>,
     pub comments: Vec<SrcSpan>,
     pub empty_lines: Vec<u32>,
+    pub new_lines: Vec<u32>,
 }
 
 impl ModuleExtra {
