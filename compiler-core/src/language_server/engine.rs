@@ -3,7 +3,7 @@ use crate::{
         Arg, Definition, Function, Import, ModuleConstant, Publicity, SrcSpan, TypedDefinition,
         TypedExpr, TypedPattern,
     },
-    build::{Located, Module},
+    build::{type_constructor_from_modules, Located, Module},
     config::PackageConfig,
     io::{CommandExecutor, FileSystemReader, FileSystemWriter},
     language_server::{
@@ -11,7 +11,7 @@ use crate::{
     },
     line_numbers::LineNumbers,
     paths::ProjectPaths,
-    type_::{pretty::Printer, PreludeType, Type, ValueConstructorVariant},
+    type_::{pretty::Printer, PreludeType, Type, TypeConstructor, ValueConstructorVariant},
     Error, Result, Warning,
 };
 use camino::Utf8PathBuf;
@@ -154,7 +154,9 @@ where
                 None => return Ok(None),
             };
 
-            let location = match node.definition_location() {
+            let location = match node
+                .definition_location(this.compiler.project_compiler.get_importable_modules())
+            {
                 Some(location) => location,
                 None => return Ok(None),
             };
@@ -225,6 +227,8 @@ where
                 }
 
                 Located::Arg(_) => None,
+
+                Located::Annotation(_, _) => Some(this.completion_types(module)),
             };
 
             Ok(completions)
@@ -297,6 +301,18 @@ where
                 }
                 Located::Arg(arg) => Some(hover_for_function_argument(arg, lines)),
                 Located::FunctionBody(_) => None,
+                Located::Annotation(annotation, type_) => {
+                    let type_constructor = type_constructor_from_modules(
+                        this.compiler.project_compiler.get_importable_modules(),
+                        type_.clone(),
+                    );
+                    Some(hover_for_annotation(
+                        annotation,
+                        &type_,
+                        type_constructor,
+                        lines,
+                    ))
+                }
             })
         })
     }
@@ -560,7 +576,7 @@ where
 fn type_completion(
     module: Option<&EcoString>,
     name: &str,
-    type_: &crate::type_::TypeConstructor,
+    type_: &TypeConstructor,
 ) -> lsp::CompletionItem {
     let label = match module {
         Some(module) => format!("{module}.{name}"),
@@ -671,6 +687,29 @@ fn hover_for_function_argument(argument: &Arg<Arc<Type>>, line_numbers: LineNumb
     Hover {
         contents: HoverContents::Scalar(MarkedString::String(contents)),
         range: Some(src_span_to_lsp_range(argument.location, &line_numbers)),
+    }
+}
+
+fn hover_for_annotation(
+    location: SrcSpan,
+    annotation_type: &Type,
+    type_constructor: Option<&TypeConstructor>,
+    line_numbers: LineNumbers,
+) -> Hover {
+    let empty_str = EcoString::from("");
+    let documentation = type_constructor
+        .and_then(|t| t.documentation.as_ref())
+        .unwrap_or(&empty_str);
+    let type_ = Printer::new().pretty_print(annotation_type, 0);
+    let contents = format!(
+        "```gleam
+{type_}
+```
+{documentation}"
+    );
+    Hover {
+        contents: HoverContents::Scalar(MarkedString::String(contents)),
+        range: Some(src_span_to_lsp_range(location, &line_numbers)),
     }
 }
 

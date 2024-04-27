@@ -162,6 +162,10 @@
   removed if it would otherwise be left blank.
   ([Milco Kats](https://github.com/katsmil))
 
+- Hover for type annotations is now separate from the thing being annotated ([Ameen Radwan](https://github.com/Acepie))
+
+- Go to definition now works for direct type annotations ([Ameen Radwan](https://github.com/Acepie))
+
 ### Bug Fixes
 
 - Fixed [RUSTSEC-2021-0145](https://rustsec.org/advisories/RUSTSEC-2021-0145) by
@@ -187,3 +191,10 @@
 - Fixed a bug where TypeScript definitions files would use `null` instead of
   `undefined`.
   ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where unreachable infinite cases would not be detected when
+  after a discard or variable pattern.
+  ([Ameen Radwan](https://github.com/Acepie)) and ([Pi-Cla](https://github.com/Pi-Cla))
+
+- Fixed a bug where module imports in guard clauses would not be generated
+  correctly for js target. ([Ameen Radwan](https://github.com/Acepie))

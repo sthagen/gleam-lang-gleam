@@ -55,11 +55,11 @@ jobs:
             target: aarch64-unknown-linux-musl
             use-cross: true
             run-integration-tests: false # Cannot run aarch64 binaries on x86_64
-          - os: macos-12  # intel
+          - os: macos-12 # intel
             target: x86_64-apple-darwin
             use-cross: false
             run-integration-tests: true
-          - os: macos-14  # aarch64
+          - os: macos-14 # aarch64
             toolchain: stable
             target: aarch64-apple-darwin
             use-cross: false
@@ -169,7 +169,6 @@ jobs:
         env:
           GLEAM_COMMAND: gleam
 
-
       - name: test/external_only_erlang
         run: ./test.sh
         working-directory: ./test/external_only_erlang
@@ -273,11 +272,7 @@ jobs:
           profile: minimal
           components: rustfmt
 
-      - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+      - run: cargo fmt --all -- --check
 
   validate-deps:
     name: validate-deps
@@ -303,10 +298,7 @@ jobs:
           echo `pwd` >> $GITHUB_PATH
 
       - name: Validate deps
-        uses: actions-rs/cargo@v1
-        with:
-          command: deny
-          args: check
+        run: cargo deny check
 
   lint-build:
     name: lint-build
@@ -331,15 +323,9 @@ jobs:
           key: v1-linux-gnu
 
       - name: Run linter
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --workspace
+        run: cargo clippy --workspace
 
-      - name: Build binary
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
+      - run: cargo build
 
       - name: Upload artifact (Ubuntu)
         uses: actions/upload-artifact@v4
