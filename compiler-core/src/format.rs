@@ -303,7 +303,7 @@ impl<'comments> Formatter<'comments> {
                 }
                 // It shouldn't really be possible for a non import to be here so
                 // we just return a default value.
-                _ => std::cmp::Ordering::Equal,
+                _ => Ordering::Equal,
             })
             .map(|import| self.targeted_definition(import));
 
@@ -558,7 +558,7 @@ impl<'comments> Formatter<'comments> {
 
         let comments = self.pop_comments(location.end);
         match printed_comments(comments, false) {
-            None => tuple_doc.append(break_(",", "")).append(")"),
+            None => tuple_doc.append(break_(",", "")).append(")").group(),
             Some(comments) => tuple_doc
                 .append(break_(",", "").nest(INDENT))
                 .append(comments)

@@ -21,12 +21,6 @@ enum Index<'a> {
 }
 
 #[derive(Debug)]
-pub struct Subjects<'a> {
-    pub values: Vec<Document<'a>>,
-    pub assignments: Vec<(Document<'a>, Document<'a>)>,
-}
-
-#[derive(Debug)]
 pub(crate) struct Generator<'module_ctx, 'expression_gen, 'a> {
     pub expression_generator: &'expression_gen mut expression::Generator<'module_ctx>,
     path: Vec<Index<'a>>,
@@ -420,7 +414,7 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
                     // let prefix = "foo";
                     // ^^^^^^^^^^^^^^^^^^^ we're adding this assignment inside the if clause
                     //                     the case branch gets translated into.
-                    self.push_assignment(super::expression::string(left_side_string), left);
+                    self.push_assignment(expression::string(left_side_string), left);
                 }
                 Ok(())
             }
@@ -800,7 +794,7 @@ impl<'a> Check<'a> {
                 path,
                 prefix,
             } => {
-                let prefix = super::expression::string(prefix);
+                let prefix = expression::string(prefix);
                 if match_desired {
                     docvec![subject, path, ".startsWith(", prefix, ")"]
                 } else {

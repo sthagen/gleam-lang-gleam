@@ -12,7 +12,7 @@
 
   The `manifest.toml` file is corrupt.
 
-  Hint: Please fun `gleam update` to fix it.
+  Hint: Please run `gleam update` to fix it.
   ```
 
   ([zahash](https://github.com/zahash))
@@ -191,6 +191,8 @@
 
 - Go to definition now works for import statements. ([Ameen Radwan](https://github.com/Acepie))
 
+- Hover now works for unqualified imports. ([Ameen Radwan](https://github.com/Acepie))
+
 ### Bug Fixes
 
 - Fixed [RUSTSEC-2021-0145](https://rustsec.org/advisories/RUSTSEC-2021-0145) by
@@ -223,3 +225,15 @@
 
 - Fixed a bug where module imports in guard clauses would not be generated
   correctly for js target. ([Ameen Radwan](https://github.com/Acepie))
+
+- Fixed a bug where formatting constant lists of tuples would be force the tuples
+  to be broken across multiple lines, even when they could fit on a single line.
+  ([Isaac Harris-Holt](https://github.com/isaacharrisholt))
+
+- Fixed a bug where floating points in scientific notation with no trailing
+  zeros would generate invalid Erlang code.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where having utf8 symbols in `gleam.toml`'s description value
+  would result in an HTTP 500 error when running `gleam publish`.
+  ([inoas](https://github.com/inoas))

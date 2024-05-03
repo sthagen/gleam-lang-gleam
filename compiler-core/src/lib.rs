@@ -1,6 +1,5 @@
 #![warn(
     clippy::all,
-    clippy::doc_markdown,
     clippy::dbg_macro,
     clippy::todo,
     clippy::mem_forget,
@@ -46,6 +45,7 @@
     unused_results
 )]
 #![allow(
+    clippy::to_string_trait_impl,
     clippy::match_single_binding,
     clippy::match_like_matches_macro,
     clippy::inconsistent_struct_constructor,
