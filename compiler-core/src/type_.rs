@@ -152,6 +152,15 @@ impl Type {
         }
     }
 
+    #[must_use]
+    fn is_fun(&self) -> bool {
+        match self {
+            Self::Fn { .. } => true,
+            Type::Var { type_ } => type_.borrow().is_fun(),
+            _ => false,
+        }
+    }
+
     pub fn is_nil(&self) -> bool {
         match self {
             Self::Named { module, name, .. } if "Nil" == name && is_prelude_module(module) => true,
@@ -829,6 +838,14 @@ impl TypeVar {
         match self {
             Self::Link { type_ } => type_.fn_types(),
             Self::Unbound { .. } | Self::Generic { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_fun(&self) -> bool {
+        match self {
+            TypeVar::Link { type_ } => type_.is_fun(),
+            TypeVar::Unbound { .. } | TypeVar::Generic { .. } => false,
         }
     }
 

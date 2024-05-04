@@ -726,19 +726,18 @@ pub fn unify(t1: Arc<Type>, t2: Arc<Type>) -> Result<(), UnifyError> {
                 retrn: retrn2,
                 ..
             },
-        ) if args1.len() == args2.len() => {
-            for (a, b) in args1.iter().zip(args2) {
-                unify(a.clone(), b.clone()).map_err(|_| UnifyError::CouldNotUnify {
-                    expected: t1.clone(),
-                    given: t2.clone(),
-                    situation: None,
-                })?;
+        ) => {
+            if args1.len() != args2.len() {
+                Err(unify_wrong_arity(&t1, args1.len(), &t2, args2.len()))?
             }
-            unify(retrn1.clone(), retrn2.clone()).map_err(|_| UnifyError::CouldNotUnify {
-                expected: t1.clone(),
-                given: t2.clone(),
-                situation: None,
-            })
+
+            for (i, (a, b)) in args1.iter().zip(args2).enumerate() {
+                unify(a.clone(), b.clone())
+                    .map_err(|_| unify_wrong_arguments(&t1, a, &t2, b, i))?;
+            }
+
+            unify(retrn1.clone(), retrn2.clone())
+                .map_err(|_| unify_wrong_returns(&t1, retrn1, &t2, retrn2))
         }
 
         _ => Err(UnifyError::CouldNotUnify {

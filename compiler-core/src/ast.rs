@@ -1765,7 +1765,7 @@ pub enum TodoKind {
 
 #[derive(Debug, Default)]
 pub struct GroupedStatements {
-    pub functions: Vec<Function<(), UntypedExpr>>,
+    pub functions: Vec<UntypedFunction>,
     pub constants: Vec<UntypedModuleConstant>,
     pub custom_types: Vec<CustomType<()>>,
     pub imports: Vec<Import<()>>,
@@ -1830,6 +1830,14 @@ impl<T, E> Statement<T, E> {
     #[must_use]
     pub fn is_expression(&self) -> bool {
         matches!(self, Self::Expression(..))
+    }
+
+    #[must_use]
+    pub(crate) fn is_use(&self) -> bool {
+        match self {
+            Self::Use(_) => true,
+            _ => false,
+        }
     }
 }
 
