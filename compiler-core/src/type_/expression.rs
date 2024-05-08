@@ -178,10 +178,17 @@ pub(crate) struct ExprTyper<'a, 'b> {
 
     // Type hydrator for creating types from annotations
     pub(crate) hydrator: Hydrator,
+
+    // Accumulated errors found while typing the expression
+    pub(crate) errors: &'a mut Vec<Error>,
 }
 
 impl<'a, 'b> ExprTyper<'a, 'b> {
-    pub fn new(environment: &'a mut Environment<'b>, definition: FunctionDefinition) -> Self {
+    pub fn new(
+        environment: &'a mut Environment<'b>,
+        definition: FunctionDefinition,
+        errors: &'a mut Vec<Error>,
+    ) -> Self {
         let mut hydrator = Hydrator::new();
 
         let implementations = Implementations {
@@ -201,6 +208,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             environment,
             implementations,
             current_function_definition: definition,
+            errors,
         }
     }
 
@@ -940,7 +948,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             .into_iter()
             .map(|s| {
                 self.infer_bit_segment(*s.value, s.options, s.location, |env, expr| {
-                    env.infer_const(&None, expr)
+                    Ok(env.infer_const(&None, expr))
                 })
             })
             .try_collect()?;
@@ -1596,7 +1604,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             }
 
             ClauseGuard::Constant(constant) => {
-                self.infer_const(&None, constant).map(ClauseGuard::Constant)
+                Ok(ClauseGuard::Constant(self.infer_const(&None, constant)))
             }
         }
     }
@@ -2064,14 +2072,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
-    // TODO: extract the type annotation checking into a crate::analyse::infer_module_const
-    // function that uses this function internally
-    pub fn infer_const(
-        &mut self,
-        annotation: &Option<TypeAst>,
-        value: UntypedConstant,
-    ) -> Result<TypedConstant, Error> {
-        let inferred = match value {
+    // helper for infer_const to get the value of a constant ignoring annotations
+    fn infer_const_value(&mut self, value: UntypedConstant) -> Result<TypedConstant, Error> {
+        match value {
             Constant::Int {
                 location, value, ..
             } => Ok(Constant::Int { location, value }),
@@ -2247,7 +2250,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             location,
                             implicit,
                         } = arg;
-                        let value = self.infer_const(&None, value)?;
+                        let value = self.infer_const(&None, value);
                         unify(typ.clone(), value.type_())
                             .map_err(|e| convert_unify_error(e, value.location()))?;
                         Ok(CallArg {
@@ -2300,16 +2303,72 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     ValueConstructorVariant::Record { .. } => unreachable!(),
                 }
             }
-        }?;
 
-        // Check type annotation is accurate.
-        if let Some(ann) = annotation {
-            let const_ann = self.type_from_ast(ann)?;
-            unify(const_ann, inferred.type_())
-                .map_err(|e| convert_unify_error(e, inferred.location()))?;
-        };
+            Constant::Invalid { .. } => panic!("invalid constants can not be in an untyped ast"),
+        }
+    }
 
-        Ok(inferred)
+    pub fn infer_const(
+        &mut self,
+        annotation: &Option<TypeAst>,
+        value: UntypedConstant,
+    ) -> TypedConstant {
+        let loc = value.location();
+        let inferred = self.infer_const_value(value);
+
+        // Get the type of the annotation if it exists and validate it against the inferred value.
+        let annotation = annotation.as_ref().map(|a| self.type_from_ast(a));
+        match (annotation, inferred) {
+            // No annotation and valid inferred value.
+            (None, Ok(inferred)) => inferred,
+            // No annotation and invalid inferred value. Use an unbound variable hole.
+            (None, Err(e)) => {
+                self.errors.push(e);
+                Constant::Invalid {
+                    location: loc,
+                    typ: self.new_unbound_var(),
+                }
+            }
+            // Type annotation and inferred value are valid. Ensure they are unifiable.
+            // NOTE: if the types are not unifiable we use the annotated type.
+            (Some(Ok(const_ann)), Ok(inferred)) => {
+                if let Err(e) = unify(const_ann.clone(), inferred.type_())
+                    .map_err(|e| convert_unify_error(e, inferred.location()))
+                {
+                    self.errors.push(e);
+                    Constant::Invalid {
+                        location: loc,
+                        typ: const_ann,
+                    }
+                } else {
+                    inferred
+                }
+            }
+            // Type annotation is valid but not the inferred value. Place a placeholder constant with the annotation type.
+            // This should limit the errors to only the definition.
+            (Some(Ok(const_ann)), Err(value_err)) => {
+                self.errors.push(value_err);
+                Constant::Invalid {
+                    location: loc,
+                    typ: const_ann,
+                }
+            }
+            // Type annotation is invalid but the inferred value is ok. Use the inferred type.
+            (Some(Err(annotation_err)), Ok(inferred)) => {
+                self.errors.push(annotation_err);
+                inferred
+            }
+            // Type annotation and inferred value are invalid. Place a placeholder constant with an unbound type.
+            // This should limit the errors to only the definition assuming the constant is used consistently.
+            (Some(Err(annotation_err)), Err(value_err)) => {
+                self.errors.push(annotation_err);
+                self.errors.push(value_err);
+                Constant::Invalid {
+                    location: loc,
+                    typ: self.new_unbound_var(),
+                }
+            }
+        }
     }
 
     fn infer_const_tuple(
@@ -2320,7 +2379,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let mut elements = Vec::with_capacity(untyped_elements.len());
 
         for element in untyped_elements {
-            let element = self.infer_const(&None, element)?;
+            let element = self.infer_const(&None, element);
             elements.push(element);
         }
 
@@ -2336,7 +2395,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let mut elements = Vec::with_capacity(untyped_elements.len());
 
         for element in untyped_elements {
-            let element = self.infer_const(&None, element)?;
+            let element = self.infer_const(&None, element);
             unify(typ.clone(), element.type_())
                 .map_err(|e| convert_unify_error(e, element.location()))?;
             elements.push(element);
