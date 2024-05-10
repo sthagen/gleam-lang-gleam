@@ -58,6 +58,11 @@
 
   Hint: Rename this module and try again.
   ```
+- New subcommand `gleam hex revert` added. ([Pi-Cla](https://github.com/Pi-Cla))
+  * You can specify the options like this: `gleam hex revert --package gling --version 1.2.3`
+  * A new package can be reverted or updated within 24 hours of it's initial publish,
+  a new version of an existing package can be reverted or updated within one hour.
+  * You could already update packages even before this release by running: `gleam publish` again.
 
 ### Compiler
 
@@ -216,9 +221,9 @@
   branch is going to match with this value.
 
 - The compiler will now continue module analysis when there are errors in top
-  level constant definitions or type aliases. This means that when these errors
-  occur the compiler will continue analysing the rest of the code to find other
-  errors and type information.
+  level constant definitions, custom type definitions, imports or type aliases.
+  This means that when these errors occur the compiler will continue analysing
+  the rest of the code to find other errors and type information.
 
   When using the build tool this means that the programmer will be shown
   multiple error messages when there are multiple problems in a module.
