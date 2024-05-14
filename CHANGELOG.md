@@ -64,6 +64,20 @@
   a new version of an existing package can be reverted or updated within one hour.
   * You could already update packages even before this release by running: `gleam publish` again.
 
+- When the user tries to replace a release without the `--replace` flag
+  the error message now mentions the lack of a `--replace` flag.
+  ([Pi-Cla](https://github.com/Pi-Cla))
+
+  ```
+  error: Version already published
+
+  Version v1.0.0 has already been published.
+  This release has been recently published so you can replace it
+  or you can publish it using a different version number
+
+  Hint: Please add the --replace flag if you want to replace the release.
+  ```
+
 ### Compiler
 
 - The compiler will now raise a warning for `let assert` assignments where the
@@ -221,9 +235,9 @@
   branch is going to match with this value.
 
 - The compiler will now continue module analysis when there are errors in top
-  level constant definitions, custom type definitions, imports or type aliases.
-  This means that when these errors occur the compiler will continue analysing
-  the rest of the code to find other errors and type information.
+  level definitions. This means that when these errors occur the compiler will
+  continue analysing the rest of the code to find other errors and type
+  information.
 
   When using the build tool this means that the programmer will be shown
   multiple error messages when there are multiple problems in a module.

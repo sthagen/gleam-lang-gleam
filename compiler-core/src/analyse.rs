@@ -6,9 +6,9 @@ use crate::{
     ast::{
         self, BitArrayOption, CustomType, Definition, DefinitionLocation, Function,
         GroupedStatements, Import, ModuleConstant, Publicity, RecordConstructor,
-        RecordConstructorArg, SrcSpan, TypeAlias, TypeAst, TypeAstConstructor, TypeAstFn,
-        TypeAstHole, TypeAstTuple, TypeAstVar, TypedDefinition, TypedFunction, TypedModule,
-        UntypedArg, UntypedFunction, UntypedModule, UntypedStatement,
+        RecordConstructorArg, SrcSpan, Statement, TypeAlias, TypeAst, TypeAstConstructor,
+        TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, TypedDefinition, TypedExpr,
+        TypedFunction, TypedModule, UntypedArg, UntypedFunction, UntypedModule, UntypedStatement,
     },
     build::{Origin, Target},
     call_graph::{into_dependency_order, CallGraphNode},
@@ -19,7 +19,7 @@ use crate::{
         self,
         environment::*,
         error::{convert_unify_error, Error, MissingAnnotation},
-        expression::{ExprTyper, FunctionDefinition},
+        expression::{ExprTyper, FunctionDefinition, Implementations},
         fields::{FieldMap, FieldMapBuilder},
         hydrator::Hydrator,
         prelude::*,
@@ -113,7 +113,7 @@ impl TargetSupport {
 }
 
 #[derive(Debug)]
-pub struct InferenceFailure {
+pub struct AnalysisFailure {
     // Right now this is an option because we don't complete the module typing on error
     // Once we add proper type holes and always return a module this should not be an option
     pub ast: Option<TypedModule>,
@@ -121,11 +121,11 @@ pub struct InferenceFailure {
     pub errors: Vec1<Error>,
 }
 
-impl From<Error> for InferenceFailure {
+impl From<Error> for AnalysisFailure {
     // Used to create InferenceFailure from a singe error.
     // Should not be needed once we start actually collecting all the errors.
     fn from(error: Error) -> Self {
-        InferenceFailure {
+        AnalysisFailure {
             ast: None,
             errors: vec1::vec1![error],
         }
@@ -157,7 +157,7 @@ impl<'a, A> ModuleAnalyzerConstructor<'a, A> {
         module: UntypedModule,
         line_numbers: LineNumbers,
         src_path: Utf8PathBuf,
-    ) -> Result<TypedModule, InferenceFailure> {
+    ) -> Result<TypedModule, AnalysisFailure> {
         ModuleAnalyzer {
             target: self.target,
             ids: self.ids,
@@ -201,7 +201,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
     pub fn infer_module(
         mut self,
         mut module: UntypedModule,
-    ) -> Result<TypedModule, InferenceFailure> {
+    ) -> Result<TypedModule, AnalysisFailure> {
         validate_module_name(&self.module_name)?;
 
         let documentation = std::mem::take(&mut module.documentation);
@@ -260,28 +260,11 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             // mutual recursion.
 
             for definition in group {
-                match definition {
-                    CallGraphNode::Function(f) => {
-                        let statement = self.infer_function(f, &mut env);
-                        match statement {
-                            Ok(statement) => working_group.push(statement),
-                            Err(e) => {
-                                // TODO: We do this to maintain any constant related errors within the function
-                                // Once function inference is continuable this entire match will be removed
-                                let mut errs = Vec1::new(e);
-                                errs.append(&mut self.errors);
-                                errs.sort_by_key(|e| e.start_location());
-                                return Err(InferenceFailure {
-                                    ast: None,
-                                    errors: errs,
-                                });
-                            }
-                        }
-                    }
-                    CallGraphNode::ModuleConstant(c) => {
-                        working_group.push(self.infer_module_constant(c, &mut env));
-                    }
-                }
+                let def = match definition {
+                    CallGraphNode::Function(f) => self.infer_function(f, &mut env),
+                    CallGraphNode::ModuleConstant(c) => self.infer_module_constant(c, &mut env),
+                };
+                working_group.push(def);
             }
 
             // Now that the entire group has been inferred, generalise their types.
@@ -345,7 +328,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
         match Vec1::try_from_vec(self.errors) {
             Err(_) => Ok(ast),
-            Ok(errors) => Err(InferenceFailure {
+            Ok(errors) => Err(AnalysisFailure {
                 ast: Some(ast),
                 errors,
             }),
@@ -417,11 +400,14 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         })
     }
 
+    // TODO: Extract this into a class of its own! Or perhaps it just wants some
+    // helper methods extracted. There's a whole bunch of state in this one
+    // function, and it does a handful of things.
     fn infer_function(
         &mut self,
         f: UntypedFunction,
         environment: &mut Environment<'_>,
-    ) -> Result<TypedDefinition, Error> {
+    ) -> TypedDefinition {
         let Function {
             documentation: doc,
             location,
@@ -438,14 +424,19 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             implementations: _,
         } = f;
         let target = environment.target;
+        let body_location = body.last().location();
         let preregistered_fn = environment
             .get_variable(&name)
             .expect("Could not find preregistered type for function");
         let field_map = preregistered_fn.field_map().cloned();
         let preregistered_type = preregistered_fn.type_.clone();
-        let (args_types, return_type) = preregistered_type
+        let (prereg_args_types, prereg_return_type) = preregistered_type
             .fn_types()
             .expect("Preregistered type for fn was not a fn");
+
+        // Ensure that folks are not writing inline JavaScript expressions as
+        // the implementation for JS externals.
+        self.assert_valid_javascript_external(&name, external_javascript.as_ref(), location);
 
         // Find the external implementation for the current target, if one has been given.
         let external =
@@ -453,19 +444,19 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         let (impl_module, impl_function) = implementation_names(external, &self.module_name, &name);
 
         // The function must have at least one implementation somewhere.
-        ensure_function_has_an_implementation(
+        let has_implementation = self.ensure_function_has_an_implementation(
             &body,
             &external_erlang,
             &external_javascript,
             location,
-        )?;
+        );
 
         if external.is_some() {
             // There was an external implementation, so type annotations are
             // mandatory as the Gleam implementation may be absent, and because we
             // think you should always specify types for external functions for
             // clarity + to avoid accidental mistakes.
-            ensure_annotations_present(&arguments, return_annotation.as_ref(), location)?;
+            self.ensure_annotations_present(&arguments, return_annotation.as_ref(), location);
         }
 
         let definition = FunctionDefinition {
@@ -474,37 +465,66 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             has_javascript_external: external_javascript.is_some(),
         };
 
+        let typed_args = arguments
+            .into_iter()
+            .zip(&prereg_args_types)
+            .map(|(a, t)| a.set_type(t.clone()))
+            .collect_vec();
+
         // Infer the type using the preregistered args + return types as a starting point
-        let (type_, args, body, implementations) = environment.in_new_scope(|environment| {
-            let args_types = arguments
-                .into_iter()
-                .zip(&args_types)
-                .map(|(a, t)| a.set_type(t.clone()))
-                .collect();
+        let result = environment.in_new_scope(|environment| {
             let mut expr_typer = ExprTyper::new(environment, definition, &mut self.errors);
             expr_typer.hydrator = self
                 .hydrators
                 .remove(&name)
                 .expect("Could not find hydrator for fn");
 
-            let (args, body) =
-                expr_typer.infer_fn_with_known_types(args_types, body, Some(return_type))?;
+            let (args, body) = expr_typer.infer_fn_with_known_types(
+                typed_args.clone(),
+                body,
+                Some(prereg_return_type.clone()),
+            )?;
             let args_types = args.iter().map(|a| a.type_.clone()).collect();
             let typ = fn_(args_types, body.last().type_());
-            Ok((typ, args, body, expr_typer.implementations))
-        })?;
+            Ok((typ, body, expr_typer.implementations))
+        });
+
+        // If we could not successfully infer the type etc information of the
+        // function then register the error and continue anaylsis using the best
+        // information that we have, so we can still learn about the rest of the
+        // module.
+        let (type_, body, implementations) = match result {
+            Ok((type_, body, implementations)) => (type_, body, implementations),
+            Err(error) => {
+                self.errors.push(error);
+                let type_ = preregistered_type.clone();
+                let body = Vec1::new(Statement::Expression(TypedExpr::Todo {
+                    type_: prereg_return_type.clone(),
+                    location: body_location,
+                    message: None,
+                }));
+                let implementations = Implementations::supporting_all();
+                (type_, body, implementations)
+            }
+        };
 
         // Assert that the inferred type matches the type of any recursive call
-        unify(preregistered_type, type_.clone()).map_err(|e| convert_unify_error(e, location))?;
+        if let Err(error) = unify(preregistered_type.clone(), type_) {
+            self.errors.push(convert_unify_error(error, location));
+        }
 
         // Ensure that the current target has an implementation for the function.
         // This is done at the expression level while inferring the function body, but we do it again
         // here as externally implemented functions may not have a Gleam body.
-        if publicity.is_importable()
+        //
+        // We don't emit this error if there is no implementation, as this would
+        // have already emitted an error above.
+        if has_implementation
+            && publicity.is_importable()
             && environment.target_support.is_enforced()
             && !implementations.supports(target)
         {
-            return Err(Error::UnsupportedPublicFunctionTarget {
+            self.errors.push(Error::UnsupportedPublicFunctionTarget {
                 name: name.clone(),
                 target,
                 location,
@@ -516,7 +536,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             name: impl_function,
             field_map,
             module: impl_module,
-            arity: args.len(),
+            arity: typed_args.len(),
             location,
             implementations,
         };
@@ -524,28 +544,103 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         environment.insert_variable(
             name.clone(),
             variant,
-            type_.clone(),
+            preregistered_type.clone(),
             publicity,
             deprecation.clone(),
         );
 
-        Ok(Definition::Function(Function {
+        Definition::Function(Function {
             documentation: doc,
             location,
             name,
             publicity,
             deprecation,
-            arguments: args,
+            arguments: typed_args,
             end_position: end_location,
             return_annotation,
-            return_type: type_
+            return_type: preregistered_type
                 .return_type()
                 .expect("Could not find return type for fn"),
             body,
             external_erlang,
             external_javascript,
             implementations,
-        }))
+        })
+    }
+
+    fn assert_valid_javascript_external(
+        &mut self,
+        function_name: &EcoString,
+        external_javascript: Option<&(EcoString, EcoString)>,
+        location: SrcSpan,
+    ) {
+        use regex::Regex;
+
+        static MODULE: OnceLock<Regex> = OnceLock::new();
+        static FUNCTION: OnceLock<Regex> = OnceLock::new();
+
+        let (module, function) = match external_javascript {
+            None => return,
+            Some(external) => external,
+        };
+        if !MODULE
+            .get_or_init(|| Regex::new("^[a-zA-Z0-9\\./:_-]+$").expect("regex"))
+            .is_match(module)
+        {
+            self.errors.push(Error::InvalidExternalJavascriptModule {
+                location,
+                module: module.clone(),
+                name: function_name.clone(),
+            });
+        }
+        if !FUNCTION
+            .get_or_init(|| Regex::new("^[a-zA-Z_][a-zA-Z0-9_]*$").expect("regex"))
+            .is_match(function)
+        {
+            self.errors.push(Error::InvalidExternalJavascriptFunction {
+                location,
+                function: function.clone(),
+                name: function_name.clone(),
+            });
+        }
+    }
+
+    fn ensure_annotations_present(
+        &mut self,
+        arguments: &[UntypedArg],
+        return_annotation: Option<&TypeAst>,
+        location: SrcSpan,
+    ) {
+        for arg in arguments {
+            if arg.annotation.is_none() {
+                self.errors.push(Error::ExternalMissingAnnotation {
+                    location: arg.location,
+                    kind: MissingAnnotation::Parameter,
+                });
+            }
+        }
+        if return_annotation.is_none() {
+            self.errors.push(Error::ExternalMissingAnnotation {
+                location,
+                kind: MissingAnnotation::Return,
+            });
+        }
+    }
+
+    fn ensure_function_has_an_implementation(
+        &mut self,
+        body: &Vec1<UntypedStatement>,
+        external_erlang: &Option<(EcoString, EcoString)>,
+        external_javascript: &Option<(EcoString, EcoString)>,
+        location: SrcSpan,
+    ) -> bool {
+        match (external_erlang, external_javascript) {
+            (None, None) if body.first().is_placeholder() => {
+                self.errors.push(Error::NoImplementation { location });
+                false
+            }
+            _ => true,
+        }
     }
 
     fn analyse_import(
@@ -847,9 +942,17 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             documentation,
             ..
         } = t;
+        // We exit early here as we don't yet have a good way to handle the two
+        // duplicate definitions in the later pass of the analyser which
+        // register the constructor values for the types. The latter would end up
+        // overwriting the former, but here in type registering we keep the
+        // former. I think we want to really keep the former both times.
+        // The fact we can't straightforwardly do this indicated to me that we
+        // could improve our approach here somewhat.
         self.assert_unique_type_name(name, *location)?;
+
         let mut hydrator = Hydrator::new();
-        let parameters = make_type_vars(parameters, *location, &mut hydrator, environment)?;
+        let parameters = self.make_type_vars(parameters, *location, &mut hydrator, environment);
 
         hydrator.clear_ridgid_type_names();
 
@@ -874,18 +977,20 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             args: parameters.clone(),
         });
         let _ = self.hydrators.insert(name.clone(), hydrator);
-        environment.insert_type_constructor(
-            name.clone(),
-            TypeConstructor {
-                origin: *location,
-                module: self.module_name.clone(),
-                deprecation: deprecation.clone(),
-                parameters,
-                publicity,
-                typ,
-                documentation: documentation.clone(),
-            },
-        )?;
+        environment
+            .insert_type_constructor(
+                name.clone(),
+                TypeConstructor {
+                    origin: *location,
+                    module: self.module_name.clone(),
+                    deprecation: deprecation.clone(),
+                    parameters,
+                    publicity,
+                    typ,
+                    documentation: documentation.clone(),
+                },
+            )
+            .expect("name uniqueness checked above");
 
         if *opaque && constructors.is_empty() {
             environment
@@ -924,8 +1029,8 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         // Use the hydrator to convert the AST into a type, erroring if the AST was invalid
         // in some fashion.
         let mut hydrator = Hydrator::new();
-        let mut tryblock = || {
-            let parameters = make_type_vars(args, *location, &mut hydrator, environment)?;
+        let parameters = self.make_type_vars(args, *location, &mut hydrator, environment);
+        let tryblock = || {
             hydrator.disallow_new_type_variables();
             let typ = hydrator.type_from_ast(resolved_type, environment)?;
 
@@ -958,6 +1063,27 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         if publicity.is_private() {
             environment.init_usage(name.clone(), EntityKind::PrivateType, *location);
         };
+    }
+
+    fn make_type_vars(
+        &mut self,
+        args: &[EcoString],
+        location: SrcSpan,
+        hydrator: &mut Hydrator,
+        environment: &mut Environment<'_>,
+    ) -> Vec<Arc<Type>> {
+        args.iter()
+            .map(|name| match hydrator.add_type_variable(name, environment) {
+                Ok(t) => t,
+                Err(t) => {
+                    self.errors.push(Error::DuplicateTypeParameter {
+                        location,
+                        name: name.clone(),
+                    });
+                    t
+                }
+            })
+            .collect()
     }
 
     fn record_if_error(&mut self, result: Result<(), Error>) {
@@ -1001,8 +1127,6 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             return_type: _,
             implementations,
         } = f;
-        assert_valid_javascript_external(name, external_javascript.as_ref(), *location)?;
-
         let mut builder = FieldMapBuilder::new(args.len() as u32);
         for arg in args.iter() {
             builder.add(arg.names.get_label(), arg.location)?;
@@ -1090,43 +1214,6 @@ fn validate_module_name(name: &EcoString) -> Result<(), Error> {
     Ok(())
 }
 
-fn assert_valid_javascript_external(
-    function_name: &EcoString,
-    external_javascript: Option<&(EcoString, EcoString)>,
-    location: SrcSpan,
-) -> Result<(), Error> {
-    use regex::Regex;
-
-    static MODULE: OnceLock<Regex> = OnceLock::new();
-    static FUNCTION: OnceLock<Regex> = OnceLock::new();
-
-    let (module, function) = match external_javascript {
-        None => return Ok(()),
-        Some(external) => external,
-    };
-    if !MODULE
-        .get_or_init(|| Regex::new("^[a-zA-Z0-9\\./:_-]+$").expect("regex"))
-        .is_match(module)
-    {
-        return Err(Error::InvalidExternalJavascriptModule {
-            location,
-            module: module.clone(),
-            name: function_name.clone(),
-        });
-    }
-    if !FUNCTION
-        .get_or_init(|| Regex::new("^[a-zA-Z_][a-zA-Z0-9_]*$").expect("regex"))
-        .is_match(function)
-    {
-        return Err(Error::InvalidExternalJavascriptFunction {
-            location,
-            function: function.clone(),
-            name: function_name.clone(),
-        });
-    }
-    Ok(())
-}
-
 /// Returns the module name and function name of the implementation of a
 /// function. If the function is implemented as a Gleam function then it is the
 /// same as the name of the module and function. If the function has an external
@@ -1151,40 +1238,6 @@ fn target_function_implementation<'a>(
         Target::Erlang => external_erlang,
         Target::JavaScript => external_javascript,
     }
-}
-
-fn ensure_function_has_an_implementation(
-    body: &Vec1<UntypedStatement>,
-    external_erlang: &Option<(EcoString, EcoString)>,
-    external_javascript: &Option<(EcoString, EcoString)>,
-    location: SrcSpan,
-) -> Result<(), Error> {
-    match (external_erlang, external_javascript) {
-        (None, None) if body.first().is_placeholder() => Err(Error::NoImplementation { location }),
-        _ => Ok(()),
-    }
-}
-
-fn ensure_annotations_present(
-    arguments: &[UntypedArg],
-    return_annotation: Option<&TypeAst>,
-    location: SrcSpan,
-) -> Result<(), Error> {
-    for arg in arguments {
-        if arg.annotation.is_none() {
-            return Err(Error::ExternalMissingAnnotation {
-                location: arg.location,
-                kind: MissingAnnotation::Parameter,
-            });
-        }
-    }
-    if return_annotation.is_none() {
-        return Err(Error::ExternalMissingAnnotation {
-            location,
-            kind: MissingAnnotation::Return,
-        });
-    }
-    Ok(())
 }
 
 fn analyse_type_alias(t: TypeAlias<()>, environment: &mut Environment<'_>) -> TypedDefinition {
@@ -1415,24 +1468,6 @@ fn generalise_function(
         external_javascript,
         implementations,
     })
-}
-
-fn make_type_vars(
-    args: &[EcoString],
-    location: SrcSpan,
-    hydrator: &mut Hydrator,
-    environment: &mut Environment<'_>,
-) -> Result<Vec<Arc<Type>>, Error> {
-    args.iter()
-        .map(|name| {
-            hydrator.add_type_variable(name, environment).map_err(|()| {
-                Error::DuplicateTypeParameter {
-                    location,
-                    name: name.clone(),
-                }
-            })
-        })
-        .collect::<Result<_, _>>()
 }
 
 fn assert_unique_name(
