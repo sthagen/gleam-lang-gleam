@@ -15,6 +15,20 @@ impl ModuleExtra {
     pub fn new() -> Self {
         Default::default()
     }
+
+    pub fn is_within_comment(&self, byte_index: u32) -> bool {
+        self.comments
+            .binary_search_by(|span| span.cmp_byte_index(byte_index))
+            .is_ok()
+            || self
+                .doc_comments
+                .binary_search_by(|span| span.cmp_byte_index(byte_index))
+                .is_ok()
+            || self
+                .module_comments
+                .binary_search_by(|span| span.cmp_byte_index(byte_index))
+                .is_ok()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

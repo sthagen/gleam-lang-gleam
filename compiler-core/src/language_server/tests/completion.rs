@@ -1457,6 +1457,141 @@ pub fn main() {
 }
 
 #[test]
+fn completions_for_an_unqualified_import() {
+    let code = "
+import dep.{}
+
+pub fn main() {
+  0
+}";
+    let dep = "pub const wibble = \"wibble\"
+const wobble = \"wobble\"
+@internal
+pub const wabble = \"wabble\"
+
+pub fn myfun() {
+    0
+}
+
+pub type Wibble = String
+";
+
+    assert_eq!(
+        completion(
+            TestProject::for_source(code).add_module("dep", dep),
+            Position::new(1, 12)
+        ),
+        vec![
+            CompletionItem {
+                label: "Wibble".into(),
+                kind: Some(CompletionItemKind::CLASS),
+                detail: Some("Type".into()),
+                insert_text: Some("type Wibble".into()),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "myfun".into(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some("fn() -> Int".into()),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "wabble".into(),
+                kind: Some(CompletionItemKind::CONSTANT),
+                detail: Some("String".into()),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "wibble".into(),
+                kind: Some(CompletionItemKind::CONSTANT),
+                detail: Some("String".into()),
+                ..Default::default()
+            },
+        ]
+    );
+}
+
+#[test]
+fn completions_for_an_unqualified_import_on_new_line() {
+    let code = "
+import dep.{
+  wibble,
+
+}
+
+pub fn main() {
+  0
+}";
+    let dep = "pub const wibble = \"wibble\"
+
+pub fn myfun() {
+    0
+}
+
+pub type Wibble = String
+";
+
+    assert_eq!(
+        completion(
+            TestProject::for_source(code).add_module("dep", dep),
+            // putting cursor at beginning of line because some formatters
+            // remove the empty whitespace in the test code.
+            // Does also work with (3, 2) when empty spaces are not removed.
+            Position::new(3, 0)
+        ),
+        vec![
+            CompletionItem {
+                label: "Wibble".into(),
+                kind: Some(CompletionItemKind::CLASS),
+                detail: Some("Type".into()),
+                insert_text: Some("type Wibble".into()),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "myfun".into(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some("fn() -> Int".into()),
+                ..Default::default()
+            },
+        ]
+    );
+}
+
+#[test]
+fn completions_for_an_unqualified_import_already_imported() {
+    let code = "
+import dep.{wibble,wabble,type Wibble}
+
+pub fn main() {
+  0
+}";
+    let dep = "pub const wibble = \"wibble\"
+const wobble = \"wobble\"
+@internal
+pub const wabble = \"wabble\"
+
+pub fn myfun() {
+    0
+}
+
+pub type Wibble = String
+";
+
+    assert_eq!(
+        completion(
+            TestProject::for_source(code).add_module("dep", dep),
+            Position::new(1, 12)
+        ),
+        vec![CompletionItem {
+            label: "myfun".into(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some("fn() -> Int".into()),
+            ..Default::default()
+        },]
+    );
+}
+
+#[test]
 fn completions_for_a_function_arg_annotation() {
     let code = "
 pub fn wibble(

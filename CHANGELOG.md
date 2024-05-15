@@ -249,6 +249,18 @@
 
   ([Ameen Radwan](https://github.com/Acepie)) and ([Louis Pilfold](https://github.com/Acepie))
 
+- An informative error message is now emitted when attempting to use a function
+  from another module in a constant expression. Previously this would result in
+  a cryptic parse error. ([Nino Annighoefer](https://github.com/nino))
+
+  ```
+  error: Syntax error
+    ┌─ /src/parse/error.gleam:3:18
+    │
+  3 │ const wib: Int = wibble(1, "wobble")
+    │                  ^^^^^^^ Functions can only be called within other functions
+  ```
+
 ### Formatter
 
 - Redundant alias names for imported modules are now removed.
@@ -385,6 +397,30 @@
   automatically detected.
   ([Louis Pilfold](https://github.com/lpil))
 
+- Completions are now provided for values and types for use in unqualified
+  imports. ([Ameen Radwan](https://github.com/Acepie))
+
+- `.` is now advertised as a completion trigger character.
+  ([Louis Pilfold](https://github.com/lpil))
+
+- A new code action has been added to remove redundant tuples around case
+  expression subjects and patterns when possible.
+  ([Nicky Lim](https://github.com/nicklimmm))
+
+  ```
+  case #(x, y) {
+    #(1, 2) -> 0
+    #(_, _) -> 1
+  }
+  ```
+  Is rewritten to:
+  ```
+  case x, y {
+    1, 2 -> 0
+    _, _ -> 1
+  }
+  ```
+
 ### Bug Fixes
 
 - Fixed [RUSTSEC-2021-0145](https://rustsec.org/advisories/RUSTSEC-2021-0145) by
@@ -440,3 +476,6 @@
 - Fixed a bug where the language server would dynamically request the client to
   watch files even when the client has stated it does not support that.
   ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where local path dependencies could be mishandled on Windows.
+  ([Francisco Montanez](https://github.com/Francisco-Montanez))
