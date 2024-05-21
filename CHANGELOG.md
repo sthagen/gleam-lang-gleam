@@ -265,6 +265,42 @@
     │                  ^^^^^^^ Functions can only be called within other functions
   ```
 
+- The compiler will now provide more helpful error messages when triple equals
+  are used instead of double equals. ([Rabin Gaire](https://github.com/rabingaire))
+
+  ```
+  error: Syntax error
+    ┌─ /src/parse/error.gleam:4:37
+    │
+  4 │   [1,2,3] |> list.filter(fn (a) { a === 3 })
+    │                                     ^^^ Did you mean `==`?
+
+  Gleam uses `==` to check for equality between two values.
+  See: https://tour.gleam.run/basics/equality
+  ```
+
+  - The compiler will now raise a warning for unreachable code that comes after
+    a panicking expression.
+
+    ```
+    pub fn main() {
+      panic
+      "unreachable!"
+    }
+    ```
+
+    ```
+    warning: Unreachable code
+      ┌─ /src/warning/wrn.gleam:3:11
+      │
+    3 │    "unreachable!"
+      │    ^^^^^^^^^^^^^^
+
+    This code is unreachable because it comes after a `panic`.
+    ```
+
+    ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 - Redundant alias names for imported modules are now removed.
@@ -492,3 +528,7 @@
 
 - Fixed a bug where the formatter would not indent a case branch's arrow.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where pattern matching on a string prefix containing an escape
+  code could generate incorrect Erlang code.
+  ([Nashwan Azhari](https://github.com/aznashwan))
