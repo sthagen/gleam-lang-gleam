@@ -609,6 +609,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let callback = UntypedExpr::Fn {
             arguments: assignments.function_arguments,
             location: SrcSpan::new(first.start, sequence_location.end),
+            end_of_head_byte_index: sequence_location.end,
             return_annotation: None,
             is_capture: false,
             body: statements,
