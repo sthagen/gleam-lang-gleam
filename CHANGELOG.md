@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.2.0-rc1 - 2024-05-23
 
 ### Build tool
 
@@ -301,6 +301,9 @@
 
     ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- JavaScript external module names may now include the character `@`.
+  ([Louis Pilfold](https://github.com/lpil))
+
 ### Formatter
 
 - Redundant alias names for imported modules are now removed.
@@ -538,3 +541,6 @@
 - Fixed a bug where pattern matching on a string prefix containing an escape
   code could generate incorrect Erlang code.
   ([Nashwan Azhari](https://github.com/aznashwan))
+
+- Fixed a bug where the formatter would produce uneven indentation within multi-line comments at the bottom of case blocks.
+  ([Race Williams](https://github.com/raquentin))

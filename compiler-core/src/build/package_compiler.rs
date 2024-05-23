@@ -92,6 +92,7 @@ where
         existing_modules: &mut im::HashMap<EcoString, type_::ModuleInterface>,
         already_defined_modules: &mut im::HashMap<EcoString, Utf8PathBuf>,
         stale_modules: &mut StaleTracker,
+        incomplete_modules: &mut HashSet<EcoString>,
         telemetry: &dyn Telemetry,
     ) -> Outcome<Vec<Module>, Error> {
         let span = tracing::info_span!("compile", package = %self.config.name.as_str());
@@ -120,6 +121,7 @@ where
             &self.config.name,
             stale_modules,
             already_defined_modules,
+            incomplete_modules,
         );
         let loaded = match loader.run() {
             Ok(loaded) => loaded,
@@ -151,6 +153,7 @@ where
             existing_modules,
             warnings,
             self.target_support,
+            incomplete_modules,
         );
         let modules = match outcome {
             Outcome::Ok(modules) => modules,
@@ -413,6 +416,7 @@ fn analyse(
     module_types: &mut im::HashMap<EcoString, type_::ModuleInterface>,
     warnings: &WarningEmitter,
     target_support: TargetSupport,
+    incomplete_modules: &mut HashSet<EcoString>,
 ) -> Outcome<Vec<Module>, Error> {
     let mut modules = Vec::with_capacity(parsed_modules.len() + 1);
     let direct_dependencies = package_config.dependencies_for(mode).expect("Package deps");
@@ -454,6 +458,8 @@ fn analyse(
 
         match analysis {
             Outcome::Ok(ast) => {
+                // Module has compiled successfully. Make sure it isn't marked as incomplete.
+                let _ = incomplete_modules.remove(&name.clone());
                 // Register the types from this module so they can be imported into
                 // other modules.
                 let _ = module_types.insert(name.clone(), ast.type_info.clone());
@@ -477,6 +483,8 @@ fn analyse(
                     src: code.clone(),
                     errors,
                 };
+                // Mark as incomplete so that this module isn't reloaded from cache.
+                let _ = incomplete_modules.insert(name.clone());
                 // Register the partially type checked module data so that it can be
                 // used in the language server.
                 modules.push(Module {

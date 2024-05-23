@@ -84,6 +84,9 @@ pub struct ProjectCompiler<IO> {
     importable_modules: im::HashMap<EcoString, type_::ModuleInterface>,
     defined_modules: im::HashMap<EcoString, Utf8PathBuf>,
     stale_modules: StaleTracker,
+    /// The set of modules that have had partial compilation done since the last
+    /// successful compilation.
+    incomplete_modules: HashSet<EcoString>,
     warnings: WarningEmitter,
     telemetry: Box<dyn Telemetry>,
     options: Options,
@@ -120,6 +123,7 @@ where
             importable_modules: im::HashMap::new(),
             defined_modules: im::HashMap::new(),
             stale_modules: StaleTracker::default(),
+            incomplete_modules: HashSet::new(),
             ids: UniqueIdGenerator::new(),
             warnings: WarningEmitter::new(warning_emitter),
             subprocess_stdio: Stdio::Inherit,
@@ -567,6 +571,7 @@ where
             &mut self.importable_modules,
             &mut self.defined_modules,
             &mut self.stale_modules,
+            &mut self.incomplete_modules,
             self.telemetry.as_ref(),
         )
     }
