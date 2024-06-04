@@ -24,6 +24,11 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Functions etc named `maybe` are now escaped in generated Erlang as it is now a
+  reserved word in Erlang/OTP 27.
+  ([Jake Barszcz](https://github.com/barszcz))
+
+
 ### Formatter
 
 ### Language Server
