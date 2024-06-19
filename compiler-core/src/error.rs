@@ -167,6 +167,9 @@ pub enum Error {
 file_names.iter().map(|x| x.as_str()).join(", "))]
     OutputFilesAlreadyExist { file_names: Vec<Utf8PathBuf> },
 
+    #[error("Packages not exist: {}", packages.iter().join(", "))]
+    RemovedPackagesNotExist { packages: Vec<String> },
+
     #[error("unable to find project root")]
     UnableToFindProjectRoot { path: String },
 
@@ -840,6 +843,26 @@ If you want to overwrite these files, delete them and run the command again.
                 hint: None,
                 location: None,
             }],
+
+            Error::RemovedPackagesNotExist { packages } => vec![
+                Diagnostic {
+                    title: "Package not found".into(),
+                    text: format!(
+"These packages are not dependencies of your package so they could not
+be removed.
+
+{}
+",
+                    packages
+                        .iter()
+                        .map(|p| format!("  - {}", p.as_str()))
+                        .join("\n")
+                    ),
+                    level: Level::Error,
+                    hint: None,
+                    location: None,
+                }
+            ],
 
             Error::CannotPublishTodo { unfinished } => vec![Diagnostic {
                 title: "Cannot publish unfinished code".into(),
