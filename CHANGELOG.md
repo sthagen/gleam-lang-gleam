@@ -10,6 +10,29 @@
 
 ### Compiler
 
+- Added more an informative error message for when attempting to use the `..`
+  syntax to append to a list rather than prepend.
+
+  ```
+  error: Syntax error
+    ┌─ /src/parse/error.gleam:4:14
+    │
+  4 │         [..rest, last] -> 1
+    │          ^^^^^^ I wasn't expecting elements after this
+
+  I was expecting the end of the list.
+  A spread can only be used to match on the entire end of a list.
+  It is not possible to extract items from the end of a list using pattern
+  matching because that would require walking through the entire list.
+
+  Lists are immutable and singly-linked, so to match on the end
+  of a list would require the whole list to be traversed. This
+  would be slow, so there is no built-in syntax for it. Pattern
+  match on the start of the list instead.
+  ```
+
+  ([Antonio Iaccarino])[https://github.com/eingin]
+
 - The compiler now emits a warning for redundant function captures in a
   pipeline:
 
@@ -28,15 +51,26 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The syntax `[a..b]` is now deprecated in favour of the `[a, ..b]` syntax.
+  This was to avoid it being mistaken for a range syntax, which Gleam does
+  not have.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Functions etc named `maybe` are now escaped in generated Erlang as it is now a
   reserved word in Erlang/OTP 27.
   ([Jake Barszcz](https://github.com/barszcz))
+
+- Functions, types and constructors named `maybe` and `else` are now
+  escaped in generated Erlang to avoid clashing with Erlang's keywords.
+  ([Jake Barszcz](https://github.com/barszcz)) and
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Non byte aligned arrays that use literals for size are now marked as an
   Unsupported feature for Javascript since they would already cause
   a runtime error on Javascript.
 
-  This means if you compile specifically for Javascript you will now recieve this error:
+  This means if you compile specifically for Javascript you will now recieve
+  this error:
 
   ```
   error: Unsupported feature for compilation target
@@ -49,6 +83,16 @@
   ```
 
   Else any functions which rely on this will not be compiled into Javascript.
+  ([Pi-Cla](https://github.com/Pi-Cla))
+
+- Compilation fault tolerance is now at a statement level instead of a function
+  level. This means that the compiler will attempt to infer the rest of the
+  statements in a function when there is an error in a previous one.
+  ([Ameen Radwan](https://github.com/Acepie))
+
+- The JavaScript prelude is no-longer rewritten each time a project is compiled
+  to JavaScript.
+  ([Ofek Doitch](https://github.com/ofekd))
 
 ### Formatter
 
@@ -75,10 +119,12 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- LSP can now suggest completions for values and types from importable modules and adds the import to the top of the file.
+- LSP can now suggest completions for values and types from importable modules
+  and adds the import to the top of the file.
   ([Ameen Radwan](https://github.com/Acepie)
 
-- LSP completions now use the "text_edit" language server API resulting in better/more accurate insertions.
+- LSP completions now use the "text_edit" language server API resulting in
+  better/more accurate insertions.
   ([Ameen Radwan](https://github.com/Acepie)
 
 ### Bug Fixes
@@ -98,6 +144,15 @@
 - Fixed a bug where a horizontal scrollbar would appear on code blocks in built
   documentation when they contained lines 79 or 80 characters long.
   ([Richard Viney](https://github.com/richard-viney))
+
+- Fixed a bug where importing a record constructor in an unqualified fashion and
+  aliasing it and then using it in a constant expression would generate invalid
+  JavaScript.
+  ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where the compiler would crash because types weren't registered if
+  they referenced a non-existent type.
+  ([Gears](https://github.com/gearsdatapacks))
 
 ## v1.2.1 - 2024-05-30
 

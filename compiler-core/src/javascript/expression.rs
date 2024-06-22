@@ -202,6 +202,10 @@ impl<'module> Generator<'module> {
             TypedExpr::NegateBool { value, .. } => self.negate_with("!", value),
 
             TypedExpr::NegateInt { value, .. } => self.negate_with("- ", value),
+
+            TypedExpr::Invalid { .. } => {
+                panic!("invalid expressions should not reach code generation")
+            }
         }?;
         Ok(if expression.handles_own_return() {
             document
@@ -1276,10 +1280,11 @@ pub(crate) fn constant_expression<'a>(
         Constant::Record { typ, .. } if typ.is_nil() => Ok("undefined".to_doc()),
 
         Constant::Record {
-            tag,
-            typ,
             args,
             module,
+            name,
+            tag,
+            typ,
             ..
         } => {
             if typ.is_result() {
@@ -1293,7 +1298,7 @@ pub(crate) fn constant_expression<'a>(
                 .iter()
                 .map(|arg| constant_expression(tracker, &arg.value))
                 .try_collect()?;
-            Ok(construct_record(module.as_deref(), tag, field_values))
+            Ok(construct_record(module.as_deref(), name, field_values))
         }
 
         Constant::BitArray { segments, .. } => bit_array(tracker, segments, constant_expression),
@@ -1487,7 +1492,8 @@ impl TypedExpr {
             | TypedExpr::BitArray { .. }
             | TypedExpr::RecordUpdate { .. }
             | TypedExpr::NegateBool { .. }
-            | TypedExpr::NegateInt { .. } => false,
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => false,
         }
     }
 }
@@ -1551,7 +1557,8 @@ fn requires_semicolon(statement: &TypedStatement) -> bool {
             TypedExpr::Todo { .. }
             | TypedExpr::Case { .. }
             | TypedExpr::Panic { .. }
-            | TypedExpr::Pipeline { .. },
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Invalid { .. },
         ) => false,
 
         Statement::Assignment(_) => false,
