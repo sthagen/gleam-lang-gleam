@@ -94,6 +94,9 @@
   to JavaScript.
   ([Ofek Doitch](https://github.com/ofekd))
 
+- Compiler now supports arithmetic operations in guards.
+  ([Danielle Maywood](https://github.com/DanielleMaywood))
+
 ### Formatter
 
 ### Language Server
@@ -157,6 +160,10 @@
 - Fixed a bug where the compiler would generate invalid Erlang when pattern
   matching on strings with an `as` pattern.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would warn that a module alias was unused when
+  it was only used in case patterns.
+  ([Michael Jones](https://github.com/michaeljones))
 
 ## v1.2.1 - 2024-05-30
 
