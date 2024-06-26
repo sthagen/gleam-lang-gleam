@@ -203,6 +203,11 @@ where
                 .module_line_numbers
                 .byte_index(params.position.line, params.position.character);
 
+            // If in comment context, do not provide completions
+            if module.extra.is_within_comment(byte_index) {
+                return Ok(None);
+            }
+
             let Some(found) = module.find_node(byte_index) else {
                 return Ok(None);
             };

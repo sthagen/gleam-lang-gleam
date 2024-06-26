@@ -8,6 +8,18 @@
   exist as a dependency in the project.
   ([Changfeng Lou](https://github.com/hnlcf))
 
+- `gleam add` now takes an optional package version specifier,
+  separated by a `@`, that resolves as follows:
+
+  ```shell
+  gleam add lustre@1.2.3 # "1.2.3"
+  gleam add lustre@1.2   # ">= 1.2.0 and < 2.0.0"
+  gleam add lustre@1     # ">= 1.0.0 and < 2.0.0"
+  gleam add lustre       # ">= 0.0.0"
+  ```
+
+  ([Rahul D. Ghosal](https://github.com/rdghosal))
+
 ### Compiler
 
 - Added more an informative error message for when attempting to use the `..`
@@ -97,6 +109,9 @@
 - Compiler now supports arithmetic operations in guards.
   ([Danielle Maywood](https://github.com/DanielleMaywood))
 
+- Import cycles now show the location where the import occur.
+  ([Ameen Radwan](https://github.com/Acepie))
+
 ### Formatter
 
 ### Language Server
@@ -124,11 +139,18 @@
 
 - LSP can now suggest completions for values and types from importable modules
   and adds the import to the top of the file.
-  ([Ameen Radwan](https://github.com/Acepie)
+  ([Ameen Radwan](https://github.com/Acepie))
+
+- Diagnostics with extra labels now show the diagnostic in all locations
+  including across multiple files.
+  ([Ameen Radwan](https://github.com/Acepie))
 
 - LSP completions now use the "text_edit" language server API resulting in
   better/more accurate insertions.
-  ([Ameen Radwan](https://github.com/Acepie)
+  ([Ameen Radwan](https://github.com/Acepie))
+
+- Completions are no longer provided inside comments.
+  ([Nicky Lim](https://github.com/nicklimmm))
 
 ### Bug Fixes
 
