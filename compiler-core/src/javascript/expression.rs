@@ -390,7 +390,7 @@ impl<'module> Generator<'module> {
     ) -> Output<'a> {
         match &constructor.variant {
             ValueConstructorVariant::LocalConstant { literal } => {
-                constant_expression(&mut NeedsPureAnnotation::No, self.tracker, literal)
+                constant_expression(Context::Function, self.tracker, literal)
             }
             ValueConstructorVariant::Record { arity, .. } => {
                 Ok(self.record_constructor(constructor.type_.clone(), None, name, *arity))
@@ -1250,17 +1250,24 @@ pub(crate) fn guard_constant_expression<'a>(
             .map(|assignment| assignment.subject.clone().append(assignment.path.clone()))
             .unwrap_or_else(|| maybe_escape_identifier_doc(name))),
 
-        expression => constant_expression(&mut NeedsPureAnnotation::No, tracker, expression),
+        expression => constant_expression(Context::Function, tracker, expression),
     }
 }
 
-pub enum NeedsPureAnnotation {
-    Yes,
-    No,
+#[derive(Debug, Clone, Copy)]
+/// The context where the constant expression is used, it might be inside a
+/// function call, or in the definition of another constant.
+///
+/// Based on the context we might want to annotate pure function calls as
+/// "@__PURE__".
+///
+pub enum Context {
+    Constant,
+    Function,
 }
 
 pub(crate) fn constant_expression<'a>(
-    needs_pure_annotation: &mut NeedsPureAnnotation,
+    context: Context,
     tracker: &mut UsageTracker,
     expression: &'a TypedConstant,
 ) -> Output<'a> {
@@ -1271,18 +1278,21 @@ pub(crate) fn constant_expression<'a>(
         Constant::Tuple { elements, .. } => array(
             elements
                 .iter()
-                .map(|e| constant_expression(needs_pure_annotation, tracker, e)),
+                .map(|e| constant_expression(context, tracker, e)),
         ),
 
         Constant::List { elements, .. } => {
             tracker.list_used = true;
-            let result = list(
+            let list = list(
                 elements
                     .iter()
-                    .map(|e| constant_expression(needs_pure_annotation, tracker, e)),
-            );
-            *needs_pure_annotation = NeedsPureAnnotation::Yes;
-            result
+                    .map(|e| constant_expression(context, tracker, e)),
+            )?;
+
+            match context {
+                Context::Constant => Ok(docvec!["/* @__PURE__ */ ", list]),
+                Context::Function => Ok(list),
+            }
         }
 
         Constant::Record { typ, name, .. } if typ.is_bool() && name == "True" => {
@@ -1310,18 +1320,24 @@ pub(crate) fn constant_expression<'a>(
             }
             let field_values: Vec<_> = args
                 .iter()
-                .map(|arg| constant_expression(needs_pure_annotation, tracker, &arg.value))
+                .map(|arg| constant_expression(context, tracker, &arg.value))
                 .try_collect()?;
 
-            *needs_pure_annotation = NeedsPureAnnotation::Yes;
-            Ok(construct_record(module.as_deref(), name, field_values))
+            let constructor = construct_record(module.as_deref(), name, field_values);
+            match context {
+                Context::Constant => Ok(docvec!["/* @__PURE__ */ ", constructor]),
+                Context::Function => Ok(constructor),
+            }
         }
 
         Constant::BitArray { segments, .. } => {
-            *needs_pure_annotation = NeedsPureAnnotation::Yes;
-            bit_array(tracker, segments, |tracker, expr| {
-                constant_expression(needs_pure_annotation, tracker, expr)
-            })
+            let bit_array = bit_array(tracker, segments, |tracker, expr| {
+                constant_expression(context, tracker, expr)
+            })?;
+            match context {
+                Context::Constant => Ok(docvec!["/* @__PURE__ */ ", bit_array]),
+                Context::Function => Ok(bit_array),
+            }
         }
 
         Constant::Var { name, module, .. } => Ok({
