@@ -795,10 +795,19 @@ where
                     }
 
                     t0 => {
+                        // parse a field access with no label
                         self.tok0 = t0;
-                        return self.next_tok_unexpected(vec![
-                            "A positive integer or a field name.".into(),
-                        ]);
+                        let end = dot_start + 1;
+                        expr = UntypedExpr::FieldAccess {
+                            location: SrcSpan { start, end },
+                            label_location: SrcSpan {
+                                start: dot_start,
+                                end,
+                            },
+                            label: "".into(),
+                            container: Box::new(expr),
+                        };
+                        return Ok(Some(expr));
                     }
                 }
             } else if self.maybe_one(&Token::LeftParen).is_some() {
@@ -1204,12 +1213,15 @@ where
 
                 let mut elements_after_tail = None;
                 let mut dot_dot_location = None;
-                let tail = if let Some((start, Token::DotDot, end)) = self.tok0 {
-                    dot_dot_location = Some((start, end));
-                    if !elements_end_with_comma {
+                let tail = if let Some((dot_dot_start, Token::DotDot, dot_dot_end)) = self.tok0 {
+                    dot_dot_location = Some((dot_dot_start, dot_dot_end));
+                    if !elements.is_empty() && !elements_end_with_comma {
                         self.warnings
                             .push(DeprecatedSyntaxWarning::DeprecatedListPattern {
-                                location: SrcSpan { start, end },
+                                location: SrcSpan {
+                                    start: dot_dot_start,
+                                    end: dot_dot_end,
+                                },
                             });
                     }
 
@@ -1271,6 +1283,13 @@ where
                     // No tail specified
                     None => None,
                 };
+
+                if elements.is_empty() && tail.as_ref().is_some_and(|p| p.is_discard()) {
+                    self.warnings
+                        .push(DeprecatedSyntaxWarning::DeprecatedListCatchAllPattern {
+                            location: SrcSpan { start, end: rsqb_e },
+                        })
+                }
 
                 Pattern::List {
                     location: SrcSpan { start, end },
