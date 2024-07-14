@@ -248,7 +248,12 @@ fn register_imports(
         }) if publicity.is_importable() || overridden_publicity.contains(name) => {
             // If the function isn't for this target then don't attempt to export it
             if implementations.supports(Target::Erlang) {
-                exports.push(atom_string(name.to_string()).append("/").append(args.len()))
+                let function_name = escape_erlang_existing_name(name);
+                exports.push(
+                    atom_string(function_name.to_string())
+                        .append("/")
+                        .append(args.len()),
+                )
             }
         }
 
@@ -371,7 +376,9 @@ fn module_function<'a>(
         return None;
     }
 
-    let mut env = Env::new(module, &function.name, line_numbers);
+    let function_name = escape_erlang_existing_name(&function.name);
+
+    let mut env = Env::new(module, function_name, line_numbers);
     let var_usages = collect_type_var_usages(
         HashMap::new(),
         std::iter::once(&function.return_type).chain(function.arguments.iter().map(|a| &a.type_)),
@@ -382,17 +389,26 @@ fn module_function<'a>(
         .iter()
         .map(|a| type_printer.print(&a.type_));
     let return_spec = type_printer.print(&function.return_type);
-    let spec = fun_spec(&function.name, args_spec, return_spec);
+    let spec = fun_spec(function_name, args_spec, return_spec);
     let arguments = fun_args(&function.arguments, &mut env);
 
     let body = function
         .external_erlang
         .as_ref()
-        .map(|(module, function)| docvec![atom(module), ":", atom(function), arguments.clone()])
+        .map(|(module, function)| {
+            docvec![
+                atom(module),
+                ":",
+                atom(escape_erlang_existing_name(function)),
+                arguments.clone()
+            ]
+        })
         .unwrap_or_else(|| statement_sequence(&function.body, &mut env));
 
     let doc = spec
-        .append(atom_string(function.name.to_string()))
+        .append(atom_string(
+            escape_erlang_existing_name(function_name).to_string(),
+        ))
         .append(arguments)
         .append(" ->")
         .append(line().append(body).nest(INDENT).group())
@@ -510,6 +526,65 @@ fn tuple<'a>(elems: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {
         .nest(INDENT)
         .surround("{", "}")
         .group()
+}
+
+fn const_string_concatenate_bit_array<'a>(
+    elems: impl IntoIterator<Item = Document<'a>>,
+) -> Document<'a> {
+    join(elems, break_(",", ", "))
+        .nest(INDENT)
+        .surround("<<", ">>")
+        .group()
+}
+
+fn const_string_concatenate<'a>(
+    left: &'a TypedConstant,
+    right: &'a TypedConstant,
+    env: &mut Env<'a>,
+) -> Document<'a> {
+    let left = const_string_concatenate_argument(left, env);
+    let right = const_string_concatenate_argument(right, env);
+    const_string_concatenate_bit_array([left, right])
+}
+
+fn const_string_concatenate_inner<'a>(
+    left: &'a TypedConstant,
+    right: &'a TypedConstant,
+    env: &mut Env<'a>,
+) -> Document<'a> {
+    let left = const_string_concatenate_argument(left, env);
+    let right = const_string_concatenate_argument(right, env);
+    join([left, right], break_(",", ", "))
+}
+
+fn const_string_concatenate_argument<'a>(
+    value: &'a TypedConstant,
+    env: &mut Env<'a>,
+) -> Document<'a> {
+    match value {
+        Constant::String { value, .. } => docvec!['"', string_inner(value), "\"/utf8"],
+
+        Constant::Var {
+            constructor: Some(constructor),
+            ..
+        } => match &constructor.variant {
+            ValueConstructorVariant::ModuleConstant {
+                literal: Constant::String { value, .. },
+                ..
+            } => docvec!['"', string_inner(value), "\"/utf8"],
+            ValueConstructorVariant::ModuleConstant {
+                literal: Constant::StringConcatenation { left, right, .. },
+                ..
+            } => const_string_concatenate_inner(left, right, env),
+            _ => const_inline(value, env),
+        },
+
+        Constant::StringConcatenation { left, right, .. } => {
+            const_string_concatenate_inner(left, right, env)
+        }
+
+        _ => const_inline(value, env),
+    }
 }
 
 fn string_concatenate<'a>(
@@ -986,7 +1061,7 @@ fn var<'a>(name: &'a str, constructor: &'a ValueConstructor, env: &mut Env<'a>) 
             arity, ref module, ..
         } if module == env.module => "fun "
             .to_doc()
-            .append(atom(name))
+            .append(atom(escape_erlang_existing_name(name)))
             .append("/")
             .append(*arity),
 
@@ -999,7 +1074,7 @@ fn var<'a>(name: &'a str, constructor: &'a ValueConstructor, env: &mut Env<'a>) 
             .to_doc()
             .append(module_name_atom(module))
             .append(":")
-            .append(atom(name))
+            .append(atom(escape_erlang_existing_name(name)))
             .append("/")
             .append(*arity),
     }
@@ -1059,6 +1134,10 @@ fn const_inline<'a>(literal: &'a TypedConstant, env: &mut Env<'a>) -> Document<'
                 .expect("This is guaranteed to hold a value."),
             env,
         ),
+
+        Constant::StringConcatenation { left, right, .. } => {
+            const_string_concatenate(left, right, env)
+        }
 
         Constant::Invalid { .. } => panic!("invalid constants should not reach code generation"),
     }
@@ -1361,6 +1440,7 @@ fn module_fn_with_args<'a>(
     args: Vec<Document<'a>>,
     env: &Env<'a>,
 ) -> Document<'a> {
+    let name = escape_erlang_existing_name(name);
     let args = wrap_args(args);
     if module == env.module {
         atom(name).append(args)
@@ -1431,6 +1511,7 @@ fn docs_args_call<'a>(
             ..
         } => {
             let args = wrap_args(args);
+            let name = escape_erlang_existing_name(name);
             // We use the constructor Fn variant's `module` and function `name`.
             // It would also be valid to use the module and label as in the
             // Gleam code, but using the variant can result in an optimisation
@@ -1904,6 +1985,14 @@ pub fn is_erlang_standard_library_module(name: &str) -> bool {
     )
 }
 
+// Includes the functions that are autogenerated by erlang itself
+pub fn escape_erlang_existing_name(name: &str) -> &str {
+    match name {
+        "module_info" => "moduleInfo",
+        _ => name,
+    }
+}
+
 // A TypeVar can either be rendered as an actual type variable such as `A` or `B`,
 // or it can be rendered as `any()` depending on how many usages it has. If it
 // has only 1 usage it is an `any()` type. If it has more than 1 usage it is a
@@ -2185,6 +2274,11 @@ fn find_referenced_private_functions(
         TypedConstant::Record { args, .. } => args
             .iter()
             .for_each(|arg| find_referenced_private_functions(&arg.value, already_found)),
+
+        TypedConstant::StringConcatenation { left, right, .. } => {
+            find_referenced_private_functions(left, already_found);
+            find_referenced_private_functions(right, already_found);
+        }
 
         Constant::Tuple { elements, .. } | Constant::List { elements, .. } => elements
             .iter()

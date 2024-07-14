@@ -166,7 +166,7 @@ impl<'comments> Formatter<'comments> {
         for (is_import_group, definitions) in &module
             .definitions
             .iter()
-            .group_by(|definition| definition.definition.is_import())
+            .chunk_by(|definition| definition.definition.is_import())
         {
             if is_import_group {
                 if previous_was_a_definition {
@@ -490,6 +490,13 @@ impl<'comments> Formatter<'comments> {
                 module: Some(module),
                 ..
             } => docvec![module, ".", name],
+
+            Constant::StringConcatenation { left, right, .. } => self
+                .const_expr(left)
+                .append(break_("", " ").append("<>".to_doc()))
+                .nest(INDENT)
+                .append(" ")
+                .append(self.const_expr(right)),
 
             Constant::Invalid { .. } => {
                 panic!("invalid constants can not be in an untyped ast")
@@ -1737,7 +1744,14 @@ impl<'comments> Formatter<'comments> {
             UntypedExpr::Fn { .. }
             | UntypedExpr::List { .. }
             | UntypedExpr::Tuple { .. }
-            | UntypedExpr::BitArray { .. } => " ".to_doc().append(self.expr(expr)),
+            | UntypedExpr::BitArray { .. } => {
+                let expression_comments = self.pop_comments(expr.location().start);
+                let expression_doc = self.expr(expr);
+                match printed_comments(expression_comments, true) {
+                    Some(comments) => line().append(comments).append(expression_doc).nest(INDENT),
+                    None => " ".to_doc().append(expression_doc),
+                }
+            }
 
             UntypedExpr::Case { .. } => line().append(self.expr(expr)).nest(INDENT),
 

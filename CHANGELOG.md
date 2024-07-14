@@ -4,6 +4,10 @@
 
 ### Build tool
 
+- `gleam docs build` now takes an optional `--target` flag to specify the target
+  platform for the generated documentation.
+  ([Jiangda Wang](https://github.com/frank-iii))
+
 ### Compiler
 
 - The warning for the deprecated `[..]` pattern has been improved.
@@ -16,6 +20,46 @@
 - Fix cases where in Erlang unbound type variables are generated.
   ([Damir Vandic](https://github.com/dvic))
 
+- Error messages for invalid record constructors now contain a restructured
+  example of what the user likely intended. This is especially helpful for
+  users coming from other languages, like Rust or Go.
+
+  For example, provided a User type:
+
+  ```
+  pub type User {
+    name: String
+  }
+  ```
+
+  The compiler errors with the following message:
+
+  ```
+  error: Syntax error
+    ┌─ /src/parse/error.gleam:3:5
+    │
+  3 │     name: String,
+    │     ^^^^ I was not expecting this
+
+  Each custom type variant must have a constructor:
+
+  pub type User {
+    User(
+      name: String,
+    )
+  }
+  ```
+
+  ([Rahul D. Ghosal](https://github.com/rdghosal))
+
+- The `<>` string concatenation operator can now be used in constant
+  expressions.
+  ([Thomas](https://github.com/DeviousStoat))
+
+- Function calls are now fault tolerant. This means that errors in the function
+  call arguments won't stop the rest of the call from being analysed.
+  ([Ameen Radwan](https://github.com/Acepie))
+
 ### Formatter
 
 ### Language Server
@@ -25,6 +69,14 @@
   ([Ameen Radwan](https://github.com/Acepie))
 
 ### Bug Fixes
+
+- Functions, types and constructors named `module_info` are now escaped
+  in generated Erlang code to avoid conflicts with the builtin
+  `module_info/0` and `module_info/1` functions.
+  ([Juraj Petráš](https://github.com/Hackder))
+
+- Fixed formatting of comments at the start of a case branch.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ## v1.3.2 - 2024-07-11
 

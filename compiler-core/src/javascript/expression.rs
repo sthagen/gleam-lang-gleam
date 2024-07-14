@@ -1343,6 +1343,12 @@ pub(crate) fn constant_expression<'a>(
             }
         }),
 
+        Constant::StringConcatenation { left, right, .. } => {
+            let left = constant_expression(context, tracker, left)?;
+            let right = constant_expression(context, tracker, right)?;
+            Ok(docvec!(left, " + ", right))
+        }
+
         Constant::Invalid { .. } => panic!("invalid constants should not reach code generation"),
     }
 }
