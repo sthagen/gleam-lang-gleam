@@ -33,6 +33,11 @@ enum TypeCompletionForm {
     Default,
 }
 
+enum Newlines {
+    Single,
+    Double,
+}
+
 pub struct Completer<'a, IO> {
     /// The direct buffer source code
     src: &'a EcoString,
@@ -420,7 +425,9 @@ where
         }
 
         // Importable modules
-        let import_location = self.first_import_line_in_module();
+        let (first_import_pos, first_is_import) = self.first_import_in_module();
+        let after_import_newlines =
+            self.add_newlines_after_import(first_import_pos, first_is_import);
         for (module_full_name, module) in self.completable_modules_for_import() {
             // Do not try to import the prelude.
             if module_full_name == "gleam" {
@@ -453,7 +460,12 @@ where
                     insert_range,
                     TypeCompletionForm::Default,
                 );
-                add_import_to_completion(&mut completion, import_location, module_full_name);
+                add_import_to_completion(
+                    &mut completion,
+                    first_import_pos,
+                    module_full_name,
+                    &after_import_newlines,
+                );
                 completions.push(completion);
             }
         }
@@ -536,7 +548,9 @@ where
         }
 
         // Importable modules
-        let import_location = self.first_import_line_in_module();
+        let (first_import_pos, first_is_import) = self.first_import_in_module();
+        let after_import_newlines =
+            self.add_newlines_after_import(first_import_pos, first_is_import);
         for (module_full_name, module) in self.completable_modules_for_import() {
             // Do not try to import the prelude.
             if module_full_name == "gleam" {
@@ -564,7 +578,12 @@ where
                 let mut completion =
                     value_completion(Some(qualifier), module_full_name, name, value, insert_range);
 
-                add_import_to_completion(&mut completion, import_location, module_full_name);
+                add_import_to_completion(
+                    &mut completion,
+                    first_import_pos,
+                    module_full_name,
+                    &after_import_newlines,
+                );
                 completions.push(completion);
             }
         }
@@ -622,17 +641,45 @@ where
         }
     }
 
-    // Gets the position of the line with the first import statement in the file.
-    fn first_import_line_in_module(&'a self) -> Position {
-        let import_location = self
+    // Gets the position of the import statement if it's the first definition in the module.
+    // If the 1st definition is not an import statement, then it returns the 1st line.
+    // 2nd element in the pair is true if the first definition is an import statement.
+    fn first_import_in_module(&'a self) -> (Position, bool) {
+        // As "self.module.ast.definitions"  could be sorted, let's find the actual first definition by position.
+        let first_definition = self
             .module
             .ast
             .definitions
             .iter()
-            .find_map(get_import)
-            .map_or(0, |i| i.location.start);
-        let import_location = self.module_line_numbers.line_number(import_location);
-        Position::new(import_location - 1, 0)
+            .min_by(|a, b| a.location().start.cmp(&b.location().start));
+        let import = first_definition.and_then(get_import);
+        let import_start = import.map_or(0, |i| i.location.start);
+        let import_line = self.module_line_numbers.line_number(import_start);
+        (Position::new(import_line - 1, 0), import.is_some())
+    }
+
+    // Returns how many newlines should be added after an import statement. By default `Newlines::Single`,
+    // but if there's not any import statement, it returns `Newlines::Double`.
+    //
+    // * ``import_location`` - The position of the first import statement in the source code.
+    fn add_newlines_after_import(
+        &'a self,
+        import_location: Position,
+        has_imports: bool,
+    ) -> Newlines {
+        let import_start_cursor = self
+            .src_line_numbers
+            .byte_index(import_location.line, import_location.character);
+        let is_new_line = self
+            .src
+            .chars()
+            .nth(import_start_cursor as usize)
+            .unwrap_or_default()
+            == '\n';
+        match !has_imports && !is_new_line {
+            true => Newlines::Double,
+            false => Newlines::Single,
+        }
     }
 }
 
@@ -640,13 +687,18 @@ fn add_import_to_completion(
     item: &mut CompletionItem,
     import_location: Position,
     module_full_name: &EcoString,
+    insert_newlines: &Newlines,
 ) {
+    let new_lines = match insert_newlines {
+        Newlines::Single => "\n",
+        Newlines::Double => "\n\n",
+    };
     item.additional_text_edits = Some(vec![TextEdit {
         range: Range {
             start: import_location,
             end: import_location,
         },
-        new_text: ["import ", module_full_name, "\n"].concat(),
+        new_text: ["import ", module_full_name, new_lines].concat(),
     }]);
 }
 

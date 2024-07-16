@@ -60,6 +60,14 @@
   call arguments won't stop the rest of the call from being analysed.
   ([Ameen Radwan](https://github.com/Acepie))
 
+- The error message presented when a function is called in a guard has been improved.
+  ([Thomas](https://github.com/DeviousStoat))
+
+- Case expressions are now fault tolerant. This means an subject, pattern,
+  guard, or then body can be properly detected and won't invalidate the rest
+  of the expression.
+  ([Ameen Radwan](https://github.com/Acepie))
+
 ### Formatter
 
 ### Language Server
@@ -67,6 +75,11 @@
 - The language server can now show completions for fields if a record access is
   being attempted.
   ([Ameen Radwan](https://github.com/Acepie))
+
+- The language server will now insert a blank line before the first statement
+  when inserting a new import and there are no other imports at the top of the
+  module.
+  ([Zhomart Mukhamejanov](https://github.com/Zhomart))
 
 ### Bug Fixes
 
@@ -77,6 +90,9 @@
 
 - Fixed formatting of comments at the start of a case branch.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where a private type could be leaked from an internal module.
+  ([Ameen Radwan](https://github.com/Acepie))
 
 ## v1.3.2 - 2024-07-11
 
