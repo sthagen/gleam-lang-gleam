@@ -18,13 +18,13 @@ use crate::{
 use camino::Utf8PathBuf;
 use ecow::EcoString;
 use lsp::CodeAction;
-use lsp_types::{self as lsp, Hover, HoverContents, MarkedString, Url};
+use lsp_types::{self as lsp, Hover, HoverContents, MarkedString, SignatureHelp, Url};
 use std::sync::Arc;
 
 use super::{
     code_action::{CodeActionBuilder, LetAssertToCase, RedundantTupleInCaseSubject},
     completer::Completer,
-    src_span_to_lsp_range, DownloadDependencies, MakeLocker,
+    signature_help, src_span_to_lsp_range, DownloadDependencies, MakeLocker,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -356,7 +356,7 @@ where
                         // We only want to display the arguments that were ignored using `..`.
                         // Any argument ignored that way is marked as implicit, so if it is
                         // not implicit we just ignore it.
-                        if !argument.implicit {
+                        if !argument.is_implicit() {
                             continue;
                         }
 
@@ -412,6 +412,21 @@ Unused labelled fields:
                 }
             })
         })
+    }
+
+    pub(crate) fn signature_help(
+        &mut self,
+        params: lsp_types::SignatureHelpParams,
+    ) -> Response<Option<SignatureHelp>> {
+        self.respond(
+            |this| match this.node_at_position(&params.text_document_position_params) {
+                Some((_lines, Located::Expression(expr))) => {
+                    Ok(signature_help::for_expression(&this.compiler, expr))
+                }
+                Some((_lines, _located)) => Ok(None),
+                None => Ok(None),
+            },
+        )
     }
 
     fn module_node_at_position(
