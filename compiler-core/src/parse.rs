@@ -303,14 +303,14 @@ where
                 self.parse_import(start)
             }
             // Module Constants
-            (Some((_, Token::Const, _)), _) => {
+            (Some((start, Token::Const, _)), _) => {
                 self.advance();
-                self.parse_module_const(false, &attributes)
+                self.parse_module_const(start, false, &attributes)
             }
-            (Some((_, Token::Pub, _)), Some((_, Token::Const, _))) => {
+            (Some((start, Token::Pub, _)), Some((_, Token::Const, _))) => {
                 self.advance();
                 self.advance();
-                self.parse_module_const(true, &attributes)
+                self.parse_module_const(start, true, &attributes)
             }
 
             // Function
@@ -1639,7 +1639,7 @@ where
                         value,
                     }))
                 } else {
-                    // Punned argument.
+                    // Argument supplied with a label shorthand.
                     Ok(Some(CallArg {
                         implicit: None,
                         location: SrcSpan { start, end },
@@ -1687,7 +1687,7 @@ where
                     value,
                 }))
             } else {
-                // A punned argument.
+                // Argument supplied with a label shorthand.
                 Ok(Some(UntypedRecordUpdateArg {
                     label: label.clone(),
                     location: SrcSpan { start, end },
@@ -1723,13 +1723,16 @@ where
         } else {
             self.take_documentation(start)
         };
-
-        let mut name_location = SrcSpan::new(start, start);
-        let mut name = EcoString::from("");
+        let mut name = None;
         if !is_anon {
-            let (start, n, end) = self.expect_name()?;
-            name = n;
-            name_location = SrcSpan { start, end };
+            let (name_start, n, name_end) = self.expect_name()?;
+            name = Some((
+                SrcSpan {
+                    start: name_start,
+                    end: name_end,
+                },
+                n,
+            ));
         }
         let _ = self.expect_one(&Token::LeftParen)?;
         let args = Parser::series_of(
@@ -1779,7 +1782,6 @@ where
         Ok(Some(Definition::Function(Function {
             documentation,
             location: SrcSpan { start, end },
-            name_location,
             end_position,
             publicity: self.publicity(public, attributes.internal)?,
             name,
@@ -1982,24 +1984,38 @@ where
                 }
             };
             Ok(Some(ParserArg::Arg(Box::new(arg))))
-        } else if let Some((start, name, end)) = self.maybe_discard_name() {
-            let arg = if let Some((start, label, _)) = label {
+        } else if let Some((name_start, name, name_end)) = self.maybe_discard_name() {
+            let arg = if let Some((label_start, label, _)) = label {
                 ParserArg::Hole {
                     label: Some(label),
-                    location: SrcSpan { start, end },
+                    arg_location: SrcSpan {
+                        start: label_start,
+                        end: name_end,
+                    },
+                    discard_location: SrcSpan {
+                        start: name_start,
+                        end: name_end,
+                    },
                     name,
                 }
             } else {
                 ParserArg::Hole {
                     label: None,
-                    location: SrcSpan { start, end },
+                    arg_location: SrcSpan {
+                        start: name_start,
+                        end: name_end,
+                    },
+                    discard_location: SrcSpan {
+                        start: name_start,
+                        end: name_end,
+                    },
                     name,
                 }
             };
 
             Ok(Some(arg))
         } else if let Some((start, label, end)) = label {
-            // A punned argument.
+            // Argument supplied with a label shorthand.
             Ok(Some(ParserArg::Arg(Box::new(CallArg {
                 implicit: None,
                 label: Some(label.clone()),
@@ -2032,6 +2048,7 @@ where
     ) -> Result<Option<UntypedDefinition>, ParseError> {
         let documentation = self.take_documentation(start);
         let (name_start, name, parameters, end, name_end) = self.expect_type_name()?;
+        let name_location = SrcSpan::new(name_start, name_end);
         let (constructors, end_position) = if self.maybe_one(&Token::LeftBrace).is_some() {
             // Custom Type
             let constructors = Parser::series_of(
@@ -2071,9 +2088,9 @@ where
                 return Ok(Some(Definition::TypeAlias(TypeAlias {
                     documentation,
                     location: SrcSpan::new(start, type_end),
-                    name_location: SrcSpan::new(name_start, name_end),
                     publicity: self.publicity(public, attributes.internal)?,
                     alias: name,
+                    name_location,
                     parameters,
                     type_ast: t,
                     type_: (),
@@ -2088,14 +2105,11 @@ where
         Ok(Some(Definition::CustomType(CustomType {
             documentation,
             location: SrcSpan { start, end },
-            name_location: SrcSpan {
-                start: name_start,
-                end: name_end,
-            },
             end_position,
             publicity: self.publicity(public, attributes.internal)?,
             opaque,
             name,
+            name_location,
             parameters,
             constructors,
             typed_parameters: vec![],
@@ -2143,13 +2157,7 @@ where
                             Some(type_ast) => {
                                 let end = type_ast.location().end;
                                 Ok(Some(RecordConstructorArg {
-                                    label: Some((
-                                        name,
-                                        SrcSpan {
-                                            start,
-                                            end: name_end,
-                                        },
-                                    )),
+                                    label: Some((SrcSpan::new(start, name_end), name)),
                                     ast: type_ast,
                                     location: SrcSpan { start, end },
                                     type_: (),
@@ -2367,7 +2375,7 @@ where
             }
         }
 
-        let documentation = self.take_documentation(start);
+        let (_, documentation) = self.take_documentation(start).unzip();
 
         // Gather imports
         let mut unqualified_values = vec![];
@@ -2492,11 +2500,12 @@ where
     //   pub const a:Int = 1
     fn parse_module_const(
         &mut self,
+        start: u32,
         public: bool,
         attributes: &Attributes,
     ) -> Result<Option<UntypedDefinition>, ParseError> {
-        let (start, name, end) = self.expect_name()?;
-        let documentation = self.take_documentation(start);
+        let (name_start, name, name_end) = self.expect_name()?;
+        let documentation = self.take_documentation(name_start);
 
         let annotation = self.parse_type_annotation(&Token::Colon)?;
 
@@ -2504,9 +2513,19 @@ where
         if let Some(value) = self.parse_const_value()? {
             Ok(Some(Definition::ModuleConstant(ModuleConstant {
                 documentation,
-                location: SrcSpan { start, end },
+                location: SrcSpan {
+                    start,
+
+                    // End after the type annotation if it's there, otherwise after the name
+                    end: annotation
+                        .as_ref()
+                        .map(|annotation| annotation.location().end)
+                        .unwrap_or(0)
+                        .max(name_end),
+                },
                 publicity: self.publicity(public, attributes.internal)?,
                 name,
+                name_location: SrcSpan::new(name_start, name_end),
                 annotation,
                 value: Box::new(value),
                 type_: (),
@@ -2810,7 +2829,7 @@ where
                 }))
             }
         } else if let Some((start, label, end)) = label {
-            // A punned argument.
+            // Argument supplied with a label shorthand.
             Ok(Some(CallArg {
                 implicit: None,
                 location: SrcSpan { start, end },
@@ -3319,10 +3338,13 @@ where
         t
     }
 
-    fn take_documentation(&mut self, until: u32) -> Option<EcoString> {
+    fn take_documentation(&mut self, until: u32) -> Option<(u32, EcoString)> {
         let mut content = String::new();
-
+        let mut doc_start = u32::MAX;
         while let Some((start, line)) = self.doc_comments.front() {
+            if *start < doc_start {
+                doc_start = *start;
+            }
             if *start >= until {
                 break;
             }
@@ -3339,7 +3361,7 @@ where
         if content.is_empty() {
             None
         } else {
-            Some(content.into())
+            Some((doc_start, content.into()))
         }
     }
 
@@ -3822,7 +3844,10 @@ pub enum ParserArg {
     Arg(Box<CallArg<UntypedExpr>>),
     Hole {
         name: EcoString,
-        location: SrcSpan,
+        /// The whole span of the argument.
+        arg_location: SrcSpan,
+        /// Just the span of the ignore name.
+        discard_location: SrcSpan,
         label: Option<EcoString>,
     },
 }
@@ -3841,12 +3866,13 @@ pub fn make_call(
         .map(|a| match a {
             ParserArg::Arg(arg) => Ok(*arg),
             ParserArg::Hole {
-                location,
+                arg_location,
+                discard_location,
                 name,
                 label,
             } => {
                 num_holes += 1;
-                hole_location = Some(location);
+                hole_location = Some(arg_location);
 
                 if name != "_" {
                     return parse_error(
@@ -3855,16 +3881,16 @@ pub fn make_call(
                             expected: vec!["An expression".into(), "An underscore".into()],
                             hint: None,
                         },
-                        location,
+                        arg_location,
                     );
                 }
 
                 Ok(CallArg {
                     implicit: None,
                     label,
-                    location,
+                    location: arg_location,
                     value: UntypedExpr::Var {
-                        location,
+                        location: discard_location,
                         name: CAPTURE_VARIABLE.into(),
                     },
                 })

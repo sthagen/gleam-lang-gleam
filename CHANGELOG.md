@@ -15,9 +15,9 @@
 
 ### Compiler
 
-- Labelled arguments can now be punned. This means that when you're passing a
-  variable as a labelled argument and it happens to have the same name as the
-  label, you can omit the variable name:
+- Labelled arguments can now use the label shorthand syntax.
+  This means that when you're passing a variable as a labelled argument and it
+  happens to have the same name as the label, you can omit the variable name:
 
   ```gleam
   pub fn date(day day: Int, month month: Month, year year: Year) -> Date {
@@ -37,9 +37,10 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- Labelled pattern variables can now be punned. This means that when you're
-  pattern matching on a record constructor and binding its labelled fields to
-  variables that happen to have the same name, you can omit the variable name:
+- Labelled pattern variables can now use the label shorthand syntax.
+  This means that when you're pattern matching on a record constructor and
+  binding its labelled fields to variables that happen to have the same name,
+  you can omit the variable name:
 
   ```gleam
   pub type Date
@@ -134,6 +135,11 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The `little` and `big` endianness options, the `signed` and `unsigned` integer
+  options, and sized floats (32-bit and 64-bit), can now be used in bit array
+  expressions and patterns on the JavaScript target.
+  ([Richard Viney](https://github.com/richard-viney))
+
 ### Formatter
 
 - The formatter will no longer move a documentation comment below a regular
@@ -212,6 +218,33 @@
 
 - The language server can now show signature help when writing functions.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server now supports listing document symbols, such as functions
+  and constants, for the current Gleam file.
+  ([PgBiel](https://github.com/PgBiel))
+
+- The language server can now suggest a code action to automatically use
+  shorthand labels where possible:
+
+  ```gleam
+  case date {
+    Day(day: day, month: month, year: year) -> todo
+  }
+  ```
+
+  Becomes:
+
+  ```gleam
+  case date {
+    Day(day:, month:, year:) -> todo
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server can now show completions for labels when writing a
+  function call or record construction.
+  ([Ameen Radwan](https://github.com/Acepie))
 
 ### Bug Fixes
 
