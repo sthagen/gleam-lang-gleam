@@ -25,6 +25,38 @@ use super::{
     compiler::LspProjectCompiler, files::FileSystemProxy, DownloadDependencies, MakeLocker,
 };
 
+// Represents the kind/specificity of completion that is being requested.
+#[derive(Copy, Clone)]
+enum CompletionKind {
+    // A label for a function or type definition
+    Label,
+    // A field of a record
+    FieldAccessor,
+    // Values or types defined in the current module
+    LocallyDefined,
+    // Values or types defined in an already imported module
+    ImportedModule,
+    // Types defined in the prelude
+    Prelude,
+    // Types defined in a module that has not been imported
+    ImportableModule,
+}
+
+// Gives the sort text for a completion item based on the kind and label.
+// This ensures that more specific kinds of completions are placed before
+// less specific ones..
+fn sort_text(kind: CompletionKind, label: &str) -> String {
+    let priority: u8 = match kind {
+        CompletionKind::Label => 0,
+        CompletionKind::FieldAccessor => 1,
+        CompletionKind::LocallyDefined => 2,
+        CompletionKind::ImportedModule => 3,
+        CompletionKind::Prelude => 4,
+        CompletionKind::ImportableModule => 5,
+    };
+    format!("{}_{}", priority, label)
+}
+
 // The form in which a type completion is needed in context.
 // Mainly used to determine if the "type" keyword should be appended to the completion
 enum TypeCompletionForm {
@@ -238,6 +270,7 @@ where
                 type_,
                 insert_range,
                 TypeCompletionForm::UnqualifiedImport,
+                CompletionKind::ImportedModule,
             ));
         }
 
@@ -261,6 +294,7 @@ where
                 name,
                 value,
                 insert_range,
+                CompletionKind::ImportedModule,
             ));
         }
 
@@ -350,10 +384,13 @@ where
 
         // Prelude types
         for type_ in PreludeType::iter() {
+            let label: String = type_.name().into();
+            let sort_text = Some(sort_text(CompletionKind::Prelude, &label));
             completions.push(CompletionItem {
-                label: type_.name().into(),
+                label,
                 detail: Some("Type".into()),
                 kind: Some(CompletionItemKind::CLASS),
+                sort_text,
                 ..Default::default()
             });
         }
@@ -369,6 +406,7 @@ where
                     type_,
                     insert_range,
                     TypeCompletionForm::Default,
+                    CompletionKind::LocallyDefined,
                 ));
             }
         }
@@ -401,6 +439,7 @@ where
                         type_,
                         insert_range,
                         TypeCompletionForm::Default,
+                        CompletionKind::ImportedModule,
                     ));
                 }
             }
@@ -417,6 +456,7 @@ where
                             type_,
                             insert_range,
                             TypeCompletionForm::Default,
+                            CompletionKind::ImportedModule,
                         )),
                         None => continue,
                     }
@@ -459,6 +499,7 @@ where
                     type_,
                     insert_range,
                     TypeCompletionForm::Default,
+                    CompletionKind::ImportableModule,
                 );
                 add_import_to_completion(
                     &mut completion,
@@ -489,7 +530,14 @@ where
                 // Here we do not check for the internal attribute: we always want
                 // to show autocompletions for values defined in the same module,
                 // even if those are internal.
-                completions.push(value_completion(None, mod_name, name, value, insert_range));
+                completions.push(value_completion(
+                    None,
+                    mod_name,
+                    name,
+                    value,
+                    insert_range,
+                    CompletionKind::LocallyDefined,
+                ));
             }
         }
 
@@ -521,6 +569,7 @@ where
                         name,
                         value,
                         insert_range,
+                        CompletionKind::ImportedModule,
                     ));
                 }
             }
@@ -539,6 +588,7 @@ where
                                 name,
                                 value,
                                 insert_range,
+                                CompletionKind::ImportedModule,
                             ))
                         }
                         None => continue,
@@ -575,8 +625,14 @@ where
                     continue;
                 }
 
-                let mut completion =
-                    value_completion(Some(qualifier), module_full_name, name, value, insert_range);
+                let mut completion = value_completion(
+                    Some(qualifier),
+                    module_full_name,
+                    name,
+                    value,
+                    insert_range,
+                    CompletionKind::ImportableModule,
+                );
 
                 add_import_to_completion(
                     &mut completion,
@@ -667,10 +723,13 @@ where
                     args.get(*arg_index as usize)
                         .map(|a| Printer::new().pretty_print(a, 0))
                 });
+                let label = format!("{label}:");
+                let sort_text = Some(sort_text(CompletionKind::Label, &label));
                 CompletionItem {
-                    label: format!("{label}:"),
+                    label,
                     detail,
                     kind: Some(CompletionItemKind::FIELD),
+                    sort_text,
                     ..Default::default()
                 }
             })
@@ -763,6 +822,7 @@ fn type_completion(
     type_: &TypeConstructor,
     insert_range: Range,
     include_type_in_completion: TypeCompletionForm,
+    priority: CompletionKind,
 ) -> CompletionItem {
     let label = match module {
         Some(module) => format!("{module}.{name}"),
@@ -779,6 +839,7 @@ fn type_completion(
         label: label.clone(),
         kind,
         detail: Some("Type".into()),
+        sort_text: Some(sort_text(priority, &label)),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             range: insert_range,
             new_text: match include_type_in_completion {
@@ -796,6 +857,7 @@ fn value_completion(
     name: &str,
     value: &crate::type_::ValueConstructor,
     insert_range: Range,
+    priority: CompletionKind,
 ) -> CompletionItem {
     let label = match module_qualifier {
         Some(module) => format!("{module}.{name}"),
@@ -829,6 +891,7 @@ fn value_completion(
             description: Some(module_name.into()),
         }),
         documentation,
+        sort_text: Some(sort_text(priority, &label)),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             range: insert_range,
             new_text: label.clone(),
@@ -844,6 +907,7 @@ fn field_completion(label: &str, type_: Arc<Type>) -> CompletionItem {
         label: label.into(),
         kind: Some(CompletionItemKind::FIELD),
         detail: Some(type_),
+        sort_text: Some(sort_text(CompletionKind::FieldAccessor, label)),
         ..Default::default()
     }
 }

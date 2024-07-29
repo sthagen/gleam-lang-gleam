@@ -140,6 +140,10 @@
   expressions and patterns on the JavaScript target.
   ([Richard Viney](https://github.com/richard-viney))
 
+- The `utf8` option can now be used with constant strings in bit array patterns
+  on the JavaScript target.
+  ([Richard Viney](https://github.com/richard-viney))
+
 ### Formatter
 
 - The formatter will no longer move a documentation comment below a regular
@@ -273,6 +277,12 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Completions are now sorted by priority based on why the completion is in the
+  list. This means that more specific completions like labels and local
+  definitions will be shown before more broad completions like functions from a
+  not yet imported module.
+  ([Ameen Radwan](https://github.com/Acepie))
+
 ### Bug Fixes
 
 - Functions, types and constructors named `module_info` are now escaped
@@ -292,6 +302,11 @@
 
 - Fixed formatting of function definitions marked as `@internal`
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where importing a record constructor in an unqualified fashion and
+  aliasing it and then using it in a case guard expression would generate
+  invalid JavaScript.
+  ([PgBiel](https://github.com/PgBiel))
 
 ## v1.3.2 - 2024-07-11
 
