@@ -36,7 +36,7 @@ use crate::{
 use camino::Utf8PathBuf;
 use ecow::EcoString;
 use itertools::Itertools;
-use name::{check_argument_names, check_name_case, correct_name_case, NameCorrection};
+use name::{check_argument_names, check_name_case};
 use std::{
     collections::HashMap,
     sync::{Arc, OnceLock},
@@ -162,7 +162,6 @@ impl<'a, A> ModuleAnalyzerConstructor<'a, A> {
             value_names: HashMap::with_capacity(module.definitions.len()),
             hydrators: HashMap::with_capacity(module.definitions.len()),
             module_name: module.name.clone(),
-            name_corrections: vec![],
         }
         .infer_module(module)
     }
@@ -181,7 +180,6 @@ struct ModuleAnalyzer<'a, A> {
     src_path: Utf8PathBuf,
     problems: Problems,
     value_names: HashMap<EcoString, SrcSpan>,
-    name_corrections: Vec<NameCorrection>,
     hydrators: HashMap<EcoString, Hydrator>,
     module_name: EcoString,
 }
@@ -326,7 +324,6 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 package: self.package_config.name.clone(),
                 is_internal,
                 unused_imports,
-                name_corrections: self.name_corrections,
                 line_numbers: self.line_numbers,
                 src_path: self.src_path,
                 warnings,
@@ -366,12 +363,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             has_erlang_external: false,
             has_javascript_external: false,
         };
-        let mut expr_typer = ExprTyper::new(
-            environment,
-            definition,
-            &mut self.problems,
-            &mut self.name_corrections,
-        );
+        let mut expr_typer = ExprTyper::new(environment, definition, &mut self.problems);
         let typed_expr = expr_typer.infer_const(&annotation, *value);
         let type_ = typed_expr.type_();
         let implementations = expr_typer.implementations;
@@ -496,12 +488,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
         // Infer the type using the preregistered args + return types as a starting point
         let result = environment.in_new_scope(&mut self.problems, |environment, problems| {
-            let mut expr_typer = ExprTyper::new(
-                environment,
-                definition,
-                problems,
-                &mut self.name_corrections,
-            );
+            let mut expr_typer = ExprTyper::new(environment, definition, problems);
             expr_typer.hydrator = self
                 .hydrators
                 .remove(&name)
@@ -745,7 +732,11 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         t: CustomType<()>,
         environment: &mut Environment<'_>,
     ) -> Result<TypedDefinition, Error> {
-        self.register_values_from_custom_type(&t, environment, &t.parameters)?;
+        self.register_values_from_custom_type(
+            &t,
+            environment,
+            &t.parameters.iter().map(|(_, name)| name).collect_vec(),
+        )?;
 
         let CustomType {
             documentation: doc,
@@ -835,7 +826,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         &mut self,
         t: &CustomType<()>,
         environment: &mut Environment<'_>,
-        type_parameters: &[EcoString],
+        type_parameters: &[&EcoString],
     ) -> Result<(), Error> {
         let CustomType {
             location,
@@ -1013,7 +1004,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         self.check_name_case(*name_location, name, Named::Type);
 
         let mut hydrator = Hydrator::new();
-        let parameters = self.make_type_vars(parameters, *location, &mut hydrator, environment);
+        let parameters = self.make_type_vars(parameters, &mut hydrator, environment);
 
         hydrator.clear_ridgid_type_names();
 
@@ -1091,12 +1082,12 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             return;
         }
 
-        self.check_name_case(*name_location, name, Named::TypeVariable);
+        self.check_name_case(*name_location, name, Named::TypeAlias);
 
         // Use the hydrator to convert the AST into a type, erroring if the AST was invalid
         // in some fashion.
         let mut hydrator = Hydrator::new();
-        let parameters = self.make_type_vars(args, *location, &mut hydrator, environment);
+        let parameters = self.make_type_vars(args, &mut hydrator, environment);
         let tryblock = || {
             hydrator.disallow_new_type_variables();
             let typ = hydrator.type_from_ast(resolved_type, environment, &mut self.problems)?;
@@ -1140,20 +1131,22 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
     fn make_type_vars(
         &mut self,
-        args: &[EcoString],
-        location: SrcSpan,
+        args: &[(SrcSpan, EcoString)],
         hydrator: &mut Hydrator,
         environment: &mut Environment<'_>,
     ) -> Vec<Arc<Type>> {
         args.iter()
-            .map(|name| match hydrator.add_type_variable(name, environment) {
-                Ok(t) => t,
-                Err(t) => {
-                    self.problems.error(Error::DuplicateTypeParameter {
-                        location,
-                        name: name.clone(),
-                    });
-                    t
+            .map(|(location, name)| {
+                self.check_name_case(*location, name, Named::TypeVariable);
+                match hydrator.add_type_variable(name, environment) {
+                    Ok(t) => t,
+                    Err(t) => {
+                        self.problems.error(Error::DuplicateTypeParameter {
+                            location: *location,
+                            name: name.clone(),
+                        });
+                        t
+                    }
                 }
             })
             .collect()
@@ -1194,7 +1187,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             names, location, ..
         } in args.iter()
         {
-            check_argument_names(names, &mut self.problems, &mut self.name_corrections);
+            check_argument_names(names, &mut self.problems);
 
             builder.add(names.get_label(), *location)?;
         }
@@ -1261,8 +1254,6 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
     fn check_name_case(&mut self, location: SrcSpan, name: &EcoString, kind: Named) {
         if let Err(error) = check_name_case(location, name, kind) {
             self.problems.error(error);
-            self.name_corrections
-                .push(correct_name_case(location, name, kind));
         }
     }
 }

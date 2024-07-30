@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.4.0-rc2 - Unreleased
+
+### Bug Fixes
+
+- Fixed a bug where pipe function arity errors could have an incorrect error
+  message.
+  ([sobolevn](https://github.com/sobolevn))
+
+- Fixed a bug where the case of type parameters would not be checked.
+  ([Surya Rose](https://github.com/gearsdatapacks))
+
 ## v1.4.0-rc1 - 2024-07-29
 
 ### Build tool
