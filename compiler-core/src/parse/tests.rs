@@ -343,8 +343,8 @@ fn triple_equals_with_whitespace() {
         "let wobble:Int = 32
         wobble ==     = 42",
         ParseError {
-            error: ParseErrorType::NoLetBinding,
-            location: SrcSpan { start: 42, end: 43 },
+            error: ParseErrorType::OpNakedRight,
+            location: SrcSpan { start: 35, end: 37 },
         }
     );
 }
@@ -430,6 +430,17 @@ fn no_let_binding3() {
             error: ParseErrorType::NoLetBinding
         }
     );
+}
+
+#[test]
+fn with_let_binding3() {
+    // The same with `let assert` must parse:
+    assert_parse!("let assert [x] = [2]");
+}
+
+#[test]
+fn with_let_binding3_and_annotation() {
+    assert_parse!("let assert [x]: List(Int) = [2]");
 }
 
 #[test]

@@ -385,6 +385,13 @@ where
     //   unit op unit pipe unit(call)
     //   unit op unit pipe unit(call) pipe unit(call)
     fn parse_expression(&mut self) -> Result<Option<UntypedExpr>, ParseError> {
+        self.parse_expression_inner(false)
+    }
+
+    fn parse_expression_inner(
+        &mut self,
+        is_let_binding: bool,
+    ) -> Result<Option<UntypedExpr>, ParseError> {
         // uses the simple operator parser algorithm
         let mut opstack = vec![];
         let mut estack = vec![];
@@ -392,7 +399,10 @@ where
         let mut last_op_end = 0;
         loop {
             match self.parse_expression_unit()? {
-                Some(unit) => estack.push(unit),
+                Some(unit) => {
+                    self.post_process_expression_unit(&unit, is_let_binding)?;
+                    estack.push(unit)
+                }
                 _ if estack.is_empty() => return Ok(None),
                 _ => {
                     return parse_error(
@@ -433,6 +443,23 @@ where
             &mut estack,
             &do_reduce_expression,
         ))
+    }
+
+    fn post_process_expression_unit(
+        &mut self,
+        unit: &UntypedExpr,
+        is_let_binding: bool,
+    ) -> Result<(), ParseError> {
+        // Produce better error message for `[x] = [1]` outside
+        // of `let` statement.
+        if !is_let_binding {
+            if let UntypedExpr::List { .. } = unit {
+                if let Some((start, Token::Equal, end)) = self.tok0 {
+                    return parse_error(ParseErrorType::NoLetBinding, SrcSpan { start, end });
+                }
+            }
+        }
+        Ok(())
     }
 
     fn parse_expression_unit_collapsing_single_value_blocks(
@@ -731,15 +758,6 @@ where
                 }
             }
 
-            // if it reaches this code block, there must be no "let" or "assert" at the beginning of the expression
-            Some((start, Token::Equal, end)) => {
-                return parse_error(ParseErrorType::NoLetBinding, SrcSpan { start, end })
-            }
-
-            Some((start, Token::Colon, end)) => {
-                return parse_error(ParseErrorType::NoLetBinding, SrcSpan { start, end })
-            }
-
             t0 => {
                 self.tok0 = t0;
                 return Ok(None);
@@ -934,7 +952,7 @@ where
                 end: pattern.location().end,
             },
         })?;
-        let value = self.parse_expression()?.ok_or(ParseError {
+        let value = self.parse_expression_inner(true)?.ok_or(ParseError {
             error: ParseErrorType::ExpectedValue,
             location: SrcSpan {
                 start: eq_s,
@@ -994,10 +1012,21 @@ where
 
             token => {
                 self.tok0 = token;
+                self.parse_statement_errors()?;
                 let expression = self.parse_expression()?.map(Statement::Expression);
                 Ok(expression)
             }
         }
+    }
+
+    fn parse_statement_errors(&mut self) -> Result<(), ParseError> {
+        // Better error: name definitions must start with `let`
+        if let Some((_, Token::Name { .. }, _)) = self.tok0.as_ref() {
+            if let Some((start, Token::Equal | Token::Colon, end)) = self.tok1 {
+                return parse_error(ParseErrorType::NoLetBinding, SrcSpan { start, end });
+            }
+        }
+        Ok(())
     }
 
     fn parse_block(&mut self, start: u32) -> Result<UntypedExpr, ParseError> {
