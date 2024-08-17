@@ -80,7 +80,6 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
         expressions: impl IntoIterator<Item = UntypedExpr>,
     ) -> Result<TypedExpr, Error> {
         let mut finally = None;
-        let expressions = expressions.into_iter().collect_vec();
 
         for (i, call) in expressions.into_iter().enumerate() {
             if self.expr_typer.previous_panics {
@@ -214,7 +213,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
         args: Vec<CallArg<UntypedExpr>>,
         location: SrcSpan,
     ) -> TypedExpr {
-        let (function, args, typ) = self.expr_typer.do_infer_call_with_known_fun(
+        let (function, args, type_) = self.expr_typer.do_infer_call_with_known_fun(
             function,
             args,
             location,
@@ -222,7 +221,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
         );
         let function = TypedExpr::Call {
             location,
-            typ,
+            type_,
             args,
             fun: Box::new(function),
         };
@@ -232,7 +231,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
         // the function below. If it is not we don't know if the error comes
         // from incorrect usage of the pipe or if it originates from the
         // argument expressions.
-        let (function, args, typ) = self.expr_typer.do_infer_call_with_known_fun(
+        let (function, args, type_) = self.expr_typer.do_infer_call_with_known_fun(
             function,
             args,
             location,
@@ -240,7 +239,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
         );
         TypedExpr::Call {
             location,
-            typ,
+            type_,
             args,
             fun: Box::new(function),
         }
@@ -259,7 +258,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
         // the function below. If it is not we don't know if the error comes
         // from incorrect usage of the pipe or if it originates from the
         // argument expressions.
-        let (fun, args, typ) = self.expr_typer.do_infer_call_with_known_fun(
+        let (fun, args, type_) = self.expr_typer.do_infer_call_with_known_fun(
             function,
             arguments,
             location,
@@ -267,7 +266,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
         );
         TypedExpr::Call {
             location,
-            typ,
+            type_,
             args,
             fun: Box::new(fun),
         }
@@ -297,7 +296,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
 
         Ok(TypedExpr::Call {
             location: function.location(),
-            typ: return_type,
+            type_: return_type,
             fun: function,
             args: vec![self.typed_left_hand_value_variable_call_argument()],
         })

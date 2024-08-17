@@ -416,7 +416,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         self.problems.warning(Warning::Todo {
             kind,
             location,
-            typ: type_.clone(),
+            type_: type_.clone(),
         });
 
         let message = message
@@ -481,7 +481,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         TypedExpr::String {
             location,
             value,
-            typ: string(),
+            type_: string(),
         }
     }
 
@@ -489,7 +489,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         TypedExpr::Int {
             location,
             value,
-            typ: int(),
+            type_: int(),
         }
     }
 
@@ -497,7 +497,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         TypedExpr::Float {
             location,
             value,
-            typ: float(),
+            type_: float(),
         }
     }
 
@@ -542,9 +542,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     // Helper to push a new error to the errors list and return an invalid expression.
     fn error_expr_with_rigid_names(&mut self, location: SrcSpan, error: Error) -> TypedExpr {
         self.error_with_rigid_names(error);
+        self.error_expr(location)
+    }
+
+    // Helper to create a new error expr.
+    fn error_expr(&mut self, location: SrcSpan) -> TypedExpr {
         TypedExpr::Invalid {
             location,
-            typ: self.new_unbound_var(),
+            type_: self.new_unbound_var(),
         }
     }
 
@@ -746,7 +751,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         let (args, body) = self.do_infer_fn(args, expected_args, body, &return_annotation)?;
         let args_types = args.iter().map(|a| a.type_.clone()).collect();
-        let typ = fn_(args_types, body.last().type_());
+        let type_ = fn_(args_types, body.last().type_());
 
         // Defining an anonymous function never panics.
         self.already_warned_for_unreachable_code = already_warned_for_unreachable_code;
@@ -754,7 +759,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         Ok(TypedExpr::Fn {
             location,
-            typ,
+            type_,
             is_capture,
             args,
             body,
@@ -773,7 +778,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             location,
             ..
         } = arg;
-        let typ = annotation
+        let type_ = annotation
             .clone()
             .map(|t| self.type_from_ast(&t))
             .unwrap_or_else(|| Ok(self.new_unbound_var()))?;
@@ -784,14 +789,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // function being type checked, resulting in better type errors and the
         // record field access syntax working.
         if let Some(expected) = expected {
-            unify(expected, typ.clone()).map_err(|e| convert_unify_error(e, location))?;
+            unify(expected, type_.clone()).map_err(|e| convert_unify_error(e, location))?;
         }
 
         Ok(Arg {
             names,
             location,
             annotation,
-            type_: typ,
+            type_,
         })
     }
 
@@ -802,7 +807,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         location: SrcSpan,
         kind: CallKind,
     ) -> TypedExpr {
-        let (fun, args, typ) = self.do_infer_call(fun, args, location, kind);
+        let (fun, args, type_) = self.do_infer_call(fun, args, location, kind);
 
         // One common mistake is to think that the syntax for adding a message
         // to a `todo` or a `panic` exception is to `todo("...")`, but really
@@ -832,7 +837,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         TypedExpr::Call {
             location,
-            typ,
+            type_,
             args,
             fun: Box::new(fun),
         }
@@ -844,26 +849,26 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         tail: Option<Box<UntypedExpr>>,
         location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
-        let typ = self.new_unbound_var();
+        let type_ = self.new_unbound_var();
         // Type check each elements
         let elements = elements
             .into_iter()
             .map(|element| {
                 let element = self.infer(element)?;
                 // Ensure they all have the same type
-                unify(typ.clone(), element.type_()).map_err(|e| {
+                unify(type_.clone(), element.type_()).map_err(|e| {
                     convert_unify_error(e.list_element_mismatch(), element.location())
                 })?;
                 Ok(element)
             })
             .try_collect()?;
         // Type check the ..tail, if there is one
-        let typ = list(typ);
+        let type_ = list(type_);
         let tail = match tail {
             Some(tail) => {
                 let tail = self.infer(*tail)?;
                 // Ensure the tail has the same type as the preceding elements
-                unify(typ.clone(), tail.type_())
+                unify(type_.clone(), tail.type_())
                     .map_err(|e| convert_unify_error(e.list_tail_mismatch(), tail.location()))?;
                 Some(Box::new(tail))
             }
@@ -871,7 +876,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         };
         Ok(TypedExpr::List {
             location,
-            typ,
+            type_,
             elements,
             tail,
         })
@@ -883,11 +888,11 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
         let elems: Vec<_> = elems.into_iter().map(|e| self.infer(e)).try_collect()?;
-        let typ = tuple(elems.iter().map(HasType::type_).collect());
+        let type_ = tuple(elems.iter().map(HasType::type_).collect());
         Ok(TypedExpr::Tuple {
             location,
             elems,
-            typ,
+            type_,
         })
     }
 
@@ -981,7 +986,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 self.problems.error(module_access_err);
                 TypedExpr::Invalid {
                     location: label_location,
-                    typ: self.new_unbound_var(),
+                    type_: self.new_unbound_var(),
                 }
             }
             // In any other case use the record access for the error
@@ -993,14 +998,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     // Even if the access is not valid
                     Ok(record) => TypedExpr::RecordAccess {
                         location: label_location,
-                        typ: self.new_unbound_var(),
+                        type_: self.new_unbound_var(),
                         label: "".into(),
                         index: u64::MAX,
                         record: Box::new(record),
                     },
                     Err(_) => TypedExpr::Invalid {
                         location: label_location,
-                        typ: self.new_unbound_var(),
+                        type_: self.new_unbound_var(),
                     },
                 }
             }
@@ -1016,7 +1021,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let tuple = self.infer(tuple)?;
         match collapse_links(tuple.type_()).as_ref() {
             Type::Tuple { elems } => {
-                let typ = elems
+                let type_ = elems
                     .get(index as usize)
                     .ok_or_else(|| Error::OutOfBoundsTupleIndex {
                         location: SrcSpan {
@@ -1031,11 +1036,11 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     location,
                     index,
                     tuple: Box::new(tuple),
-                    typ,
+                    type_,
                 })
             }
 
-            typ if typ.is_unbound() => Err(Error::NotATupleUnbound {
+            type_ if type_.is_unbound() => Err(Error::NotATupleUnbound {
                 location: tuple.location(),
             }),
 
@@ -1054,14 +1059,22 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let segments = segments
             .into_iter()
             .map(|s| {
-                self.infer_bit_segment(*s.value, s.options, s.location, |env, expr| env.infer(expr))
+                let options = match s.value.as_ref() {
+                    UntypedExpr::String { .. } if s.options.is_empty() => {
+                        vec![BitArrayOption::Utf8 {
+                            location: SrcSpan::default(),
+                        }]
+                    }
+                    _ => s.options,
+                };
+                self.infer_bit_segment(*s.value, options, s.location, |env, expr| env.infer(expr))
             })
             .try_collect()?;
 
         Ok(TypedExpr::BitArray {
             location,
             segments,
-            typ: bits(),
+            type_: bits(),
         })
     }
 
@@ -1073,7 +1086,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let segments = segments
             .into_iter()
             .map(|s| {
-                self.infer_bit_segment(*s.value, s.options, s.location, |env, expr| {
+                let options = match s.value.as_ref() {
+                    Constant::String { .. } => vec![BitArrayOption::Utf8 {
+                        location: SrcSpan::default(),
+                    }],
+                    _ => s.options,
+                };
+                self.infer_bit_segment(*s.value, options, s.location, |env, expr| {
                     Ok(env.infer_const(&None, expr))
                 })
             })
@@ -1096,9 +1115,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let value = infer(self, value)?;
 
         let infer_option = |segment_option: BitArrayOption<UntypedValue>| {
-            infer_bit_array_option(segment_option, |value, typ| {
+            infer_bit_array_option(segment_option, |value, type_| {
                 let typed_value = infer(self, value)?;
-                unify(typ, typed_value.type_())
+                unify(type_, typed_value.type_())
                     .map_err(|e| convert_unify_error(e, typed_value.location()))?;
                 Ok(typed_value)
             })
@@ -1106,18 +1125,19 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         let options: Vec<_> = options.into_iter().map(infer_option).try_collect()?;
 
-        let typ = bit_array::type_options_for_value(&options).map_err(|error| {
+        let type_ = bit_array::type_options_for_value(&options).map_err(|error| {
             Error::BitArraySegmentError {
                 error: error.error,
                 location: error.location,
             }
         })?;
 
-        unify(typ.clone(), value.type_()).map_err(|e| convert_unify_error(e, value.location()))?;
+        unify(type_.clone(), value.type_())
+            .map_err(|e| convert_unify_error(e, value.location()))?;
 
         Ok(BitArraySegment {
             location,
-            type_: typ,
+            type_,
             value: Box::new(value),
             options,
         })
@@ -1142,7 +1162,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 return Ok(TypedExpr::BinOp {
                     location,
                     name,
-                    typ: bool(),
+                    type_: bool(),
                     left: Box::new(left),
                     right: Box::new(right),
                 });
@@ -1185,7 +1205,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         Ok(TypedExpr::BinOp {
             location,
             name,
-            typ: output_type,
+            type_: output_type,
             left: Box::new(left),
             right: Box::new(right),
         })
@@ -1393,7 +1413,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         TypedExpr::Case {
             location,
-            typ: return_type,
+            type_: return_type,
             subjects: typed_subjects,
             clauses: typed_clauses,
         }
@@ -1450,7 +1470,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     None,
                     TypedExpr::Invalid {
                         location: then_location,
-                        typ: self.new_unbound_var(),
+                        type_: self.new_unbound_var(),
                     },
                     vec![],
                     vec![],
@@ -1559,7 +1579,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         })
                     }
 
-                    typ if typ.is_unbound() => Err(Error::NotATupleUnbound {
+                    type_ if type_.is_unbound() => Err(Error::NotATupleUnbound {
                         location: tuple.location(),
                     }),
 
@@ -1995,10 +2015,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     fn infer_guard_record_access(
         &mut self,
-        container: ClauseGuard<Arc<Type>, EcoString>,
+        container: TypedClauseGuard,
         label: EcoString,
         location: SrcSpan,
-    ) -> Result<ClauseGuard<Arc<Type>, EcoString>, Error> {
+    ) -> Result<TypedClauseGuard, Error> {
         let container = Box::new(container);
         let container_type = container.type_();
         let (index, label, type_) = self.infer_known_record_access(
@@ -2023,13 +2043,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         label: EcoString,
         location: SrcSpan,
         record_access_erorr: Error,
-    ) -> Result<ClauseGuard<Arc<Type>, EcoString>, Error> {
+    ) -> Result<TypedClauseGuard, Error> {
         let module_access = self
             .infer_module_access(&name, label, &location, location)
             .and_then(|ma| match ma {
                 TypedExpr::ModuleSelect {
                     location,
-                    typ,
+                    type_,
                     label,
                     module_name,
                     module_alias,
@@ -2038,7 +2058,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     ModuleValueConstructor::Constant { literal, .. } => {
                         Ok(ClauseGuard::ModuleSelect {
                             location,
-                            type_: typ,
+                            type_,
                             label,
                             module_name,
                             module_alias,
@@ -2130,7 +2150,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         Ok(TypedExpr::ModuleSelect {
             label,
-            typ: Arc::clone(&type_),
+            type_: Arc::clone(&type_),
             location: select_location,
             module_name,
             module_alias: module_alias.clone(),
@@ -2147,14 +2167,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     ) -> Result<TypedExpr, Error> {
         let record = Box::new(record);
         let record_type = record.type_();
-        let (index, label, typ) =
+        let (index, label, type_) =
             self.infer_known_record_access(record_type, record.location(), usage, location, label)?;
         Ok(TypedExpr::RecordAccess {
             record,
             label,
             index,
             location,
-            typ,
+            type_,
         })
     }
 
@@ -2189,7 +2209,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         let unknown_field = |fields| Error::UnknownRecordField {
             usage,
-            typ: record_type.clone(),
+            type_: record_type.clone(),
             location,
             label: label.clone(),
             fields,
@@ -2217,7 +2237,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let RecordAccessor {
             index,
             label,
-            type_: typ,
+            type_,
         } = accessors
             .accessors
             .get(&label)
@@ -2226,10 +2246,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let accessor_record_type = accessors.type_.clone();
         let mut type_vars = hashmap![];
         let accessor_record_type = self.instantiate(accessor_record_type, &mut type_vars);
-        let typ = self.instantiate(typ, &mut type_vars);
+        let type_ = self.instantiate(type_, &mut type_vars);
         unify(accessor_record_type, record_type)
             .map_err(|e| convert_unify_error(e, record_location))?;
-        Ok((index, label, typ))
+        Ok((index, label, type_))
     }
 
     fn infer_record_update(
@@ -2351,7 +2371,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         Ok(TypedExpr::RecordUpdate {
             location,
-            typ: spread.type_(),
+            type_: spread.type_(),
             spread: Box::new(spread),
             args,
         })
@@ -2378,7 +2398,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                                 .environment
                                 .module_types
                                 .keys()
-                                .any(|typ| typ == name),
+                                .any(|type_| type_ == name),
                         })?;
 
                 // Register the value as seen for detection of unused values
@@ -2420,7 +2440,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let ValueConstructor {
             publicity,
             variant,
-            type_: typ,
+            type_,
             deprecation,
         } = constructor;
 
@@ -2436,12 +2456,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         self.narrow_implementations(*location, &variant)?;
 
         // Instantiate generic variables into unbound variables for this usage
-        let typ = self.instantiate(typ, &mut hashmap![]);
+        let type_ = self.instantiate(type_, &mut hashmap![]);
         Ok(ValueConstructor {
             publicity,
             deprecation,
             variant,
-            type_: typ,
+            type_,
         })
     }
 
@@ -2511,7 +2531,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     location,
                     name,
                     args: vec![],
-                    typ: constructor.type_,
+                    type_: constructor.type_,
                     tag,
                     field_map,
                 })
@@ -2557,7 +2577,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 // have to convert to this other data structure.
                 let fun = match &module {
                     Some(module_alias) => {
-                        let typ = Arc::clone(&constructor.type_);
+                        let type_ = Arc::clone(&constructor.type_);
                         let module_name = self
                             .environment
                             .imported_modules
@@ -2571,7 +2591,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             name: name.clone(),
                             field_map: field_map.clone(),
                             arity: args.len() as u16,
-                            type_: Arc::clone(&typ),
+                            type_: Arc::clone(&type_),
                             location: constructor.variant.definition_location(),
                             documentation: None,
                         };
@@ -2580,7 +2600,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             label: name.clone(),
                             module_alias: module_alias.clone(),
                             module_name,
-                            typ,
+                            type_,
                             constructor: module_value_constructor,
                             location,
                         }
@@ -2616,7 +2636,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 let args = args_types
                     .iter_mut()
                     .zip(args)
-                    .map(|(typ, arg): (&mut Arc<Type>, _)| {
+                    .map(|(type_, arg): (&mut Arc<Type>, _)| {
                         let CallArg {
                             label,
                             value,
@@ -2624,7 +2644,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             implicit,
                         } = arg;
                         let value = self.infer_const(&None, value);
-                        unify(typ.clone(), value.type_())
+                        unify(type_.clone(), value.type_())
                             .map_err(|e| convert_unify_error(e, value.location()))?;
                         Ok(CallArg {
                             label,
@@ -2640,7 +2660,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     location,
                     name,
                     args,
-                    typ: return_type,
+                    type_: return_type,
                     tag,
                     field_map,
                 })
@@ -2668,7 +2688,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         location,
                         module,
                         name,
-                        typ: Arc::clone(&constructor.type_),
+                        type_: Arc::clone(&constructor.type_),
                         constructor: Some(Box::from(constructor)),
                     }),
                     // It cannot be a Record because then this constant would have been
@@ -2722,7 +2742,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 self.problems.error(e);
                 Constant::Invalid {
                     location: loc,
-                    typ: self.new_unbound_var(),
+                    type_: self.new_unbound_var(),
                 }
             }
             // Type annotation and inferred value are valid. Ensure they are unifiable.
@@ -2734,7 +2754,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     self.problems.error(e);
                     Constant::Invalid {
                         location: loc,
-                        typ: const_ann,
+                        type_: const_ann,
                     }
                 } else {
                     inferred
@@ -2746,7 +2766,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 self.problems.error(value_err);
                 Constant::Invalid {
                     location: loc,
-                    typ: const_ann,
+                    type_: const_ann,
                 }
             }
             // Type annotation is invalid but the inferred value is ok. Use the inferred type.
@@ -2761,7 +2781,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 self.problems.error(value_err);
                 Constant::Invalid {
                     location: loc,
-                    typ: self.new_unbound_var(),
+                    type_: self.new_unbound_var(),
                 }
             }
         }
@@ -2787,12 +2807,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         untyped_elements: Vec<UntypedConstant>,
         location: SrcSpan,
     ) -> Result<TypedConstant, Error> {
-        let typ = self.new_unbound_var();
+        let type_ = self.new_unbound_var();
         let mut elements = Vec::with_capacity(untyped_elements.len());
 
         for element in untyped_elements {
             let element = self.infer_const(&None, element);
-            unify(typ.clone(), element.type_())
+            unify(type_.clone(), element.type_())
                 .map_err(|e| convert_unify_error(e, element.location()))?;
             elements.push(element);
         }
@@ -2800,7 +2820,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         Ok(Constant::List {
             elements,
             location,
-            typ: list(typ),
+            type_: list(type_),
         })
     }
 
@@ -2847,6 +2867,22 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 FieldAccessUsage::MethodCall,
             )),
 
+            UntypedExpr::Fn {
+                location,
+                is_capture,
+                arguments,
+                body,
+                return_annotation,
+                ..
+            } if arguments.len() == args.len() => self.infer_fn_with_call_context(
+                arguments,
+                &args,
+                body,
+                is_capture,
+                return_annotation,
+                location,
+            ),
+
             fun => self.infer(fun),
         };
 
@@ -2857,8 +2893,37 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             }
         };
 
-        let (fun, args, typ) = self.do_infer_call_with_known_fun(fun, args, location, kind);
-        (fun, args, typ)
+        let (fun, args, type_) = self.do_infer_call_with_known_fun(fun, args, location, kind);
+        (fun, args, type_)
+    }
+
+    fn infer_fn_with_call_context(
+        &mut self,
+        args: Vec<UntypedArg>,
+        call_args: &[CallArg<UntypedExpr>],
+        body: Vec1<UntypedStatement>,
+        is_capture: bool,
+        return_annotation: Option<TypeAst>,
+        location: SrcSpan,
+    ) -> Result<TypedExpr, Error> {
+        let typed_call_args: Vec<Arc<Type>> = call_args
+            .iter()
+            .map(|a| {
+                match self.infer(a.value.clone()) {
+                    Ok(arg) => arg,
+                    Err(_e) => self.error_expr(location),
+                }
+                .type_()
+            })
+            .collect_vec();
+        self.infer_fn(
+            args,
+            &typed_call_args,
+            body,
+            is_capture,
+            return_annotation,
+            location,
+        )
     }
 
     pub fn do_infer_call_with_known_fun(
@@ -2992,7 +3057,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             .iter_mut()
             .zip(args)
             .enumerate()
-            .map(|(i, (typ, arg))| {
+            .map(|(i, (type_, arg))| {
                 let CallArg {
                     label,
                     value,
@@ -3026,7 +3091,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     )
                 }
 
-                let value = match self.infer_call_argument(value, typ.clone(), argument_kind) {
+                let value = match self.infer_call_argument(value, type_.clone(), argument_kind) {
                     Ok(value) => value,
                     Err(e) => self.error_expr_with_rigid_names(location, e),
                 };
@@ -3057,7 +3122,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     label,
                     value: TypedExpr::Invalid {
                         location,
-                        typ: self.new_unbound_var(),
+                        type_: self.new_unbound_var(),
                     },
                     implicit: None,
                     location,
@@ -3078,12 +3143,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     fn infer_call_argument(
         &mut self,
         value: UntypedExpr,
-        typ: Arc<Type>,
+        type_: Arc<Type>,
         kind: ArgumentKind,
     ) -> Result<TypedExpr, Error> {
-        let typ = collapse_links(typ);
+        let type_ = collapse_links(type_);
 
-        let value = match (&*typ, value) {
+        let value = match (&*type_, value) {
             // If the argument is expected to be a function and we are passed a
             // function literal with the correct number of arguments then we
             // have special handling of this argument, passing in information
@@ -3117,7 +3182,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             (_, value) => self.infer(value),
         }?;
 
-        unify(typ, value.type_())
+        unify(type_, value.type_())
             .map_err(|e| convert_unify_call_error(e, value.location(), kind))?;
         Ok(value)
     }
@@ -3219,7 +3284,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             start: body.last().location().end,
                             end: body.last().location().end,
                         },
-                        typ: body_typer.new_unbound_var(),
+                        type_: body_typer.new_unbound_var(),
                     }))
                 };
             }
@@ -3283,7 +3348,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         &mut self,
         location: SrcSpan,
         subject_types: &[Arc<Type>],
-        clauses: &[Clause<TypedExpr, Arc<Type>, EcoString>],
+        clauses: &[TypedClause],
     ) -> Result<(), Error> {
         use exhaustiveness::{Body, Column, Compiler, PatternArena, Row};
 
@@ -3471,7 +3536,7 @@ struct UseAssignments {
     /// fn(_use1) { let Box(x) = _use1 }
     /// // ^^^^^ The function arguments
     /// ```
-    function_arguments: Vec<Arg<()>>,
+    function_arguments: Vec<UntypedArg>,
 
     /// With sugar
     /// ```gleam

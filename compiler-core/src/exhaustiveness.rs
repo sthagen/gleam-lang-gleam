@@ -32,6 +32,7 @@ mod missing_patterns;
 mod pattern;
 #[cfg(test)]
 mod pattern_tests;
+pub mod printer;
 
 use self::pattern::{Constructor, Pattern, PatternId};
 use crate::{

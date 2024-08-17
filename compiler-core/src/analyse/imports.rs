@@ -1,7 +1,7 @@
 use ecow::EcoString;
 
 use crate::{
-    ast::{Import, SrcSpan, UnqualifiedImport},
+    ast::{SrcSpan, UnqualifiedImport, UntypedImport},
     build::Origin,
     type_::{
         EntityKind, Environment, Error, ModuleInterface, Problems, UnusedModuleAlias,
@@ -32,7 +32,7 @@ impl<'context, 'problems> Importer<'context, 'problems> {
     pub fn run<'code>(
         origin: Origin,
         env: Environment<'context>,
-        imports: &'code [Import<()>],
+        imports: &'code [UntypedImport],
         problems: &'problems mut Problems,
     ) -> Environment<'context> {
         let mut importer = Self::new(origin, env, problems);
@@ -42,7 +42,7 @@ impl<'context, 'problems> Importer<'context, 'problems> {
         importer.environment
     }
 
-    fn register_import(&mut self, import: &Import<()>) {
+    fn register_import(&mut self, import: &UntypedImport) {
         let location = import.location;
         let name = import.module.clone();
 
@@ -139,12 +139,19 @@ impl<'context, 'problems> Importer<'context, 'problems> {
         };
 
         match variant {
-            &ValueConstructorVariant::Record { .. } => self.environment.init_usage(
-                used_name.clone(),
-                EntityKind::ImportedConstructor,
-                location,
-                self.problems,
-            ),
+            ValueConstructorVariant::Record { name, module, .. } => {
+                self.environment.init_usage(
+                    used_name.clone(),
+                    EntityKind::ImportedConstructor,
+                    location,
+                    self.problems,
+                );
+                self.environment.value_names.named_constructor_in_scope(
+                    module.clone(),
+                    name.clone(),
+                    used_name.clone(),
+                );
+            }
             _ => self.environment.init_usage(
                 used_name.clone(),
                 EntityKind::ImportedValue,
@@ -189,7 +196,7 @@ impl<'context, 'problems> Importer<'context, 'problems> {
 
     fn register_module(
         &mut self,
-        import: &Import<()>,
+        import: &UntypedImport,
         import_info: &'context ModuleInterface,
     ) -> Result<(), Error> {
         if let Some(used_name) = import.used_name() {
@@ -225,7 +232,11 @@ impl<'context, 'problems> Importer<'context, 'problems> {
             let _ = self
                 .environment
                 .imported_modules
-                .insert(used_name, (import.location, import_info));
+                .insert(used_name.clone(), (import.location, import_info));
+
+            self.environment
+                .value_names
+                .imported_module(import.module.clone(), used_name)
         };
 
         Ok(())

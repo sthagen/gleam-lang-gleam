@@ -705,7 +705,7 @@ impl<'comments> Formatter<'comments> {
         publicity: Publicity,
         name: &'a str,
         args: &'a [(SrcSpan, EcoString)],
-        typ: &'a TypeAst,
+        type_: &'a TypeAst,
         deprecation: &'a Deprecation,
         location: &SrcSpan,
     ) -> Document<'a> {
@@ -723,7 +723,7 @@ impl<'comments> Formatter<'comments> {
         };
 
         head.append(" =")
-            .append(line().append(self.type_ast(typ)).group().nest(INDENT))
+            .append(line().append(self.type_ast(type_)).group().nest(INDENT))
     }
 
     fn fn_arg<'a, A>(&mut self, arg: &'a Arg<A>) -> Document<'a> {
@@ -2123,8 +2123,8 @@ impl<'comments> Formatter<'comments> {
 
     fn list_pattern<'a>(
         &mut self,
-        elements: &'a [Pattern<()>],
-        tail: &'a Option<Box<Pattern<()>>>,
+        elements: &'a [UntypedPattern],
+        tail: &'a Option<Box<UntypedPattern>>,
     ) -> Document<'a> {
         if elements.is_empty() {
             return match tail {

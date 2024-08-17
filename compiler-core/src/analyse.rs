@@ -10,7 +10,8 @@ use crate::{
         GroupedStatements, Import, ModuleConstant, Publicity, RecordConstructor,
         RecordConstructorArg, SrcSpan, Statement, TypeAlias, TypeAst, TypeAstConstructor,
         TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, TypedDefinition, TypedExpr,
-        TypedFunction, TypedModule, UntypedArg, UntypedFunction, UntypedModule, UntypedStatement,
+        TypedFunction, TypedModule, UntypedArg, UntypedCustomType, UntypedFunction, UntypedImport,
+        UntypedModule, UntypedModuleConstant, UntypedStatement, UntypedTypeAlias,
     },
     build::{Origin, Outcome, Target},
     call_graph::{into_dependency_order, CallGraphNode},
@@ -340,7 +341,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
     fn infer_module_constant(
         &mut self,
-        c: ModuleConstant<(), ()>,
+        c: UntypedModuleConstant,
         environment: &mut Environment<'_>,
     ) -> TypedDefinition {
         let ModuleConstant {
@@ -498,8 +499,8 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 Some(prereg_return_type.clone()),
             )?;
             let args_types = args.iter().map(|a| a.type_.clone()).collect();
-            let typ = fn_(args_types, body.last().type_());
-            Ok((typ, body, expr_typer.implementations))
+            let type_ = fn_(args_types, body.last().type_());
+            Ok((type_, body, expr_typer.implementations))
         });
 
         // If we could not successfully infer the type etc information of the
@@ -512,7 +513,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 self.problems.error(error);
                 let type_ = preregistered_type.clone();
                 let body = Vec1::new(Statement::Expression(TypedExpr::Invalid {
-                    typ: prereg_return_type.clone(),
+                    type_: prereg_return_type.clone(),
                     location: SrcSpan {
                         start: body_location.end,
                         end: body_location.end,
@@ -664,7 +665,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
     fn analyse_import(
         &mut self,
-        i: Import<()>,
+        i: UntypedImport,
         environment: &Environment<'_>,
     ) -> Option<TypedDefinition> {
         let Import {
@@ -712,7 +713,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
     fn analyse_custom_type(
         &mut self,
-        t: CustomType<()>,
+        t: UntypedCustomType,
         environment: &mut Environment<'_>,
     ) -> Option<TypedDefinition> {
         match self.do_analyse_custom_type(t, environment) {
@@ -727,7 +728,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
     // TODO: split this into a new class.
     fn do_analyse_custom_type(
         &mut self,
-        t: CustomType<()>,
+        t: UntypedCustomType,
         environment: &mut Environment<'_>,
     ) -> Result<TypedDefinition, Error> {
         self.register_values_from_custom_type(
@@ -822,7 +823,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
     fn register_values_from_custom_type(
         &mut self,
-        t: &CustomType<()>,
+        t: &UntypedCustomType,
         environment: &mut Environment<'_>,
         type_parameters: &[&EcoString],
     ) -> Result<(), Error> {
@@ -841,11 +842,11 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             .remove(name)
             .expect("Could not find hydrator for register_values custom type");
         hydrator.disallow_new_type_variables();
-        let typ = environment
+        let type_ = environment
             .module_types
             .get(name)
             .expect("Type for custom type not found in register_values")
-            .typ
+            .type_
             .clone();
         if let Some(accessors) =
             custom_type_accessors(constructors, &mut hydrator, environment, &mut self.problems)?
@@ -859,7 +860,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 accessors,
                 // TODO: improve the ownership here so that we can use the
                 // `return_type_constructor` below rather than looking it up twice.
-                type_: typ.clone(),
+                type_: type_.clone(),
             };
             environment.insert_accessors(name.clone(), map)
         }
@@ -910,9 +911,9 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             }
             let field_map = field_map.into_option();
             // Insert constructor function into module scope
-            let typ = match constructor.arguments.len() {
-                0 => typ.clone(),
-                _ => fn_(args_types.clone(), typ.clone()),
+            let type_ = match constructor.arguments.len() {
+                0 => type_.clone(),
+                _ => fn_(args_types.clone(), type_.clone()),
             };
             let constructor_info = ValueConstructorVariant::Record {
                 documentation: constructor
@@ -942,7 +943,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 ValueConstructor {
                     publicity: value_constructor_publicity,
                     deprecation: deprecation.clone(),
-                    type_: typ.clone(),
+                    type_: type_.clone(),
                     variant: constructor_info.clone(),
                 },
             );
@@ -963,9 +964,15 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             environment.insert_variable(
                 constructor.name.clone(),
                 constructor_info,
-                typ,
+                type_,
                 value_constructor_publicity,
                 deprecation.clone(),
+            );
+
+            environment.value_names.named_constructor_in_scope(
+                environment.current_module.clone(),
+                constructor.name.clone(),
+                constructor.name.clone(),
             );
         }
 
@@ -980,7 +987,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
     fn register_types_from_custom_type(
         &mut self,
-        t: &CustomType<()>,
+        t: &UntypedCustomType,
         environment: &mut Environment<'a>,
     ) -> Result<(), Error> {
         let CustomType {
@@ -1024,7 +1031,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             Publicity::Public | Publicity::Private | Publicity::Internal => *publicity,
         };
 
-        let typ = Arc::new(Type::Named {
+        let type_ = Arc::new(Type::Named {
             publicity,
             package: environment.current_package.clone(),
             module: self.module_name.to_owned(),
@@ -1041,7 +1048,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                     deprecation: deprecation.clone(),
                     parameters,
                     publicity,
-                    typ,
+                    type_,
                     documentation: documentation.as_ref().map(|(_, doc)| doc.clone()),
                 },
             )
@@ -1064,7 +1071,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         Ok(())
     }
 
-    fn register_type_alias(&mut self, t: &TypeAlias<()>, environment: &mut Environment<'_>) {
+    fn register_type_alias(&mut self, t: &UntypedTypeAlias, environment: &mut Environment<'_>) {
         let TypeAlias {
             location,
             publicity,
@@ -1093,7 +1100,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         let parameters = self.make_type_vars(args, &mut hydrator, environment);
         let tryblock = || {
             hydrator.disallow_new_type_variables();
-            let typ = hydrator.type_from_ast(resolved_type, environment, &mut self.problems)?;
+            let type_ = hydrator.type_from_ast(resolved_type, environment, &mut self.problems)?;
 
             // Insert the alias so that it can be used by other code.
             environment.insert_type_constructor(
@@ -1102,7 +1109,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                     origin: *location,
                     module: self.module_name.clone(),
                     parameters,
-                    typ,
+                    type_,
                     deprecation: deprecation.clone(),
                     publicity: *publicity,
                     documentation: documentation.as_ref().map(|(_, doc)| doc.clone()),
@@ -1209,7 +1216,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             .try_collect()?;
         let return_type =
             hydrator.type_from_option_ast(return_annotation, environment, &mut self.problems)?;
-        let typ = fn_(arg_types, return_type);
+        let type_ = fn_(arg_types, return_type);
         let _ = self.hydrators.insert(name.clone(), hydrator);
 
         let external = target_function_implementation(
@@ -1227,7 +1234,13 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             location: *location,
             implementations: *implementations,
         };
-        environment.insert_variable(name.clone(), variant, typ, *publicity, deprecation.clone());
+        environment.insert_variable(
+            name.clone(),
+            variant,
+            type_,
+            *publicity,
+            deprecation.clone(),
+        );
         if publicity.is_private() {
             environment.init_usage(
                 name.clone(),
@@ -1308,7 +1321,7 @@ fn target_function_implementation<'a>(
     }
 }
 
-fn analyse_type_alias(t: TypeAlias<()>, environment: &mut Environment<'_>) -> TypedDefinition {
+fn analyse_type_alias(t: UntypedTypeAlias, environment: &mut Environment<'_>) -> TypedDefinition {
     let TypeAlias {
         documentation: doc,
         location,
@@ -1325,8 +1338,8 @@ fn analyse_type_alias(t: TypeAlias<()>, environment: &mut Environment<'_>) -> Ty
     // analysis aims to be fault tolerant to get the best possible feedback for
     // the programmer in the language server, so the analyser gets here even
     // though there was previously errors.
-    let typ = match environment.get_type_constructor(&None, &alias) {
-        Ok(constructor) => constructor.typ.clone(),
+    let type_ = match environment.get_type_constructor(&None, &alias) {
+        Ok(constructor) => constructor.type_.clone(),
         Err(_) => environment.new_generic_var(),
     };
     Definition::TypeAlias(TypeAlias {
@@ -1337,7 +1350,7 @@ fn analyse_type_alias(t: TypeAlias<()>, environment: &mut Environment<'_>) -> Ty
         name_location,
         parameters: args,
         type_ast: resolved_type,
-        type_: typ,
+        type_,
         deprecation,
     })
 }
@@ -1423,8 +1436,8 @@ fn generalise_module_constant(
         deprecation,
         implementations,
     } = constant;
-    let typ = type_.clone();
-    let type_ = type_::generalise(typ);
+    let type_ = type_.clone();
+    let type_ = type_::generalise(type_);
     let variant = ValueConstructorVariant::ModuleConstant {
         documentation: doc.as_ref().map(|(_, doc)| doc.clone()),
         location,
@@ -1492,9 +1505,9 @@ fn generalise_function(
         .get_variable(&name)
         .expect("Could not find preregistered type for function");
     let field_map = function.field_map().cloned();
-    let typ = function.type_.clone();
+    let type_ = function.type_.clone();
 
-    let type_ = type_::generalise(typ);
+    let type_ = type_::generalise(type_);
 
     // Insert the function into the module's interface
     let external =
@@ -1570,13 +1583,13 @@ fn custom_type_accessors<A>(
     let mut fields = HashMap::with_capacity(args.len());
     hydrator.disallow_new_type_variables();
     for (index, label, ast) in args {
-        let typ = hydrator.type_from_ast(ast, environment, problems)?;
+        let type_ = hydrator.type_from_ast(ast, environment, problems)?;
         let _ = fields.insert(
             label.clone(),
             RecordAccessor {
                 index: index as u64,
                 label: label.clone(),
-                type_: typ,
+                type_,
             },
         );
     }
@@ -1636,10 +1649,10 @@ fn get_compatible_record_fields<A>(
 }
 
 /// Given a type, return a list of all the types it depends on
-fn get_type_dependencies(typ: &TypeAst) -> Vec<EcoString> {
+fn get_type_dependencies(type_: &TypeAst) -> Vec<EcoString> {
     let mut deps = Vec::with_capacity(1);
 
-    match typ {
+    match type_ {
         TypeAst::Var(TypeAstVar { .. }) => (),
         TypeAst::Hole(TypeAstHole { .. }) => (),
         TypeAst::Constructor(TypeAstConstructor {
@@ -1675,7 +1688,7 @@ fn get_type_dependencies(typ: &TypeAst) -> Vec<EcoString> {
     deps
 }
 
-fn sorted_type_aliases(aliases: &Vec<TypeAlias<()>>) -> Result<Vec<&TypeAlias<()>>, Error> {
+fn sorted_type_aliases(aliases: &Vec<UntypedTypeAlias>) -> Result<Vec<&UntypedTypeAlias>, Error> {
     let mut deps: Vec<(EcoString, Vec<EcoString>)> = Vec::with_capacity(aliases.len());
 
     for alias in aliases {

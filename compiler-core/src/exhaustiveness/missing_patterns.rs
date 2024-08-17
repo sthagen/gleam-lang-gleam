@@ -1,7 +1,6 @@
-use super::{Constructor, Decision, Match, Variable};
+use super::{printer::Printer, Constructor, Decision, Match, Variable};
 use crate::type_::environment::Environment;
 use ecow::EcoString;
-use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
 /// Returns a list of patterns not covered by the match expression.
@@ -21,10 +20,15 @@ pub fn missing_patterns(matches: &Match, environment: &Environment<'_>) -> Vec<E
 /// Information about a single constructor/value (aka term) being tested, used
 /// to build a list of names of missing patterns.
 #[derive(Debug)]
-enum Term {
+pub enum Term {
     Variant {
         variable: Variable,
         name: EcoString,
+        module: EcoString,
+        arguments: Vec<Variable>,
+    },
+    Tuple {
+        variable: Variable,
         arguments: Vec<Variable>,
     },
     Infinite {
@@ -41,80 +45,13 @@ enum Term {
 }
 
 impl Term {
-    fn variable(&self) -> &Variable {
+    pub fn variable(&self) -> &Variable {
         match self {
             Term::Variant { variable, .. } => variable,
+            Term::Tuple { variable, .. } => variable,
             Term::Infinite { variable } => variable,
             Term::EmptyList { variable } => variable,
             Term::List { variable, .. } => variable,
-        }
-    }
-
-    fn pattern_string(&self, terms: &[Term], mapping: &HashMap<usize, usize>) -> EcoString {
-        match self {
-            Term::Variant {
-                name, arguments, ..
-            } => {
-                if arguments.is_empty() {
-                    return name.clone();
-                }
-                let args = arguments
-                    .iter()
-                    .map(|variable| {
-                        mapping
-                            .get(&variable.id)
-                            .map(|&idx| {
-                                terms
-                                    .get(idx)
-                                    .expect("Term must exist")
-                                    .pattern_string(terms, mapping)
-                            })
-                            .unwrap_or_else(|| "_".into())
-                    })
-                    .join(", ");
-                format!("{}({})", name, args).into()
-            }
-
-            Term::Infinite { .. } => "_".into(),
-
-            Term::EmptyList { .. } => "[]".into(),
-
-            Term::List { .. } => format!("[{}]", self.list_pattern_string(terms, mapping)).into(),
-        }
-    }
-
-    fn list_pattern_string(&self, terms: &[Term], mapping: &HashMap<usize, usize>) -> EcoString {
-        match self {
-            Term::Infinite { .. } | Term::Variant { .. } => "_".into(),
-
-            Term::EmptyList { .. } => "".into(),
-
-            Term::List { first, rest, .. } => {
-                let first = mapping
-                    .get(&first.id)
-                    .map(|&idx| {
-                        terms
-                            .get(idx)
-                            .expect("Term must exist")
-                            .pattern_string(terms, mapping)
-                    })
-                    .unwrap_or_else(|| "_".into());
-                let rest = mapping
-                    .get(&rest.id)
-                    .map(|&idx| {
-                        terms
-                            .get(idx)
-                            .expect("Term must exist")
-                            .list_pattern_string(terms, mapping)
-                    })
-                    .unwrap_or_else(|| "_".into());
-
-                match rest.as_str() {
-                    "" => first,
-                    "_" => format!("{first}, ..").into(),
-                    _ => format!("{first}, {rest}").into(),
-                }
-            }
         }
     }
 }
@@ -125,6 +62,7 @@ fn add_missing_patterns(
     missing: &mut HashSet<EcoString>,
     environment: &Environment<'_>,
 ) {
+    let mut printer = Printer::new(&environment.value_names);
     match node {
         Decision::Success(_) => {}
 
@@ -150,7 +88,7 @@ fn add_missing_patterns(
 
             let name = terms
                 .first()
-                .map(|term| term.pattern_string(terms, &mapping))
+                .map(|term| printer.print_term(term, terms, &mapping))
                 .unwrap_or_else(|| "_".into());
 
             _ = missing.insert(name);
@@ -175,9 +113,8 @@ fn add_missing_patterns(
 
                     Constructor::Tuple(_) => {
                         let arguments = case.arguments.clone();
-                        terms.push(Term::Variant {
+                        terms.push(Term::Tuple {
                             variable: variable.clone(),
-                            name: "#".into(),
                             arguments,
                         });
                     }
@@ -196,6 +133,7 @@ fn add_missing_patterns(
                         terms.push(Term::Variant {
                             variable: variable.clone(),
                             name,
+                            module,
                             arguments: case.arguments.clone(),
                         });
                     }

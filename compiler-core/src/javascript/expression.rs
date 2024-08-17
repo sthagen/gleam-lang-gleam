@@ -326,7 +326,7 @@ impl<'module> Generator<'module> {
                 let size_int = match *size.clone() {
                     TypedExpr::Int {
                         location: _,
-                        typ: _,
+                        type_: _,
                         value,
                     } => value.parse().unwrap_or(0),
                     _ => 0,
@@ -456,53 +456,13 @@ impl<'module> Generator<'module> {
                 constant_expression(Context::Function, self.tracker, literal)
             }
             ValueConstructorVariant::Record { arity, .. } => {
-                Ok(self.record_constructor(constructor.type_.clone(), None, name, *arity))
+                let type_ = constructor.type_.clone();
+                let tracker = &mut self.tracker;
+                Ok(record_constructor(type_, None, name, *arity, tracker))
             }
             ValueConstructorVariant::ModuleFn { .. }
             | ValueConstructorVariant::ModuleConstant { .. }
             | ValueConstructorVariant::LocalVariable { .. } => Ok(self.local_var(name)),
-        }
-    }
-
-    fn record_constructor<'a>(
-        &mut self,
-        type_: Arc<Type>,
-        qualifier: Option<&'a str>,
-        name: &'a str,
-        arity: u16,
-    ) -> Document<'a> {
-        if qualifier.is_none() && type_.is_result_constructor() {
-            if name == "Ok" {
-                self.tracker.ok_used = true;
-            } else if name == "Error" {
-                self.tracker.error_used = true;
-            }
-        }
-        if type_.is_bool() && name == "True" {
-            "true".to_doc()
-        } else if type_.is_bool() {
-            "false".to_doc()
-        } else if type_.is_nil() {
-            "undefined".to_doc()
-        } else if arity == 0 {
-            match qualifier {
-                Some(module) => docvec!["new $", module, ".", name, "()"],
-                None => docvec!["new ", name, "()"],
-            }
-        } else {
-            let vars = (0..arity).map(|i| Document::String(format!("var{i}")));
-            let body = docvec![
-                "return ",
-                construct_record(qualifier, name, vars.clone()),
-                ";"
-            ];
-            docvec!(
-                docvec!(wrap_args(vars), " => {", break_("", " "), body)
-                    .nest(INDENT)
-                    .append(break_("", " "))
-                    .group(),
-                "}",
-            )
         }
     }
 
@@ -755,18 +715,10 @@ impl<'module> Generator<'module> {
     }
 
     fn call<'a>(&mut self, fun: &'a TypedExpr, arguments: &'a [CallArg<TypedExpr>]) -> Output<'a> {
-        let scope_position = self.scope_position;
-        let function_position = self.function_position;
-
-        self.scope_position = Position::NotTail;
-        self.function_position = Position::NotTail;
         let arguments = arguments
             .iter()
-            .map(|element| self.wrap_expression(&element.value))
+            .map(|element| self.not_in_tail_position(|gen| gen.wrap_expression(&element.value)))
             .try_collect()?;
-
-        self.function_position = function_position;
-        self.scope_position = scope_position;
 
         self.call_with_doc_args(fun, arguments)
     }
@@ -1026,35 +978,21 @@ impl<'module> Generator<'module> {
     }
 
     fn todo<'a>(&mut self, message: Option<&'a TypedExpr>, location: &'a SrcSpan) -> Output<'a> {
-        let scope_position = self.scope_position;
-        self.scope_position = Position::NotTail;
-
         let message = match message {
-            Some(m) => self.expression(m)?,
+            Some(m) => self.not_in_tail_position(|gen| gen.expression(m))?,
             None => string("This has not yet been implemented"),
         };
         let doc = self.throw_error("todo", &message, *location, vec![]);
-
-        // Reset tail position so later values are returned as needed. i.e.
-        // following clauses in a case expression.
-        self.scope_position = scope_position;
 
         Ok(doc)
     }
 
     fn panic<'a>(&mut self, location: &'a SrcSpan, message: Option<&'a TypedExpr>) -> Output<'a> {
-        let scope_position = self.scope_position;
-        self.scope_position = Position::NotTail;
-
         let message = match message {
-            Some(m) => self.expression(m)?,
+            Some(m) => self.not_in_tail_position(|gen| gen.expression(m))?,
             None => string("panic expression evaluated"),
         };
         let doc = self.throw_error("panic", &message, *location, vec![]);
-
-        // Reset tail position so later values are returned as needed. i.e.
-        // following clauses in a case expression.
-        self.scope_position = scope_position;
 
         Ok(doc)
     }
@@ -1106,7 +1044,7 @@ impl<'module> Generator<'module> {
 
             ModuleValueConstructor::Record {
                 name, arity, type_, ..
-            } => self.record_constructor(type_.clone(), Some(module), name, *arity),
+            } => record_constructor(type_.clone(), Some(module), name, *arity, self.tracker),
         }
     }
 
@@ -1278,23 +1216,23 @@ pub(crate) fn guard_constant_expression<'a>(
                     .map(|e| guard_constant_expression(assignments, tracker, e)),
             )
         }
-        Constant::Record { typ, name, .. } if typ.is_bool() && name == "True" => {
+        Constant::Record { type_, name, .. } if type_.is_bool() && name == "True" => {
             Ok("true".to_doc())
         }
-        Constant::Record { typ, name, .. } if typ.is_bool() && name == "False" => {
+        Constant::Record { type_, name, .. } if type_.is_bool() && name == "False" => {
             Ok("false".to_doc())
         }
-        Constant::Record { typ, .. } if typ.is_nil() => Ok("undefined".to_doc()),
+        Constant::Record { type_, .. } if type_.is_nil() => Ok("undefined".to_doc()),
 
         Constant::Record {
             args,
             module,
             name,
             tag,
-            typ,
+            type_,
             ..
         } => {
-            if typ.is_result() {
+            if type_.is_result() {
                 if tag == "Ok" {
                     tracker.ok_used = true;
                 } else {
@@ -1363,29 +1301,46 @@ pub(crate) fn constant_expression<'a>(
             }
         }
 
-        Constant::Record { typ, name, .. } if typ.is_bool() && name == "True" => {
+        Constant::Record { type_, name, .. } if type_.is_bool() && name == "True" => {
             Ok("true".to_doc())
         }
-        Constant::Record { typ, name, .. } if typ.is_bool() && name == "False" => {
+        Constant::Record { type_, name, .. } if type_.is_bool() && name == "False" => {
             Ok("false".to_doc())
         }
-        Constant::Record { typ, .. } if typ.is_nil() => Ok("undefined".to_doc()),
+        Constant::Record { type_, .. } if type_.is_nil() => Ok("undefined".to_doc()),
 
         Constant::Record {
             args,
             module,
             name,
             tag,
-            typ,
+            type_,
             ..
         } => {
-            if typ.is_result() {
+            if type_.is_result() {
                 if tag == "Ok" {
                     tracker.ok_used = true;
                 } else {
                     tracker.error_used = true;
                 }
             }
+
+            // If there's no arguments and the type is a function that takes
+            // arguments then this is the constructor being referenced, not the
+            // function being called.
+            if let Some(arity) = type_.fn_arity() {
+                if args.is_empty() && arity != 0 {
+                    let arity = arity as u16;
+                    return Ok(record_constructor(
+                        type_.clone(),
+                        None,
+                        name,
+                        arity,
+                        tracker,
+                    ));
+                }
+            }
+
             let field_values: Vec<_> = args
                 .iter()
                 .map(|arg| constant_expression(context, tracker, &arg.value))
@@ -1432,7 +1387,7 @@ pub(crate) fn constant_expression<'a>(
 
 fn bit_array<'a>(
     tracker: &mut UsageTracker,
-    segments: &'a [BitArraySegment<TypedConstant, Arc<Type>>],
+    segments: &'a [TypedConstantBitArraySegment],
     mut constant_expr_fun: impl FnMut(&mut UsageTracker, &'a TypedConstant) -> Output<'a>,
 ) -> Output<'a> {
     tracker.bit_array_literal_used = true;
@@ -1510,7 +1465,7 @@ struct SizedBitArraySegmentDetails<'a> {
 }
 
 fn sized_bit_array_segment_details<'a>(
-    segment: &'a BitArraySegment<TypedConstant, Arc<Type>>,
+    segment: &'a TypedConstantBitArraySegment,
     tracker: &mut UsageTracker,
     constant_expr_fun: &mut impl FnMut(&mut UsageTracker, &'a TypedConstant) -> Output<'a>,
 ) -> Result<SizedBitArraySegmentDetails<'a>, Error> {
@@ -1768,4 +1723,46 @@ fn immediately_involked_function_expression_document(document: Document<'_>) -> 
         "})()",
     )
     .group()
+}
+
+fn record_constructor<'a>(
+    type_: Arc<Type>,
+    qualifier: Option<&'a str>,
+    name: &'a str,
+    arity: u16,
+    tracker: &mut UsageTracker,
+) -> Document<'a> {
+    if qualifier.is_none() && type_.is_result_constructor() {
+        if name == "Ok" {
+            tracker.ok_used = true;
+        } else if name == "Error" {
+            tracker.error_used = true;
+        }
+    }
+    if type_.is_bool() && name == "True" {
+        "true".to_doc()
+    } else if type_.is_bool() {
+        "false".to_doc()
+    } else if type_.is_nil() {
+        "undefined".to_doc()
+    } else if arity == 0 {
+        match qualifier {
+            Some(module) => docvec!["new $", module, ".", name, "()"],
+            None => docvec!["new ", name, "()"],
+        }
+    } else {
+        let vars = (0..arity).map(|i| Document::String(format!("var{i}")));
+        let body = docvec![
+            "return ",
+            construct_record(qualifier, name, vars.clone()),
+            ";"
+        ];
+        docvec!(
+            docvec!(wrap_args(vars), " => {", break_("", " "), body)
+                .nest(INDENT)
+                .append(break_("", " "))
+                .group(),
+            "}",
+        )
+    }
 }

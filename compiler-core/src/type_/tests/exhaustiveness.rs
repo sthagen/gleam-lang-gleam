@@ -1,4 +1,4 @@
-use crate::{assert_module_error, assert_no_warnings, assert_warning};
+use crate::{assert_module_error, assert_no_warnings, assert_warning, assert_with_module_error};
 
 #[test]
 fn whatever() {
@@ -982,6 +982,149 @@ pub fn main(wibble) {
     case wibble {
         One(x) -> x
     }
+}
+"
+    );
+}
+
+#[test]
+fn case_error_prints_module_names() {
+    assert_with_module_error!(
+        ("wibble", "pub type Wibble { Wibble Wobble }"),
+        "
+import wibble
+pub type Things { Thing1 Thing2(Int) }
+pub fn main() {
+    let wobble_thing = #(wibble.Wobble, Thing2(23))
+    case wobble_thing {
+        #(wibble.Wibble, Thing1) -> Nil
+    }
+}
+",
+    );
+}
+
+#[test]
+fn case_error_prints_module_alias() {
+    assert_with_module_error!(
+        ("wibble", "pub type Wibble { Wibble Wobble }"),
+        "
+import wibble as wobble
+pub fn main() {
+    case wobble.Wobble {
+        wobble.Wibble -> Nil
+    }
+}
+",
+    );
+}
+
+#[test]
+fn case_error_prints_unqualified_value() {
+    assert_with_module_error!(
+        ("wibble", "pub type Wibble { Wibble Wobble }"),
+        "
+import wibble.{Wibble, Wobble}
+pub fn main() {
+    case Wobble {
+        Wibble -> Nil
+    }
+}
+",
+    );
+}
+
+#[test]
+fn case_error_prints_aliased_unqualified_value() {
+    assert_with_module_error!(
+        ("wibble", "pub type Wibble { Wibble Wobble }"),
+        "
+import wibble.{Wibble, Wobble as Wubble}
+pub fn main() {
+    case Wibble {
+        Wibble -> Nil
+    }
+}
+",
+    );
+}
+
+#[test]
+fn case_error_prints_prelude_module_unqualified() {
+    assert_module_error!(
+        "
+pub fn main() {
+  let result = Ok(Nil)
+  case result {
+    Ok(Nil) -> Nil
+  }
+}
+"
+    );
+}
+
+#[test]
+fn case_error_prints_prelude_module_when_shadowed() {
+    assert_module_error!(
+        "
+import gleam
+type MyResult { Ok Error }
+pub fn main() {
+  let res = gleam.Ok(10)
+  case res {
+    gleam.Ok(n) -> Nil
+  }
+}
+"
+    );
+}
+
+#[test]
+fn case_error_prints_module_when_shadowed() {
+    assert_with_module_error!(
+        ("mod", "pub type Wibble { Wibble Wobble }"),
+        "
+import mod.{Wibble}
+type Wibble { Wibble Wobble }
+pub fn main() {
+  let wibble = mod.Wibble
+  case wibble {
+    mod.Wobble -> Nil
+  }
+}
+"
+    );
+}
+
+#[test]
+fn case_error_prints_module_when_aliased_and_shadowed() {
+    assert_with_module_error!(
+        ("mod", "pub type Wibble { Wibble Wobble }"),
+        "
+import mod.{Wibble as Wobble}
+type Wibble { Wobble Wubble }
+pub fn main() {
+  let wibble = mod.Wibble
+  case wibble {
+    mod.Wobble -> Nil
+  }
+}
+"
+    );
+}
+
+#[test]
+fn case_error_prints_unqualifed_when_aliased() {
+    assert_with_module_error!(
+        ("mod", "pub type Wibble { Wibble Wobble }"),
+        "
+import mod.{Wibble as Wobble}
+type Wibble { Wibble Wubble }
+pub fn main() {
+  let wibble = mod.Wibble
+  case wibble {
+    mod.Wobble -> Nil
+  }
 }
 "
     );

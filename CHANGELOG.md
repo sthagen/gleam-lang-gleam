@@ -10,6 +10,40 @@
 
 ### Compiler
 
+- It is now possible to omit the `:utf8` option for literal strings used in a
+  `BitArray` segment.
+
+  ```gleam
+  <<"Hello", " ", "world">>
+  ```
+
+  Is the same as:
+
+  ```gleam
+  <<"Hello":utf8, " ":utf8, "world":utf8>>
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- In inexhaustive pattern match errors the missing variants variants are now
+  printed using the correct syntax for the module the error is emitted in,
+  rather than the module it was defined in.
+
+  For example, if the variant would need be qualified by the name of the
+  defining module then that would be shown. If the variant was aliased when it
+  was imported then the alias would be shown.
+  ([Surya Rose](https://github.com/gearsdatapacks))
+
+- Improves how inference works for anonymous functions followed by call
+  arguments. For example:
+
+  ```gleam
+  fn(x) { x.0 }(#(1, 2))
+  ```
+
+  would be infered as `fn() -> Int` in this context.
+  ([sobolevn](https://github.com/sobolevn))
+
 ### Formatter
 
 ### Language Server
@@ -31,6 +65,14 @@
 - Fixed a bug where the compiler would crash when pattern matching on a type
   which had constructors of duplicate names.
   ([Surya Rose](https://github.com/gearsdatapacks))
+
+- Fixed a bug where referencing record constructors in JavaScript constants but
+  not calling them could produce invalid code.
+  ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where source links in HTML documentation would be incorrect for
+  Codeberg, SourceHut, and Gitea.
+  ([sobolevn](https://github.com/sobolevn))
 
 ## v1.4.1 - 2024-08-04
 
