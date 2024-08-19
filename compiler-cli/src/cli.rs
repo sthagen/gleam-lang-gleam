@@ -169,7 +169,7 @@ pub fn seconds(duration: Duration) -> String {
 }
 
 pub fn print_colourful_prefix(prefix: &str, text: &str) {
-    let buffer_writer = stdout_buffer_writer();
+    let buffer_writer = stderr_buffer_writer();
     let mut buffer = buffer_writer.buffer();
     buffer
         .set_color(
@@ -189,11 +189,6 @@ pub fn print_colourful_prefix(prefix: &str, text: &str) {
 pub fn stderr_buffer_writer() -> BufferWriter {
     // Don't add color codes to the output if standard error isn't connected to a terminal
     BufferWriter::stderr(color_choice())
-}
-
-pub fn stdout_buffer_writer() -> BufferWriter {
-    // Don't add color codes to the output if standard error isn't connected to a terminal
-    BufferWriter::stdout(color_choice())
 }
 
 fn colour_forced() -> bool {
