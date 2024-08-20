@@ -43,7 +43,7 @@
 
   ```gleam
   fn(x) { x.0 }(#(1, 2))
-  // ^ you no lonfer need to annotate this!
+  // ^ you no longer need to annotate this!
   ```
 
   ([sobolevn](https://github.com/sobolevn))
@@ -105,6 +105,9 @@
 
 ### Language Server
 
+- The language server can now suggest a code action to assign `_` to unused value.
+  ([Jiangda Wang](https://github.com/frank-iii))
+
 ### Bug Fixes
 
 - Fixed a bug which caused the language server and compiler to crash when two
@@ -136,6 +139,11 @@
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Fixed a bug which affected inference of function calls in pipe expressions.
+  ([sobolevn](https://github.com/sobolevn))
+
+- Improved an error message when using variable names
+  starting with an underscore in constructs like:
+  `let some = _func()` or `case { 1 -> _func() }`
   ([sobolevn](https://github.com/sobolevn))
 
 ## v1.4.1 - 2024-08-04

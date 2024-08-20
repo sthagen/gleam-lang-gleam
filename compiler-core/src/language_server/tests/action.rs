@@ -78,6 +78,7 @@ const REMOVE_REDUNDANT_TUPLES: &str = "Remove redundant tuples";
 const CONVERT_TO_CASE: &str = "Convert to case";
 const USE_LABEL_SHORTHAND_SYNTAX: &str = "Use label shorthand syntax";
 const FILL_LABELS: &str = "Fill labels";
+const ASSIGN_UNUSED_RESULT: &str = "Assign unused Result value to `_`";
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range:expr $(,)?) => {
@@ -1123,6 +1124,132 @@ pub fn main() {
     );
 }
 
+#[test]
+fn test_assign_unused_result() {
+    assert_code_action!(
+        ASSIGN_UNUSED_RESULT,
+        r#"
+pub fn main() {
+    Ok(0)
+    Nil
+}
+"#,
+        find_position_of("Ok").select_until(find_position_of("(0)")),
+    );
+}
+
+#[test]
+fn test_assign_unused_result_in_block() {
+    assert_code_action!(
+        ASSIGN_UNUSED_RESULT,
+        r#"
+pub fn main() {
+    {
+        Ok(0)
+        Nil
+    }
+    Nil
+}
+"#,
+        find_position_of("Ok").select_until(find_position_of("(0)")),
+    );
+}
+
+#[test]
+fn test_assign_unused_result_on_block_start() {
+    assert_code_action!(
+        ASSIGN_UNUSED_RESULT,
+        r#"
+pub fn main() {
+    {
+        Ok(0)
+        Ok(0)
+    }
+    Nil
+}
+"#,
+        find_position_of("{").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn test_assign_unused_result_on_block_end() {
+    assert_code_action!(
+        ASSIGN_UNUSED_RESULT,
+        r#"
+pub fn main() {
+    {
+        Ok(0)
+        Ok(0)
+    }
+    Nil
+}
+"#,
+        find_position_of("}").to_selection()
+    );
+}
+
+#[test]
+#[should_panic(expected = "No action with the given title")]
+fn test_assign_unused_result_inside_block() {
+    assert_code_action!(
+        ASSIGN_UNUSED_RESULT,
+        r#"
+pub fn main() {
+    {
+        Nil
+        Ok(1)
+    }
+}
+"#,
+        find_position_of("Ok").select_until(find_position_of("(1)"))
+    );
+}
+
+#[test]
+fn test_assign_unused_result_only_first_action() {
+    assert_code_action!(
+        ASSIGN_UNUSED_RESULT,
+        r#"
+pub fn main() {
+    Ok(0)
+    Ok(1)
+    Nil
+}
+"#,
+        find_position_of("Ok").select_until(find_position_of("(0)"))
+    );
+}
+
+#[test]
+#[should_panic(expected = "No action with the given title")]
+fn test_assign_unused_result_not_on_return_value() {
+    assert_code_action!(
+        ASSIGN_UNUSED_RESULT,
+        r#"
+pub fn main() {
+    Ok(0)
+}
+"#,
+        find_position_of("Ok").select_until(find_position_of("(0)"))
+    );
+}
+
+#[test]
+#[should_panic(expected = "No action with the given title")]
+fn test_assign_unused_result_not_on_return_value_in_block() {
+    assert_code_action!(
+        ASSIGN_UNUSED_RESULT,
+        r#"
+pub fn main() {
+    let _ = {
+        Ok(0)
+    }
+    Nil
+}"#,
+        find_position_of("Ok").select_until(find_position_of("(0)"))
+    );
+}
 /* TODO: implement qualified unused location
 #[test]
 fn test_remove_unused_qualified_action() {

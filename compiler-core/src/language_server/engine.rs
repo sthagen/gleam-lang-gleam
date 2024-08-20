@@ -293,6 +293,7 @@ where
                 return Ok(None);
             };
 
+            code_action_unused_values(module, &params, &mut actions);
             code_action_unused_imports(module, &params, &mut actions);
             code_action_fix_names(module, &params, &this.error, &mut actions);
             actions.extend(LetAssertToCase::new(module, &params).code_actions());
@@ -905,6 +906,67 @@ pub fn within(a: lsp_types::Range, b: lsp_types::Range) -> bool {
 // Returns true if a position is within a range.
 fn position_within(position: lsp_types::Position, range: lsp_types::Range) -> bool {
     position >= range.start && position <= range.end
+}
+
+fn code_action_unused_values(
+    module: &Module,
+    params: &lsp::CodeActionParams,
+    actions: &mut Vec<CodeAction>,
+) {
+    let uri = &params.text_document.uri;
+    let mut unused_values: Vec<&SrcSpan> = module
+        .ast
+        .type_info
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            type_::Warning::ImplicitlyDiscardedResult { location } => Some(location),
+            _ => None,
+        })
+        .collect();
+
+    if unused_values.is_empty() {
+        return;
+    }
+
+    // Convert src spans to lsp range
+    let line_numbers = LineNumbers::new(&module.code);
+
+    // Sort spans by start position, with longer spans coming first
+    unused_values.sort_by_key(|span| (span.start, -(span.end as i64 - span.start as i64)));
+
+    let mut processed_lsp_range = Vec::new();
+
+    for unused in unused_values {
+        let SrcSpan { start, end } = *unused;
+        let hover_range = src_span_to_lsp_range(SrcSpan::new(start, end), &line_numbers);
+
+        // Check if this span is contained within any previously processed span
+        if processed_lsp_range
+            .iter()
+            .any(|&prev_lsp_range| within(hover_range, prev_lsp_range))
+        {
+            continue;
+        }
+
+        // Check if the cursor is within this span
+        if !within(params.range, hover_range) {
+            continue;
+        }
+
+        let edit = lsp_types::TextEdit {
+            range: src_span_to_lsp_range(SrcSpan::new(start, start), &line_numbers),
+            new_text: "let _ = ".into(),
+        };
+
+        CodeActionBuilder::new("Assign unused Result value to `_`")
+            .kind(lsp_types::CodeActionKind::QUICKFIX)
+            .changes(uri.clone(), vec![edit])
+            .preferred(true)
+            .push_to(actions);
+
+        processed_lsp_range.push(hover_range);
+    }
 }
 
 fn code_action_unused_imports(
