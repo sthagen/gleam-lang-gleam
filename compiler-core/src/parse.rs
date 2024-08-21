@@ -66,6 +66,7 @@ use crate::ast::{
     CAPTURE_VARIABLE,
 };
 use crate::build::Target;
+use crate::error::wrap;
 use crate::parse::extra::ModuleExtra;
 use crate::type_::expression::Implementations;
 use crate::type_::Deprecation;
@@ -3123,7 +3124,18 @@ where
                     // Else, handle as an unexpected token.
                     let field = match token {
                         Token::Name { name } => name,
-                        _ => {
+                        token => {
+                            let hint = match (&token, self.tok0.take()) {
+                                (&Token::Fn { .. }, _)
+                                | (&Token::Pub, Some((_, Token::Fn { .. }, _))) => {
+                                    let text =
+                                        "Gleam is not an object oriented programming language so
+functions are declared separately from types.";
+                                    Some(wrap(text).into())
+                                }
+                                (_, _) => None,
+                            };
+
                             return parse_error(
                                 ParseErrorType::UnexpectedToken {
                                     token,
@@ -3131,10 +3143,10 @@ where
                                         Token::RightBrace.to_string().into(),
                                         "a record constructor".into(),
                                     ],
-                                    hint: None,
+                                    hint,
                                 },
                                 SrcSpan { start, end },
-                            )
+                            );
                         }
                     };
                     let field_type = match self.parse_type_annotation(&Token::Colon) {
