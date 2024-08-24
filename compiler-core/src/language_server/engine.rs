@@ -23,15 +23,15 @@ use ecow::EcoString;
 use itertools::Itertools;
 use lsp::CodeAction;
 use lsp_types::{
-    self as lsp, DocumentSymbol, Hover, HoverContents, MarkedString, SignatureHelp, SymbolKind,
-    SymbolTag, Url,
+    self as lsp, DocumentSymbol, Hover, HoverContents, MarkedString, Position, Range,
+    SignatureHelp, SymbolKind, SymbolTag, TextEdit, Url,
 };
 use std::sync::Arc;
 
 use super::{
     code_action::{
-        CodeActionBuilder, FillInMissingLabelledArgs, LabelShorthandSyntax, LetAssertToCase,
-        RedundantTupleInCaseSubject,
+        code_action_import_module, CodeActionBuilder, FillInMissingLabelledArgs,
+        LabelShorthandSyntax, LetAssertToCase, RedundantTupleInCaseSubject,
     },
     completer::Completer,
     signature_help, src_span_to_lsp_range, DownloadDependencies, MakeLocker,
@@ -296,6 +296,7 @@ where
             code_action_unused_values(module, &params, &mut actions);
             code_action_unused_imports(module, &params, &mut actions);
             code_action_fix_names(module, &params, &this.error, &mut actions);
+            code_action_import_module(module, &params, &this.error, &mut actions);
             actions.extend(LetAssertToCase::new(module, &params).code_actions());
             actions.extend(RedundantTupleInCaseSubject::new(module, &params).code_actions());
             actions.extend(LabelShorthandSyntax::new(module, &params).code_actions());
@@ -891,7 +892,7 @@ fn hover_for_imported_value(
 }
 
 // Returns true if any part of either range overlaps with the other.
-pub fn overlaps(a: lsp_types::Range, b: lsp_types::Range) -> bool {
+pub fn overlaps(a: Range, b: Range) -> bool {
     position_within(a.start, b)
         || position_within(a.end, b)
         || position_within(b.start, a)
@@ -899,12 +900,12 @@ pub fn overlaps(a: lsp_types::Range, b: lsp_types::Range) -> bool {
 }
 
 // Returns true if a range is contained within another.
-pub fn within(a: lsp_types::Range, b: lsp_types::Range) -> bool {
+pub fn within(a: Range, b: Range) -> bool {
     position_within(a.start, b) && position_within(a.end, b)
 }
 
 // Returns true if a position is within a range.
-fn position_within(position: lsp_types::Position, range: lsp_types::Range) -> bool {
+fn position_within(position: Position, range: Range) -> bool {
     position >= range.start && position <= range.end
 }
 
@@ -954,7 +955,7 @@ fn code_action_unused_values(
             continue;
         }
 
-        let edit = lsp_types::TextEdit {
+        let edit = TextEdit {
             range: src_span_to_lsp_range(SrcSpan::new(start, start), &line_numbers),
             new_text: "let _ = ".into(),
         };
@@ -1001,7 +1002,7 @@ fn code_action_unused_imports(
         // Keep track of whether any unused import has is where the cursor is
         hovered = hovered || overlaps(params.range, range);
 
-        edits.push(lsp_types::TextEdit {
+        edits.push(TextEdit {
             range,
             new_text: "".into(),
         });
@@ -1066,7 +1067,7 @@ fn code_action_fix_names(
         let range = src_span_to_lsp_range(location, &line_numbers);
         // Check if the user's cursor is on the invalid name
         if overlaps(params.range, range) {
-            let edit = lsp_types::TextEdit {
+            let edit = TextEdit {
                 range,
                 new_text: correction.to_string(),
             };

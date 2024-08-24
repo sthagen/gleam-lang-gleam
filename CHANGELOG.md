@@ -164,6 +164,39 @@
 
   ([sobolevn](https://github.com/sobolevn))
 
+- The compiler now gives a hint to import a module when accessing modules that
+  aren't imported. It only suggests a module if it exports a type/value with
+  the same name as what the user was trying to access:
+
+  ```gleam
+  pub fn main() {
+    io.println("Hello, world!")
+  }
+  ```
+
+  Produces the following error:
+
+  ```
+  error: Unknown module
+    ┌─ /src/file.gleam:2:3
+    │
+  2 │   io.println("Hello, world!")
+    │   ^^
+
+  No module has been found with the name `io`.
+  Hint: Did you mean to import `gleam/io`?
+  ```
+
+  This code, however, produces no hint:
+
+  ```gleam
+  pub fn main() {
+    io.non_existent()
+  }
+  ```
+
+  ([Surya Rose](https://github.com/gearsdatapacks))
+
 ### Formatter
 
 ### Language Server
@@ -171,6 +204,27 @@
 - The language server can now suggest a code action to assign an unused value to
   `_`.
   ([Jiangda Wang](https://github.com/frank-iii))
+
+- The language server can now suggest a code action to import modules
+  for existing code which references unimported modules:
+
+  ```gleam
+  pub fn main() {
+    io.println("Hello, world!")
+  }
+  ```
+
+  Becomes:
+
+  ```gleam
+  import gleam/io
+
+  pub fn main() {
+    io.println("Hello, world!")
+  }
+  ```
+
+  ([Surya Rose](https://github.com/gearsdatapacks))
 
 ### Bug Fixes
 

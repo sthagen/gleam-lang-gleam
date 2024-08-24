@@ -9,6 +9,8 @@ use crate::{
     },
 };
 
+use super::Imported;
+
 #[derive(Debug)]
 pub struct Importer<'context, 'problems> {
     origin: Origin,
@@ -51,7 +53,7 @@ impl<'context, 'problems> Importer<'context, 'problems> {
             self.problems.error(Error::UnknownModule {
                 location,
                 name: name.clone(),
-                imported_modules: self.environment.imported_modules.keys().cloned().collect(),
+                suggestions: self.environment.suggest_modules(&name, Imported::Module),
             });
             return;
         };

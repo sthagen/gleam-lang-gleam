@@ -13,7 +13,8 @@ use crate::{
     build::Module,
     line_numbers::LineNumbers,
     parse::extra::ModuleExtra,
-    type_::{FieldMap, ModuleValueConstructor, Type, TypedCallArg},
+    type_::{error::ModuleSuggestion, FieldMap, ModuleValueConstructor, Type, TypedCallArg},
+    Error,
 };
 use ecow::EcoString;
 use im::HashMap;
@@ -21,6 +22,7 @@ use itertools::Itertools;
 use lsp_types::{CodeAction, CodeActionKind, CodeActionParams, TextEdit, Url};
 
 use super::{
+    edits::{add_newlines_after_import, get_import_edit, position_of_first_definition_if_import},
     engine::{overlaps, within},
     src_span_to_lsp_range,
 };
@@ -633,5 +635,121 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
         // we find (the outermost one) and have to keep traversing it in case
         // we're inside a nested call.
         visit_typed_expr_call(self, location, type_, fun, args)
+    }
+}
+
+struct MissingImport {
+    location: SrcSpan,
+    suggestions: Vec<ImportSuggestion>,
+}
+
+struct ImportSuggestion {
+    // The name to replace with, if the user made a typo
+    name: EcoString,
+    // The optional module to import, if suggesting an importable module
+    import: Option<EcoString>,
+}
+
+pub fn code_action_import_module(
+    module: &Module,
+    params: &CodeActionParams,
+    error: &Option<Error>,
+    actions: &mut Vec<CodeAction>,
+) {
+    let uri = &params.text_document.uri;
+    let Some(Error::Type { errors, .. }) = error else {
+        return;
+    };
+
+    let missing_imports = errors
+        .into_iter()
+        .filter_map(|e| match e {
+            crate::type_::Error::UnknownModule {
+                location,
+                suggestions,
+                ..
+            } => suggest_imports(*location, suggestions),
+            _ => None,
+        })
+        .collect_vec();
+
+    if missing_imports.is_empty() {
+        return;
+    }
+
+    let line_numbers = LineNumbers::new(&module.code);
+    let first_import_pos = position_of_first_definition_if_import(module, &line_numbers);
+    let first_is_import = first_import_pos.is_some();
+    let import_location = first_import_pos.unwrap_or_default();
+
+    let after_import_newlines = add_newlines_after_import(
+        import_location,
+        first_is_import,
+        &line_numbers,
+        &module.code,
+    );
+
+    for missing_import in missing_imports {
+        let range = src_span_to_lsp_range(missing_import.location, &line_numbers);
+        if !overlaps(params.range, range) {
+            continue;
+        }
+
+        for suggestion in missing_import.suggestions {
+            let mut edits = vec![TextEdit {
+                range,
+                new_text: suggestion.name.to_string(),
+            }];
+            if let Some(import) = &suggestion.import {
+                edits.push(get_import_edit(
+                    import_location,
+                    import,
+                    &after_import_newlines,
+                ))
+            };
+
+            let title = if let Some(import) = &suggestion.import {
+                &format!("Import `{import}`")
+            } else {
+                &format!("Did you mean `{}`", suggestion.name)
+            };
+
+            CodeActionBuilder::new(title)
+                .kind(CodeActionKind::QUICKFIX)
+                .changes(uri.clone(), edits)
+                .preferred(true)
+                .push_to(actions);
+        }
+    }
+}
+
+fn suggest_imports(
+    location: SrcSpan,
+    importable_modules: &[ModuleSuggestion],
+) -> Option<MissingImport> {
+    let suggestions = importable_modules
+        .iter()
+        .map(|suggestion| {
+            let imported_name = suggestion.last_name_component();
+            match suggestion {
+                ModuleSuggestion::Importable(name) => ImportSuggestion {
+                    name: imported_name.into(),
+                    import: Some(name.clone()),
+                },
+                ModuleSuggestion::Imported(_) => ImportSuggestion {
+                    name: imported_name.into(),
+                    import: None,
+                },
+            }
+        })
+        .collect_vec();
+
+    if suggestions.is_empty() {
+        None
+    } else {
+        Some(MissingImport {
+            location,
+            suggestions,
+        })
     }
 }

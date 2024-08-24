@@ -512,7 +512,7 @@ impl FileKind {
 }
 
 // https://github.com/rust-lang/rust/blob/03994e498df79aa1f97f7bbcfd52d57c8e865049/compiler/rustc_span/src/edit_distance.rs
-fn edit_distance(a: &str, b: &str, limit: usize) -> Option<usize> {
+pub fn edit_distance(a: &str, b: &str, limit: usize) -> Option<usize> {
     let mut a = &a.chars().collect::<Vec<_>>()[..];
     let mut b = &b.chars().collect::<Vec<_>>()[..];
 
@@ -1957,15 +1957,15 @@ Private types can only be used within the module that defines them.",
                 TypeError::UnknownModule {
                     location,
                     name,
-                    imported_modules,
+                    suggestions
                 } => Diagnostic {
                     title: "Unknown module".into(),
                     text: format!("No module has been found with the name `{name}`."),
-                    hint: None,
+                    hint: suggestions.first().map(|suggestion| suggestion.suggestion(name)),
                     level: Level::Error,
                     location: Some(Location {
                         label: Label {
-                            text: did_you_mean(name, imported_modules),
+                            text: None,
                             span: *location,
                         },
                         path: path.clone(),

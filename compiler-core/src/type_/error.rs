@@ -71,6 +71,47 @@ pub enum RecordVariants {
     NoVariants,
 }
 
+/// A suggestion for an unknown module
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ModuleSuggestion {
+    /// A module which which has a similar name, and an
+    /// exported value matching the one being accessed
+    Importable(EcoString),
+    /// A module already imported in the current scope
+    Imported(EcoString),
+}
+
+impl ModuleSuggestion {
+    pub fn suggestion(&self, module: &str) -> String {
+        match self {
+            ModuleSuggestion::Importable(name) => {
+                // Add a little extra information if the names don't match
+                let imported_name = self.last_name_component();
+                if module == imported_name {
+                    format!("Did you mean to import `{name}`?")
+                } else {
+                    format!("Did you mean to import `{name}` and reference `{imported_name}`?")
+                }
+            }
+            ModuleSuggestion::Imported(name) => format!("Did you mean `{name}`?"),
+        }
+    }
+
+    pub fn name(&self) -> &EcoString {
+        match self {
+            ModuleSuggestion::Imported(name) | ModuleSuggestion::Importable(name) => name,
+        }
+    }
+
+    pub fn last_name_component(&self) -> &str {
+        match self {
+            ModuleSuggestion::Imported(name) | ModuleSuggestion::Importable(name) => {
+                name.split('/').last().unwrap_or(name)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Error {
     SrcImportingTest {
@@ -106,7 +147,7 @@ pub enum Error {
     UnknownModule {
         location: SrcSpan,
         name: EcoString,
-        imported_modules: Vec<EcoString>,
+        suggestions: Vec<ModuleSuggestion>,
     },
 
     UnknownModuleType {
@@ -924,7 +965,7 @@ pub enum UnknownValueConstructorError {
 
     Module {
         name: EcoString,
-        imported_modules: Vec<EcoString>,
+        suggestions: Vec<ModuleSuggestion>,
     },
 
     ModuleValue {
@@ -951,13 +992,10 @@ pub fn convert_get_value_constructor_error(
             type_with_name_in_scope,
         },
 
-        UnknownValueConstructorError::Module {
-            name,
-            imported_modules,
-        } => Error::UnknownModule {
+        UnknownValueConstructorError::Module { name, suggestions } => Error::UnknownModule {
             location,
             name,
-            imported_modules,
+            suggestions,
         },
 
         UnknownValueConstructorError::ModuleValue {
@@ -990,7 +1028,7 @@ pub enum UnknownTypeConstructorError {
 
     Module {
         name: EcoString,
-        imported_modules: Vec<EcoString>,
+        suggestions: Vec<ModuleSuggestion>,
     },
 
     ModuleType {
@@ -1004,6 +1042,7 @@ pub enum UnknownTypeConstructorError {
 pub fn convert_get_type_constructor_error(
     e: UnknownTypeConstructorError,
     location: &SrcSpan,
+    module_location: Option<SrcSpan>,
 ) -> Error {
     match e {
         UnknownTypeConstructorError::Type { name, hint } => Error::UnknownType {
@@ -1012,13 +1051,10 @@ pub fn convert_get_type_constructor_error(
             hint,
         },
 
-        UnknownTypeConstructorError::Module {
+        UnknownTypeConstructorError::Module { name, suggestions } => Error::UnknownModule {
+            location: module_location.unwrap_or(*location),
             name,
-            imported_modules,
-        } => Error::UnknownModule {
-            location: *location,
-            name,
-            imported_modules,
+            suggestions,
         },
 
         UnknownTypeConstructorError::ModuleType {

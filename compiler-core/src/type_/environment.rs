@@ -2,6 +2,7 @@ use crate::{
     analyse::TargetSupport,
     ast::{Publicity, PIPE_VARIABLE},
     build::Target,
+    error::edit_distance,
     exhaustiveness::printer::ValueNames,
     uid::UniqueIdGenerator,
 };
@@ -333,7 +334,7 @@ impl<'a> Environment<'a> {
     ///
     pub fn get_type_constructor(
         &mut self,
-        module_alias: &Option<EcoString>,
+        module_alias: &Option<(EcoString, SrcSpan)>,
         name: &EcoString,
     ) -> Result<&TypeConstructor, UnknownTypeConstructorError> {
         let t = match module_alias {
@@ -345,11 +346,12 @@ impl<'a> Environment<'a> {
                     hint: self.unknown_type_hint(name),
                 }),
 
-            Some(module_name) => {
+            Some((module_name, _)) => {
                 let (_, module) = self.imported_modules.get(module_name).ok_or_else(|| {
                     UnknownTypeConstructorError::Module {
                         name: module_name.clone(),
-                        imported_modules: self.importable_modules.keys().cloned().collect(),
+                        suggestions: self
+                            .suggest_modules(module_name, Imported::Type(name.clone())),
                     }
                 })?;
                 let _ = self.unused_modules.remove(module_name);
@@ -400,7 +402,7 @@ impl<'a> Environment<'a> {
                 let module = self.importable_modules.get(m).ok_or_else(|| {
                     UnknownTypeConstructorError::Module {
                         name: name.clone(),
-                        imported_modules: self.importable_modules.keys().cloned().collect(),
+                        suggestions: self.suggest_modules(m, Imported::Type(name.clone())),
                     }
                 })?;
                 module.types_value_constructors.get(name).ok_or_else(|| {
@@ -436,7 +438,8 @@ impl<'a> Environment<'a> {
                 let (_, module) = self.imported_modules.get(module_name).ok_or_else(|| {
                     UnknownValueConstructorError::Module {
                         name: module_name.clone(),
-                        imported_modules: self.importable_modules.keys().cloned().collect(),
+                        suggestions: self
+                            .suggest_modules(module_name, Imported::Value(name.clone())),
                     }
                 })?;
                 let _ = self.unused_modules.remove(module_name);
@@ -667,6 +670,63 @@ impl<'a> Environment<'a> {
             .cloned()
             .collect()
     }
+
+    /// Suggest modules to import or use, for an unknown module
+    pub fn suggest_modules(&self, module: &str, imported: Imported) -> Vec<ModuleSuggestion> {
+        let mut suggestions = self
+            .importable_modules
+            .iter()
+            .filter_map(|(importable, module_info)| {
+                match &imported {
+                    // Don't suggest importing modules if they are already imported
+                    _ if self
+                        .imported_modules
+                        .contains_key(importable.split('/').last().unwrap_or(importable)) =>
+                    {
+                        None
+                    }
+                    Imported::Type(name) if module_info.get_public_type(name).is_some() => {
+                        Some(ModuleSuggestion::Importable(importable.clone()))
+                    }
+                    Imported::Value(name) if module_info.get_public_value(name).is_some() => {
+                        Some(ModuleSuggestion::Importable(importable.clone()))
+                    }
+                    _ => None,
+                }
+            })
+            .collect_vec();
+
+        suggestions.extend(
+            self.imported_modules
+                .keys()
+                .map(|module| ModuleSuggestion::Imported(module.clone())),
+        );
+
+        let threshold = std::cmp::max(module.chars().count() / 3, 1);
+
+        // Filter and sort options based on edit distance.
+        suggestions
+            .into_iter()
+            .sorted()
+            .filter_map(|suggestion| {
+                edit_distance(module, suggestion.last_name_component(), threshold)
+                    .map(|distance| (suggestion, distance))
+            })
+            .sorted_by_key(|&(_, distance)| distance)
+            .map(|(suggestion, _)| suggestion)
+            .collect()
+    }
+}
+
+#[derive(Debug)]
+/// An imported name, for looking up a module which exports it
+pub enum Imported {
+    /// An imported module, with no extra information
+    Module,
+    /// An imported type
+    Type(EcoString),
+    /// An imported value
+    Value(EcoString),
 }
 
 /// Unify two types that should be the same.
