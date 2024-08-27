@@ -1,4 +1,6 @@
-use crate::{assert_module_error, assert_no_warnings, assert_warning, assert_with_module_error};
+use crate::{
+    assert_error, assert_module_error, assert_no_warnings, assert_warning, assert_with_module_error,
+};
 
 #[test]
 fn whatever() {
@@ -1127,5 +1129,70 @@ pub fn main() {
   }
 }
 "
+    );
+}
+
+// The following few tests all verify that the compiler provides useful errors
+// when there are no case arms, instead of just suggesting `_` as it did previously.
+#[test]
+fn empty_case_of_bool() {
+    assert_error!(
+        "
+let b = True
+case b {}
+"
+    );
+}
+
+#[test]
+fn empty_case_of_custom_type() {
+    assert_module_error!(
+        "
+type Wibble { Wibble Wobble Wubble }
+pub fn main() {
+  let wibble = Wobble
+  case wibble {}
+}
+"
+    );
+}
+
+#[test]
+fn empty_case_of_list() {
+    assert_error!(
+        "
+let list = []
+case list {}
+"
+    );
+}
+
+#[test]
+fn empty_case_of_int() {
+    assert_error!(
+        "
+let num = 24
+case num {}
+"
+    );
+}
+
+#[test]
+fn empty_case_of_float() {
+    assert_error!(
+        "
+let age = 10.6
+case age {}
+"
+    );
+}
+
+#[test]
+fn empty_case_of_string() {
+    assert_error!(
+        r#"
+let name = "John Doe"
+case name {}
+"#
     );
 }
