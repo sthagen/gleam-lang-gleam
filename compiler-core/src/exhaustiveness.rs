@@ -221,6 +221,7 @@ pub struct Diagnostics {
 pub struct Match {
     pub tree: Decision,
     pub diagnostics: Diagnostics,
+    pub subject_variables: Vec<Variable>,
 }
 
 impl Match {
@@ -264,9 +265,34 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn compile(mut self, rows: Vec<Row>) -> Match {
+        // If there are no rows, we get an immediate decision failure,
+        // which gives a pretty unhelpful error message. Instead, we
+        // run one pass of compiling to ensure we don't just suggest `_`
+        let tree = if rows.is_empty() {
+            // Even though we run a compile pass, an empty case expression is always
+            // invalid, so we make sure to report that here
+            self.diagnostics.missing = true;
+            let tree = self.compile_rows_for_variable(
+                self.subject_variables
+                    .first()
+                    .expect("Must have at least one subject")
+                    .clone(),
+                Vec::new(),
+            );
+            match tree {
+                // If there are no known constructors, we return failure since that
+                // better describes the state than an empty switch, and allows us to report
+                // `_` as the missing pattern.
+                Decision::Switch(_, cases, _) if cases.is_empty() => Decision::Failure,
+                _ => tree,
+            }
+        } else {
+            self.compile_rows(rows)
+        };
         Match {
-            tree: self.check_empty_rows(rows),
+            tree,
             diagnostics: self.diagnostics,
+            subject_variables: self.subject_variables,
         }
     }
 
@@ -294,33 +320,6 @@ impl<'a> Compiler<'a> {
             | Pattern::BitArray { .. }
             | Pattern::Constructor { .. }
             | Pattern::StringPrefix { .. } => vec![(id, row)],
-        }
-    }
-
-    fn check_empty_rows(&mut self, rows: Vec<Row>) -> Decision {
-        // If there are no rows, we get an immediate decision failure,
-        // which gives a pretty unhelpful error message. Instead, we
-        // run one pass of compiling to ensure we don't just suggest `_`
-        if rows.is_empty() {
-            // Even though we run a compile pass, an empty case expression is always
-            // invalid, so we make sure to report that here
-            self.diagnostics.missing = true;
-            let tree = self.compile_rows_for_variable(
-                self.subject_variables
-                    .first()
-                    .expect("Must have at least one subject")
-                    .clone(),
-                Vec::new(),
-            );
-            match tree {
-                // If there are no known constructors, we simply return failure since that
-                // better describes the state than an empty switch, and allows us to report
-                // `_` as the missing pattern.
-                Decision::Switch(_, cases, _) if cases.is_empty() => Decision::Failure,
-                _ => tree,
-            }
-        } else {
-            self.compile_rows(rows)
         }
     }
 
