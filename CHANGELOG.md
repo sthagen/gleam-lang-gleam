@@ -204,34 +204,33 @@
 
   ([Surya Rose](https://github.com/gearsdatapacks))
 
-  - The compiler now provides improved suggestions in the error for an
-    inexhaustive case expression. The following code:
+- The compiler now provides improved suggestions in the error for an
+  inexhaustive case expression. The following code:
 
-    ```gleam
-    let a = True
-    case a {}
-    ```
+  ```gleam
+  let a = True
+  case a {}
+  ```
 
-    Now produces this error:
+  Now produces this error:
 
-    ```
-    error: Inexhaustive patterns
-      ┌─ /src/file.gleam:3:3
-      │
-    3 │   case a {}
-      │   ^^^^^^^^^
+  ```
+  error: Inexhaustive patterns
+    ┌─ /src/file.gleam:3:3
+    │
+  3 │   case a {}
+    │   ^^^^^^^^^
 
-    This case expression does not have a pattern for all possible values. If it
-    is run on one of the values without a pattern then it will crash.
+  This case expression does not have a pattern for all possible values. If it
+  is run on one of the values without a pattern then it will crash.
 
-    The missing patterns are:
+  The missing patterns are:
 
-        False
-        True
-    ```
+      False
+      True
+  ```
 
-    Whereas before, it would suggest `_` as the only missing pattern.
-
+  Whereas before, it would suggest `_` as the only missing pattern.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 - Improve error message for using @external with unknown target
@@ -239,14 +238,34 @@
 
 ### Formatter
 
+- The formatter now adds a `todo` after a `use` expression if it is the last
+  expression in a block. For example, the following code:
+
+  ```gleam
+  pub fn main() {
+    use user <- result.try(fetch_user())
+  }
+  ```
+
+  Is rewritten as:
+
+  ```gleam
+  pub fn main() {
+    use user <- result.try(fetch_user())
+    todo
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Language Server
 
 - The language server can now suggest a code action to assign an unused value to
   `_`.
   ([Jiangda Wang](https://github.com/frank-iii))
 
-- The language server can now suggest a code action to import modules
-  for existing code which references unimported modules:
+- The language server can now suggest a code action to import modules for
+  existing code which references unimported modules:
 
   ```gleam
   pub fn main() {
@@ -288,8 +307,9 @@
 
 ### Bug Fixes
 
-- Fixed a bug where the warnings were printed above the errors without any new line between them.
-([Victor Kobinski](https://github.com/vkobinski))
+- Fixed a bug where the warnings were printed above the errors without any new
+  line between them.
+  ([Victor Kobinski](https://github.com/vkobinski))
 
 - Fixed a bug which caused the language server and compiler to crash when two
   constructors of the same name were created.
@@ -326,15 +346,24 @@
   underscore in expression like: `let some = _func()` or `case { 1 -> _func() }`
   ([sobolevn](https://github.com/sobolevn))
 
-- Fixed a bug where the provided `REBAR_BARE_COMPILER_OUTPUT_DIR` env var would use relative path instead of absolute path causing compilation errors in some packages.
+- Fixed a bug where the provided `REBAR_BARE_COMPILER_OUTPUT_DIR` env var would
+  use relative path instead of absolute path causing compilation errors in some
+  packages.
   ([Gustavo Inacio](https://github.com/gusinacio))
 
 - Fixed a bug where the compiler would print incorrect missing patterns for
   inexhaustive case expressions matching on more than one subject.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- Fixed a bug where the compiler would not check the target support of a function
-  if it was imported and not used, and generate invalid code.
+- Fixed a bug where the compiler would not check the target support of a
+  function if it was imported and not used, and generate invalid code.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where an qualified unused constructor wouldn't be reported as
+  unused.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The Language Server now correctly shows completions for values in the Gleam prelude.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.4.1 - 2024-08-04
