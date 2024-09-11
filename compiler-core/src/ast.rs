@@ -578,20 +578,20 @@ fn type_ast_print_tuple() {
 pub enum Publicity {
     Public,
     Private,
-    Internal,
+    Internal { attribute_location: Option<SrcSpan> },
 }
 
 impl Publicity {
     pub fn is_private(&self) -> bool {
         match self {
             Self::Private => true,
-            Self::Public | Self::Internal => false,
+            Self::Public | Self::Internal { .. } => false,
         }
     }
 
     pub fn is_internal(&self) -> bool {
         match self {
-            Self::Internal => true,
+            Self::Internal { .. } => true,
             Self::Public | Self::Private => false,
         }
     }
@@ -599,13 +599,13 @@ impl Publicity {
     pub fn is_public(&self) -> bool {
         match self {
             Self::Public => true,
-            Self::Internal | Self::Private => false,
+            Self::Internal { .. } | Self::Private => false,
         }
     }
 
     pub fn is_importable(&self) -> bool {
         match self {
-            Self::Internal | Self::Public => true,
+            Self::Internal { .. } | Self::Public => true,
             Self::Private => false,
         }
     }
@@ -638,8 +638,8 @@ pub struct Function<T, Expr> {
     pub return_annotation: Option<TypeAst>,
     pub return_type: T,
     pub documentation: Option<(u32, EcoString)>,
-    pub external_erlang: Option<(EcoString, EcoString)>,
-    pub external_javascript: Option<(EcoString, EcoString)>,
+    pub external_erlang: Option<(EcoString, EcoString, SrcSpan)>,
+    pub external_javascript: Option<(EcoString, EcoString, SrcSpan)>,
     pub implementations: Implementations,
 }
 

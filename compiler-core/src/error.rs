@@ -20,7 +20,7 @@ use pubgrub::report::DerivationTree;
 use pubgrub::version::Version;
 use std::collections::HashSet;
 use std::env;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::io::Write;
 use std::path::PathBuf;
 use termcolor::Buffer;
@@ -289,6 +289,40 @@ file_names.iter().map(|x| x.as_str()).join(", "))]
 
     #[error("Version already published")]
     HexPublishReplaceRequired { version: String },
+
+    #[error("The gleam version constraint is wrong and so cannot be published")]
+    CannotPublishWrongVersion {
+        minimum_required_version: SmallVersion,
+        wrongfully_allowed_version: SmallVersion,
+    },
+}
+
+/// This is to make clippy happy and not make the error variant too big by
+/// storing an entire `hexpm::version::Version` in the error.
+///
+/// This is enough to report wrong Gleam compiler versions.
+///
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct SmallVersion {
+    major: u8,
+    minor: u8,
+    patch: u8,
+}
+
+impl Display for SmallVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!("{}.{}.{}", self.major, self.minor, self.patch))
+    }
+}
+
+impl SmallVersion {
+    pub fn from_hexpm(version: hexpm::version::Version) -> Self {
+        Self {
+            major: version.major as u8,
+            minor: version.minor as u8,
+            patch: version.patch as u8,
+        }
+    }
 }
 
 impl Error {
@@ -896,6 +930,24 @@ Please remove them and try again.
                 ),
                 level: Level::Error,
                 hint: None,
+                location: None,
+            }],
+
+            Error::CannotPublishWrongVersion { minimum_required_version, wrongfully_allowed_version } => vec![Diagnostic {
+                title: "Cannot publish package with wrong Gleam version range".into(),
+                text: wrap(&format!(
+                    "Your package uses features that require at least v{minimum_required_version}.
+But the Gleam version range specified in your `gleam.toml` would allow this \
+code to run on an earlier version like v{wrongfully_allowed_version}, \
+resulting in compilation errors!"
+                )),
+                level: Level::Error,
+                hint: Some(format!(
+                    "Remove the version constraint from your `gleam.toml` or update it to be:
+
+    gleam = \">= {}\"",
+                    minimum_required_version
+                )),
                 location: None,
             }],
 
@@ -2020,7 +2072,7 @@ Private types can only be used within the module that defines them.",
                         format!("The module `{module_name}` does not have a `{name}` value.")
                     };
                     Diagnostic {
-                        title: "Unknown module field".into(),
+                        title: "Unknown module value".into(),
                         text,
                         hint: None,
                         level: Level::Error,

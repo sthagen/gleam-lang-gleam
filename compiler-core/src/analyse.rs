@@ -22,14 +22,14 @@ use crate::{
     type_::{
         self,
         environment::*,
-        error::{convert_unify_error, Error, MissingAnnotation, Named, Problems},
+        error::{convert_unify_error, Error, FeatureKind, MissingAnnotation, Named, Problems},
         expression::{ExprTyper, FunctionDefinition, Implementations},
         fields::{FieldMap, FieldMapBuilder},
         hydrator::Hydrator,
         prelude::*,
         AccessorsMap, Deprecation, ModuleInterface, PatternConstructor, RecordAccessor, Type,
         TypeConstructor, TypeValueConstructor, TypeValueConstructorField, TypeVariantConstructors,
-        ValueConstructor, ValueConstructorVariant,
+        ValueConstructor, ValueConstructorVariant, Warning,
     },
     uid::UniqueIdGenerator,
     warning::TypeWarningEmitter,
@@ -37,6 +37,7 @@ use crate::{
 };
 use camino::Utf8PathBuf;
 use ecow::EcoString;
+use hexpm::version::Version;
 use itertools::Itertools;
 use name::{check_argument_names, check_name_case};
 use std::{
@@ -164,6 +165,7 @@ impl<'a, A> ModuleAnalyzerConstructor<'a, A> {
             value_names: HashMap::with_capacity(module.definitions.len()),
             hydrators: HashMap::with_capacity(module.definitions.len()),
             module_name: module.name.clone(),
+            minimum_required_version: Version::new(1, 0, 0),
         }
         .infer_module(module)
     }
@@ -184,6 +186,9 @@ struct ModuleAnalyzer<'a, A> {
     value_names: HashMap<EcoString, SrcSpan>,
     hydrators: HashMap<EcoString, Hydrator>,
     module_name: EcoString,
+
+    /// The minimum Gleam version required to compile the analysed module.
+    minimum_required_version: Version,
 }
 
 impl<'a, A> ModuleAnalyzer<'a, A> {
@@ -196,6 +201,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         let env = Environment::new(
             self.ids.clone(),
             self.package_config.name.clone(),
+            self.package_config.gleam_version.clone(),
             self.module_name.clone(),
             self.target,
             self.importable_modules,
@@ -326,6 +332,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 line_numbers: self.line_numbers,
                 src_path: self.src_path,
                 warnings,
+                minimum_required_version: self.minimum_required_version,
             },
         };
 
@@ -366,6 +373,23 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         let typed_expr = expr_typer.infer_const(&annotation, *value);
         let type_ = typed_expr.type_();
         let implementations = expr_typer.implementations;
+
+        let minimum_required_version = expr_typer.minimum_required_version;
+        if minimum_required_version > self.minimum_required_version {
+            self.minimum_required_version = minimum_required_version;
+        }
+
+        match publicity {
+            Publicity::Private
+            | Publicity::Public
+            | Publicity::Internal {
+                attribute_location: None,
+            } => (),
+
+            Publicity::Internal {
+                attribute_location: Some(location),
+            } => self.track_feature_usage(FeatureKind::InternalAnnotation, location),
+        }
 
         let variant = ValueConstructor {
             publicity,
@@ -500,15 +524,22 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             )?;
             let args_types = args.iter().map(|a| a.type_.clone()).collect();
             let type_ = fn_(args_types, body.last().type_());
-            Ok((type_, body, expr_typer.implementations))
+            Ok((
+                type_,
+                body,
+                expr_typer.implementations,
+                expr_typer.minimum_required_version,
+            ))
         });
 
         // If we could not successfully infer the type etc information of the
         // function then register the error and continue anaylsis using the best
         // information that we have, so we can still learn about the rest of the
         // module.
-        let (type_, body, implementations) = match result {
-            Ok((type_, body, implementations)) => (type_, body, implementations),
+        let (type_, body, implementations, required_version) = match result {
+            Ok((type_, body, implementations, required_version)) => {
+                (type_, body, implementations, required_version)
+            }
             Err(error) => {
                 self.problems.error(error);
                 let type_ = preregistered_type.clone();
@@ -520,9 +551,31 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                     },
                 }));
                 let implementations = Implementations::supporting_all();
-                (type_, body, implementations)
+                (type_, body, implementations, Version::new(1, 0, 0))
             }
         };
+
+        if required_version > self.minimum_required_version {
+            self.minimum_required_version = required_version;
+        }
+
+        match publicity {
+            Publicity::Private
+            | Publicity::Public
+            | Publicity::Internal {
+                attribute_location: None,
+            } => (),
+
+            Publicity::Internal {
+                attribute_location: Some(location),
+            } => self.track_feature_usage(FeatureKind::InternalAnnotation, location),
+        }
+
+        if let Some((module, _, location)) = &external_javascript {
+            if module.contains('@') {
+                self.track_feature_usage(FeatureKind::AtInJavascriptModules, *location)
+            }
+        }
 
         // Assert that the inferred type matches the type of any recursive call
         if let Err(error) = unify(preregistered_type.clone(), type_) {
@@ -590,7 +643,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
     fn assert_valid_javascript_external(
         &mut self,
         function_name: &EcoString,
-        external_javascript: Option<&(EcoString, EcoString)>,
+        external_javascript: Option<&(EcoString, EcoString, SrcSpan)>,
         location: SrcSpan,
     ) {
         use regex::Regex;
@@ -600,7 +653,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
         let (module, function) = match external_javascript {
             None => return,
-            Some(external) => external,
+            Some((module, function, _location)) => (module, function),
         };
         if !MODULE
             .get_or_init(|| Regex::new("^[@a-zA-Z0-9\\./:_-]+$").expect("regex"))
@@ -650,8 +703,8 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
     fn ensure_function_has_an_implementation(
         &mut self,
         body: &Vec1<UntypedStatement>,
-        external_erlang: &Option<(EcoString, EcoString)>,
-        external_javascript: &Option<(EcoString, EcoString)>,
+        external_erlang: &Option<(EcoString, EcoString, SrcSpan)>,
+        external_javascript: &Option<(EcoString, EcoString, SrcSpan)>,
         location: SrcSpan,
     ) -> bool {
         match (external_erlang, external_javascript) {
@@ -692,12 +745,11 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             && module_info.package != self.package_config.name
             && !self.direct_dependencies.contains_key(&module_info.package)
         {
-            self.warnings
-                .emit(type_::Warning::TransitiveDependencyImported {
-                    location,
-                    module: module_info.name.clone(),
-                    package: module_info.package.clone(),
-                })
+            self.warnings.emit(Warning::TransitiveDependencyImported {
+                location,
+                module: module_info.name.clone(),
+                package: module_info.package.clone(),
+            })
         }
 
         Some(Definition::Import(Import {
@@ -750,6 +802,18 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             deprecation,
             ..
         } = t;
+
+        match publicity {
+            Publicity::Private
+            | Publicity::Public
+            | Publicity::Internal {
+                attribute_location: None,
+            } => (),
+
+            Publicity::Internal {
+                attribute_location: Some(location),
+            } => self.track_feature_usage(FeatureKind::InternalAnnotation, location),
+        }
 
         let constructors = constructors
             .into_iter()
@@ -1023,12 +1087,14 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         let publicity = match publicity {
             // It's important we only restrict the publicity of public types.
             Publicity::Public if self.package_config.is_internal_module(&self.module_name) => {
-                Publicity::Internal
+                Publicity::Internal {
+                    attribute_location: None,
+                }
             }
             // If a type is private we don't want to make it internal just because
             // it comes from an internal module, so in that case the publicity is
             // left unchanged.
-            Publicity::Public | Publicity::Private | Publicity::Internal => *publicity,
+            Publicity::Public | Publicity::Private | Publicity::Internal { .. } => *publicity,
         };
 
         let type_ = Arc::new(Type::Named {
@@ -1055,7 +1121,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             .expect("name uniqueness checked above");
 
         if *opaque && constructors.is_empty() {
-            self.problems.warning(type_::Warning::OpaqueExternalType {
+            self.problems.warning(Warning::OpaqueExternalType {
                 location: *location,
             });
         }
@@ -1272,6 +1338,34 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             self.problems.error(error);
         }
     }
+
+    fn track_feature_usage(&mut self, feature_kind: FeatureKind, location: SrcSpan) {
+        let minimum_required_version = feature_kind.required_version();
+
+        // Then if the required version is not in the specified version for the
+        // range we emit a warning highlighting the usage of the feature.
+        if let Some(gleam_version) = &self.package_config.gleam_version {
+            if let Some(lowest_allowed_version) = gleam_version.lowest_version() {
+                // There is a version in the specified range that is lower than
+                // the one required by this feature! This means that the
+                // specified range is wrong and would allow someone to run a
+                // compiler that is too old to know of this feature.
+                if minimum_required_version > lowest_allowed_version {
+                    self.problems
+                        .warning(Warning::FeatureRequiresHigherGleamVersion {
+                            location,
+                            feature_kind,
+                            minimum_required_version: minimum_required_version.clone(),
+                            wrongfully_allowed_version: lowest_allowed_version,
+                        })
+                }
+            }
+        }
+
+        if minimum_required_version > self.minimum_required_version {
+            self.minimum_required_version = minimum_required_version;
+        }
+    }
 }
 
 fn optionally_push<T>(vector: &mut Vec<T>, item: Option<T>) {
@@ -1300,21 +1394,21 @@ fn validate_module_name(name: &EcoString) -> Result<(), Error> {
 /// same as the name of the module and function. If the function has an external
 /// implementation then it is the name of the external module and function.
 fn implementation_names(
-    external: &Option<(EcoString, EcoString)>,
+    external: &Option<(EcoString, EcoString, SrcSpan)>,
     module_name: &EcoString,
     name: &EcoString,
 ) -> (EcoString, EcoString) {
     match external {
         None => (module_name.clone(), name.clone()),
-        Some((m, f)) => (m.clone(), f.clone()),
+        Some((m, f, _)) => (m.clone(), f.clone()),
     }
 }
 
 fn target_function_implementation<'a>(
     target: Target,
-    external_erlang: &'a Option<(EcoString, EcoString)>,
-    external_javascript: &'a Option<(EcoString, EcoString)>,
-) -> &'a Option<(EcoString, EcoString)> {
+    external_erlang: &'a Option<(EcoString, EcoString, SrcSpan)>,
+    external_javascript: &'a Option<(EcoString, EcoString, SrcSpan)>,
+) -> &'a Option<(EcoString, EcoString, SrcSpan)> {
     match target {
         Target::Erlang => external_erlang,
         Target::JavaScript => external_javascript,
