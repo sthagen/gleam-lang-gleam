@@ -27,6 +27,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Write,
     io::BufReader,
+    rc::Rc,
     sync::Arc,
     time::Instant,
 };
@@ -89,7 +90,7 @@ impl Built {
             .map(|interface| &interface.minimum_required_version)
             .reduce(|one_version, other_version| cmp::max(one_version, other_version))
             .map(|minimum_required_version| minimum_required_version.clone())
-            .unwrap_or(Version::new(1, 0, 0))
+            .unwrap_or(Version::new(0, 1, 0))
     }
 }
 
@@ -127,7 +128,7 @@ where
         options: Options,
         packages: Vec<ManifestPackage>,
         telemetry: &'static dyn Telemetry,
-        warning_emitter: Arc<dyn WarningEmitterIO>,
+        warning_emitter: Rc<dyn WarningEmitterIO>,
         paths: ProjectPaths,
         io: IO,
     ) -> Self {

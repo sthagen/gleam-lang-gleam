@@ -12,7 +12,7 @@ use crate::{
 use ecow::EcoString;
 use itertools::Itertools;
 use pubgrub::range::Range;
-use std::sync::Arc;
+use std::rc::Rc;
 use vec1::Vec1;
 
 use camino::Utf8PathBuf;
@@ -183,7 +183,7 @@ fn get_warnings(
     _ = compile_module_with_opts(
         "test_module",
         src,
-        Some(Arc::new(warnings.clone())),
+        Some(Rc::new(warnings.clone())),
         deps,
         Target::Erlang,
         TargetSupport::NotEnforced,
@@ -368,7 +368,7 @@ pub fn infer_module_with_target(
 pub fn compile_module(
     module_name: &str,
     src: &str,
-    warnings: Option<Arc<dyn WarningEmitterIO>>,
+    warnings: Option<Rc<dyn WarningEmitterIO>>,
     dep: Vec<DependencyModule<'_>>,
 ) -> Result<TypedModule, Vec<crate::type_::Error>> {
     compile_module_with_opts(
@@ -385,7 +385,7 @@ pub fn compile_module(
 pub fn compile_module_with_opts(
     module_name: &str,
     src: &str,
-    warnings: Option<Arc<dyn WarningEmitterIO>>,
+    warnings: Option<Rc<dyn WarningEmitterIO>>,
     dep: Vec<DependencyModule<'_>>,
     target: Target,
     target_support: TargetSupport,
@@ -394,9 +394,8 @@ pub fn compile_module_with_opts(
     let ids = UniqueIdGenerator::new();
     let mut modules = im::HashMap::new();
 
-    let emitter = WarningEmitter::new(
-        warnings.unwrap_or_else(|| Arc::new(VectorWarningEmitterIO::default())),
-    );
+    let emitter =
+        WarningEmitter::new(warnings.unwrap_or_else(|| Rc::new(VectorWarningEmitterIO::default())));
 
     // DUPE: preludeinsertion
     // TODO: Currently we do this here and also in the tests. It would be better
@@ -753,7 +752,7 @@ fn infer_module_type_retention_test() {
             accessors: HashMap::new(),
             line_numbers: LineNumbers::new(""),
             src_path: "".into(),
-            minimum_required_version: Version::new(1, 0, 0),
+            minimum_required_version: Version::new(0, 1, 0),
         }
     );
 }
@@ -2261,6 +2260,8 @@ fn assert_suitable_main_function_wrong_arity() {
             documentation: None,
             location: Default::default(),
             module: "module".into(),
+            external_erlang: None,
+            external_javascript: None,
             implementations: Implementations {
                 gleam: true,
                 uses_erlang_externals: false,
@@ -2286,6 +2287,8 @@ fn assert_suitable_main_function_ok() {
             documentation: None,
             location: Default::default(),
             module: "module".into(),
+            external_erlang: None,
+            external_javascript: None,
             implementations: Implementations {
                 gleam: true,
                 uses_erlang_externals: false,
@@ -2311,6 +2314,8 @@ fn assert_suitable_main_function_erlang_not_supported() {
             documentation: None,
             location: Default::default(),
             module: "module".into(),
+            external_erlang: Some(("wibble".into(), "wobble".into())),
+            external_javascript: Some(("wobble".into(), "wibble".into())),
             implementations: Implementations {
                 gleam: false,
                 uses_erlang_externals: true,
@@ -2336,6 +2341,8 @@ fn assert_suitable_main_function_javascript_not_supported() {
             documentation: None,
             location: Default::default(),
             module: "module".into(),
+            external_erlang: Some(("wibble".into(), "wobble".into())),
+            external_javascript: Some(("wobble".into(), "wibble".into())),
             implementations: Implementations {
                 gleam: false,
                 uses_erlang_externals: true,

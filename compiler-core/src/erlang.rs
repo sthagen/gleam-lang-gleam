@@ -1096,26 +1096,38 @@ fn var<'a>(name: &'a str, constructor: &'a ValueConstructor, env: &mut Env<'a>) 
         | ValueConstructorVariant::LocalConstant { literal } => const_inline(literal, env),
 
         ValueConstructorVariant::ModuleFn {
+            arity,
+            external_erlang: Some((module, name)),
+            ..
+        } if module == env.module => function_reference(None, name, *arity),
+
+        ValueConstructorVariant::ModuleFn {
+            arity,
+            external_erlang: Some((module, name)),
+            ..
+        } => function_reference(Some(module), name, *arity),
+
+        ValueConstructorVariant::ModuleFn {
             arity, ref module, ..
-        } if module == env.module => "fun "
-            .to_doc()
-            .append(atom(escape_erlang_existing_name(name)))
-            .append("/")
-            .append(*arity),
+        } if module == env.module => function_reference(None, name, *arity),
 
         ValueConstructorVariant::ModuleFn {
             arity,
             module,
             name,
             ..
-        } => "fun "
-            .to_doc()
-            .append(module_name_atom(module))
-            .append(":")
-            .append(atom(escape_erlang_existing_name(name)))
-            .append("/")
-            .append(*arity),
+        } => function_reference(Some(module), name, *arity),
     }
+}
+
+fn function_reference<'a>(module: Option<&'a str>, name: &'a str, arity: usize) -> Document<'a> {
+    match module {
+        None => "fun ".to_doc(),
+        Some(module) => "fun ".to_doc().append(module_name_atom(module)).append(":"),
+    }
+    .append(atom(escape_erlang_existing_name(name)))
+    .append("/")
+    .append(arity)
 }
 
 fn int<'a>(value: &str) -> Document<'a> {
@@ -1514,7 +1526,12 @@ fn docs_args_call<'a>(
         TypedExpr::Var {
             constructor:
                 ValueConstructor {
-                    variant: ValueConstructorVariant::ModuleFn { module, name, .. },
+                    variant:
+                        ValueConstructorVariant::ModuleFn {
+                            external_erlang: Some((module, name)),
+                            ..
+                        }
+                        | ValueConstructorVariant::ModuleFn { module, name, .. },
                     ..
                 },
             ..
@@ -1539,7 +1556,12 @@ fn docs_args_call<'a>(
                 },
             ..
         } if constructor.variant.is_module_fn() => {
-            if let ValueConstructorVariant::ModuleFn { module, name, .. } = &constructor.variant {
+            if let ValueConstructorVariant::ModuleFn {
+                external_erlang: Some((module, name)),
+                ..
+            }
+            | ValueConstructorVariant::ModuleFn { module, name, .. } = &constructor.variant
+            {
                 module_fn_with_args(module, name, args, env)
             } else {
                 unreachable!("The above clause guard ensures that this is a module fn")
@@ -1547,7 +1569,12 @@ fn docs_args_call<'a>(
         }
 
         TypedExpr::ModuleSelect {
-            constructor: ModuleValueConstructor::Fn { module, name, .. },
+            constructor:
+                ModuleValueConstructor::Fn {
+                    external_erlang: Some((module, name)),
+                    ..
+                }
+                | ModuleValueConstructor::Fn { module, name, .. },
             ..
         } => {
             let args = wrap_args(args);
@@ -1787,7 +1814,12 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
 
         TypedExpr::ModuleSelect {
             type_,
-            constructor: ModuleValueConstructor::Fn { module, name, .. },
+            constructor:
+                ModuleValueConstructor::Fn {
+                    external_erlang: Some((module, name)),
+                    ..
+                }
+                | ModuleValueConstructor::Fn { module, name, .. },
             ..
         } => module_select_fn(type_.clone(), module, name),
 

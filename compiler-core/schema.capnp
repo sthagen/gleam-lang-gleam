@@ -108,11 +108,11 @@ struct ValueConstructor {
 }
 
 struct Publicity {
-    union {
-        public @0 :Void;
-        private @1 :Void;
-        internal @2 :Option(SrcSpan);
-    }
+  union {
+    public @0 :Void;
+    private @1 :Void;
+    internal @2 :Option(SrcSpan);
+  }
 }
 
 struct Implementations {
@@ -141,6 +141,8 @@ struct ValueConstructorVariant {
       location @7 :SrcSpan;
       documentation @15 :Text;
       implementations @18 :Implementations;
+      externalErlang @20 :Option(External);
+      externalJavascript @21 :Option(External);
     }
 
     record :group {
@@ -154,6 +156,11 @@ struct ValueConstructorVariant {
       constructorIndex @17 :UInt16;
     }
   }
+}
+
+struct External {
+  module @0 :Text;
+  function @1 :Text;
 }
 
 struct SrcSpan {
