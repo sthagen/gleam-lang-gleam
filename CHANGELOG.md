@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.5.0-rc1 - 2024-09-14
 
 ### Build tool
 
@@ -344,6 +344,9 @@
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Language Server
+
+- The language server can now show completions for local variables inside a function.
+  ([Ezekiel Grosfeld](https://github.com/ezegros))
 
 - The language server can now suggest a code action to assign an unused value to
   `_`.
