@@ -317,7 +317,9 @@ impl TypeAst {
                     arguments: o_arguments,
                     location: _,
                 }) => {
-                    module == o_module
+                    let module_name =
+                        |m: &Option<(EcoString, _)>| m.as_ref().map(|(m, _)| m.clone());
+                    module_name(module) == module_name(o_module)
                         && name == o_name
                         && arguments.len() == o_arguments.len()
                         && arguments

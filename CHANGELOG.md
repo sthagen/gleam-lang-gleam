@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.5.0-rc2 - 2024-09-18
+
+### Bug Fixes
+
+- Fixed a bug where the formatter would not format nested tuple access properly.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where multi-variant custom type accessors wouldn't be properly
+  detected.
+  ([Louis Pilfold](https://github.com/lpil))
+
+
 ## v1.5.0-rc1 - 2024-09-14
 
 ### Build tool
