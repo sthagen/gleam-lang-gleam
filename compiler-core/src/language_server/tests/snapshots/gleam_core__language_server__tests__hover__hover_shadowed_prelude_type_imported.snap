@@ -1,9 +1,10 @@
 ---
 source: compiler-core/src/language_server/tests/hover.rs
-expression: type Wibble = Int
+expression: "\nimport numbers.{type Int}\nconst number = 100\n"
 ---
-type Wibble = Int
-              ▔↑▔
+import numbers.{type Int}
+const number = 100
+▔▔▔▔▔▔▔▔▔↑▔▔      
 
 
 ----- Hover content -----
