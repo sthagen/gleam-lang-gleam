@@ -88,6 +88,10 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Improved the error message for unknown record fields, displaying an additional
+  note on how to have a field accessor only if it makes sense.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 ### Language Server
@@ -120,6 +124,10 @@
 - Fixed a bug where the formatter would not format strings with big grapheme
   clusters properly.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed the `BitArray` constructor not being present in the types for the
+  JavaScript prelude.
+  ([Richard Viney](https://github.com/richard-viney))
 
 ## v1.5.1 - 2024-09-26
 
