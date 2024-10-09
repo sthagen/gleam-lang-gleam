@@ -6,7 +6,7 @@ use crate::{
     },
     build::{type_constructor_from_modules, Located, Module, UnqualifiedImport},
     config::PackageConfig,
-    io::{CommandExecutor, FileSystemReader, FileSystemWriter},
+    io::{BeamCompiler, CommandExecutor, FileSystemReader, FileSystemWriter},
     language_server::{
         compiler::LspProjectCompiler, files::FileSystemProxy, progress::ProgressReporter,
     },
@@ -30,8 +30,8 @@ use std::sync::Arc;
 
 use super::{
     code_action::{
-        code_action_add_missing_patterns, code_action_import_module, CodeActionBuilder,
-        FillInMissingLabelledArgs, LabelShorthandSyntax, LetAssertToCase,
+        code_action_add_missing_patterns, code_action_import_module, AddAnnotations,
+        CodeActionBuilder, FillInMissingLabelledArgs, LabelShorthandSyntax, LetAssertToCase,
         RedundantTupleInCaseSubject,
     },
     completer::Completer,
@@ -81,6 +81,7 @@ where
     // IO to be supplied from outside of gleam-core
     IO: FileSystemReader
         + FileSystemWriter
+        + BeamCompiler
         + CommandExecutor
         + DownloadDependencies
         + MakeLocker
@@ -303,6 +304,7 @@ where
             actions.extend(RedundantTupleInCaseSubject::new(module, &params).code_actions());
             actions.extend(LabelShorthandSyntax::new(module, &params).code_actions());
             actions.extend(FillInMissingLabelledArgs::new(module, &params).code_actions());
+            AddAnnotations::new(module, &params).code_action(&mut actions);
 
             Ok(if actions.is_empty() {
                 None

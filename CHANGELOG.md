@@ -8,6 +8,10 @@
   `javascript` to specify what target to use, with `erlang` being the default.
   ([Mohammed Khouni](https://github.com/Tar-Tarus))
 
+- The Erlang/Elixir compiler process is now re-used for all packages, shaving
+  off 0.3-0.5s per compiled package.
+  ([yoshi](https://github.com/joshi-monster))
+
 ### Compiler
 
 - The compiler now prints correctly qualified or aliased type names when
@@ -92,6 +96,14 @@
   note on how to have a field accessor only if it makes sense.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The compiler now ignores `optional` dependencies when resolving versions
+  unless explicitly specified.
+  ([Gustavo Inacio](https://github.com/gusinacio))
+
+- Fixes a bug where incorrect code would be generated for external function on
+  the Erlang target if any of their arguments were discarded.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 ### Language Server
@@ -115,6 +127,25 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The Language Server now suggests a code action to add type annotations to
+  local variables, constants and functions:
+
+  ```gleam
+  pub fn add_int_to_float(a, b) {
+    a +. int.to_float(b)
+  }
+  ```
+
+  Becomes:
+
+  ```gleam
+  pub fn add_int_to_float(a: Float, b: Int) -> Float {
+    a +. int.to_float(b)
+  }
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Bug Fixes
 
 - Fixed a bug in the compiler where shadowing a sized value in a bit pattern
@@ -127,6 +158,10 @@
 
 - Fixed the `BitArray` constructor not being present in the types for the
   JavaScript prelude.
+  ([Richard Viney](https://github.com/richard-viney))
+
+- Fixed a bug where generated TypeScript definitions were invalid for opaque
+  types that use a private type.
   ([Richard Viney](https://github.com/richard-viney))
 
 ## v1.5.1 - 2024-09-26
