@@ -17,15 +17,17 @@ macro_rules! assert_error {
         assert_eq!(($src, $error), ($src, result),);
     };
     ($src:expr) => {
-        let result = $crate::parse::tests::expect_error($src);
-        insta::assert_snapshot!(insta::internals::AutoName, result, $src);
+        let error = $crate::parse::tests::expect_error($src);
+        let output = format!("----- SOURCE CODE\n{}\n\n----- ERROR\n{}", $src, error);
+        insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 }
 
 macro_rules! assert_module_error {
     ($src:expr) => {
-        let result = $crate::parse::tests::expect_module_error($src);
-        insta::assert_snapshot!(insta::internals::AutoName, result, $src);
+        let error = $crate::parse::tests::expect_module_error($src);
+        let output = format!("----- SOURCE CODE\n{}\n\n----- ERROR\n{}", $src, error);
+        insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 }
 
