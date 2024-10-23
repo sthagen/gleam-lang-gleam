@@ -1,13 +1,11 @@
 [package]
-name = "test-package-compiler"
-version = "1.5.0"
-authors = ["Louis Pilfold <louis@lpil.uk>"]
+name = "test-helpers-rs"
+version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
 gleam-core = { path = "../compiler-core" }
-test-helpers-rs = { path = "../test-helpers-rs" }
 toml.workspace = true
 im.workspace = true
 itertools.workspace = true
