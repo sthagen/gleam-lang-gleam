@@ -1241,3 +1241,36 @@ const value = True
         find_position_of("value").under_char('v')
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/3761
+#[test]
+fn hover_over_block_in_list_spread() {
+    let code = "
+pub fn main() {
+  [1, 2, ..{
+    let x = 1
+    [x]
+  }]
+}
+";
+
+    assert_hover!(TestProject::for_source(code), find_position_of("x"));
+}
+
+// https://github.com/gleam-lang/gleam/issues/3758
+#[test]
+fn hover_for_anonymous_function_annotation() {
+    let code = "
+/// An example type.
+pub type Wibble
+
+pub fn main() {
+  fn(w: Wibble) { todo }
+}
+";
+
+    assert_hover!(
+        TestProject::for_source(code),
+        find_position_of("w: Wibble").under_char('b')
+    );
+}
