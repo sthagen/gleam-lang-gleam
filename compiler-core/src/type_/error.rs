@@ -86,16 +86,25 @@ pub struct UnknownType {
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum UnknownField {
     /// The field we're trying to access appears in at least a variant, so it
-    /// can be useulf to explain why it cannot be accessed and how to fix it
+    /// can be useful to explain why it cannot be accessed and how to fix it
     /// (adding it to all variants/making sure it has the same type/making sure
     /// it's in the same position).
     ///
     AppearsInAVariant,
 
+    /// The field we are trying to access appears in a variant, but we can
+    /// infer that the value we are accessing on is never the one that this
+    /// value is, so we can give information accordingly.
+    AppearsInAnImpossibleVariant,
+
     /// The field is not in any of the variants, this might truly be a typo and
     /// there's no need to add further explanations.
     ///
     TrulyUnknown,
+
+    /// The type that the user is trying to access has no fields whatsoever,
+    /// such as Int or fn(..) -> _
+    NoFields,
 }
 
 /// A suggestion for an unknown module
@@ -219,8 +228,9 @@ pub enum Error {
         labels: Vec<EcoString>,
     },
 
-    UpdateMultiConstructorType {
+    UnsafeRecordUpdate {
         location: SrcSpan,
+        reason: UnsafeRecordUpdateReason,
     },
 
     UnnecessarySpreadOperator {
@@ -707,6 +717,7 @@ pub enum Warning {
 
     UnreachableCaseClause {
         location: SrcSpan,
+        reason: UnreachableCaseClauseReason,
     },
 
     /// This happens when someone tries to write a case expression where one of
@@ -839,6 +850,8 @@ pub enum FeatureKind {
     NestedTupleAccess,
     InternalAnnotation,
     AtInJavascriptModules,
+    RecordUpdateVariantInference,
+    RecordAccessVariantInference,
 }
 
 impl FeatureKind {
@@ -851,6 +864,8 @@ impl FeatureKind {
             FeatureKind::LabelShorthandSyntax => Version::new(1, 4, 0),
             FeatureKind::ConstantStringConcatenation => Version::new(1, 4, 0),
             FeatureKind::UnannotatedUtf8StringSegment => Version::new(1, 5, 0),
+            FeatureKind::RecordUpdateVariantInference
+            | FeatureKind::RecordAccessVariantInference => Version::new(1, 6, 0),
         }
     }
 }
@@ -875,6 +890,17 @@ pub enum TodoOrPanic {
     Panic,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum UnreachableCaseClauseReason {
+    /// The clause is unreachable because a previous pattern
+    /// matches the same case.
+    DuplicatePattern,
+    /// The clause is unreachable because we have inferred the variant
+    /// of the custom type that we are matching on, and this matches
+    /// against one of the variants we know it isn't.
+    ImpossibleVariant,
+}
+
 impl Error {
     // Location where the error started
     pub fn start_location(&self) -> u32 {
@@ -890,7 +916,7 @@ impl Error {
             | Error::NotFn { location, .. }
             | Error::UnknownRecordField { location, .. }
             | Error::IncorrectArity { location, .. }
-            | Error::UpdateMultiConstructorType { location, .. }
+            | Error::UnsafeRecordUpdate { location, .. }
             | Error::UnnecessarySpreadOperator { location, .. }
             | Error::IncorrectTypeArity { location, .. }
             | Error::CouldNotUnify { location, .. }
@@ -1068,6 +1094,17 @@ pub fn convert_get_value_constructor_error(
             type_with_same_name: imported_value_as_type,
         },
     }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum UnsafeRecordUpdateReason {
+    UnknownVariant {
+        constructed_variant: EcoString,
+    },
+    WrongVariant {
+        constructed_variant: EcoString,
+        spread_variant: EcoString,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

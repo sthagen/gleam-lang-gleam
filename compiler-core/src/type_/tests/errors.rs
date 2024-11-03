@@ -662,6 +662,23 @@ pub fn get_age(person: Person) { person.age }"
 }
 
 #[test]
+fn record_access_on_inferred_variant_when_field_is_in_other_variants() {
+    assert_module_error!(
+        "
+pub type Wibble {
+  Wibble(wibble: Int)
+  Wobble(wobble: Int)
+}
+
+pub fn main() {
+  let always_wibble = Wibble(10)
+  always_wibble.wobble
+}
+"
+    );
+}
+
+#[test]
 fn module_could_not_unify() {
     assert_module_error!("fn go() { 1 + 2.0 }");
 }
@@ -2435,8 +2452,8 @@ fn unknown_field_that_appears_in_an_imported_variant_has_note() {
         ),
         "
 import some_mod
-pub fn main() {
-  some_mod.Wibble(1).field
+pub fn main(wibble: some_mod.Wibble) {
+  wibble.field
 }
 "
     );
@@ -2451,8 +2468,8 @@ pub type Wibble {
   Wobble(not_field: String, field: Int)
 }
 
-pub fn main() {
-  Wibble(1).field
+pub fn main(wibble: Wibble) {
+  wibble.field
 }
 "
     );
@@ -2467,8 +2484,8 @@ pub type Wibble {
   Wobble(not_field: String, field: Int)
 }
 
-pub fn main() {
-  Wibble(1).wibble
+pub fn main(wibble: Wibble) {
+  wibble.wibble
 }
 "
     );
@@ -2506,5 +2523,104 @@ fn compiler_crash(x: X) {
   }
 }
   "
+    );
+}
+
+#[test]
+fn record_update_unknown_variant() {
+    assert_module_error!(
+        r#"
+pub type Wibble {
+  Wibble(wibble: Int, wubble: Bool)
+  Wobble(wobble: Int, wubble: Bool)
+}
+
+pub fn wibble(value: Wibble) {
+  Wibble(..value, wubble: True)
+}
+"#
+    );
+}
+
+#[test]
+fn record_update_wrong_variant() {
+    assert_module_error!(
+        r#"
+pub type MyRecord {
+  A(common: Int, other: String)
+  B(common: Int, different: Float)
+}
+
+pub fn b_to_a(value: MyRecord) {
+  case value {
+    A(..) -> value
+    B(..) as b -> A(..b, other: "Hi")
+  }
+}
+"#
+    );
+}
+
+#[test]
+fn record_update_wrong_variant_imported_type() {
+    assert_with_module_error!(
+        (
+            "wibble",
+            "
+pub type Wibble {
+  Wibble(wibble: Int, wobble: Int)
+  Wobble(wobble: Int, wubble: Int)
+}"
+        ),
+        "
+import wibble
+
+pub fn main(wibble: wibble.Wibble) {
+  case wibble {
+    wibble.Wibble(..) as w -> wibble.Wobble(..w, wubble: 10)
+    _ -> panic
+  }
+}
+"
+    );
+}
+
+#[test]
+fn inferred_variant_record_update_change_type_parameter() {
+    assert_module_error!(
+        r#"
+pub type Box(a) {
+  Locked(password: String, value: a)
+  Unlocked(password: String, value: a)
+}
+
+pub fn main() {
+  let box = Locked("ungu€$$4bLe", 11)
+  case box {
+    Locked(..) as box -> Locked(..box, value: True)
+    Unlocked(..) as box -> Unlocked(..box, value: False)
+  }
+}
+"#
+    );
+}
+
+#[test]
+fn inferred_variant_record_update_change_type_parameter_different_branches() {
+    assert_module_error!(
+        r#"
+pub type Box(a) {
+  Locked(password: String, value: a)
+  Unlocked(password: String, value: a)
+}
+
+pub fn main() {
+  let box = Locked("ungu€$$4bLe", 11)
+  case box {
+    Locked(..) as box -> Locked(..box, value: True)
+    Unlocked(..) as box -> Unlocked(..box, password: "pwd")
+  }
+}
+"#
     );
 }

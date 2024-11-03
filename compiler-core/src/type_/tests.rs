@@ -225,7 +225,8 @@ fn get_warnings(
         Target::Erlang,
         TargetSupport::NotEnforced,
         gleam_version,
-    );
+    )
+    .expect("Compilation should succeed");
     warnings.take().into_iter().collect_vec()
 }
 
@@ -1821,6 +1822,301 @@ fn record_update_generic_unannotated() {
 }
 
 #[test]
+fn record_update_variant_inference() {
+    assert_module_infer!(
+        "
+pub type Shape {
+  Circle(cx: Int, cy: Int, radius: Int)
+  Square(x: Int, y: Int, width: Int, height: Int)
+}
+
+pub fn grow(shape) {
+  case shape {
+    Circle(radius:, ..) as circle -> Circle(..circle, radius: radius + 1)
+    Square(width:, height:, ..) as square -> Square(..square, width: width + 1, height: height + 1)
+  }
+}
+",
+        vec![
+            ("Circle", "fn(Int, Int, Int) -> Shape"),
+            ("Square", "fn(Int, Int, Int, Int) -> Shape"),
+            ("grow", "fn(Shape) -> Shape")
+        ]
+    );
+}
+
+#[test]
+fn record_access_variant_inference() {
+    assert_module_infer!(
+        "
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: Int)
+}
+
+pub fn get(wibble) {
+  case wibble {
+    Wibble(..) as w -> w.b
+    Wobble(..) as w -> w.c
+  }
+}
+",
+        vec![
+            ("Wibble", "fn(Int, Int) -> Wibble"),
+            ("Wobble", "fn(Int, Int) -> Wibble"),
+            ("get", "fn(Wibble) -> Int")
+        ]
+    );
+}
+
+#[test]
+fn local_variable_variant_inference() {
+    assert_module_infer!(
+        "
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: Int)
+}
+
+pub fn main() {
+  let always_wibble = Wibble(1, 2)
+  always_wibble.b
+}
+",
+        vec![
+            ("Wibble", "fn(Int, Int) -> Wibble"),
+            ("Wobble", "fn(Int, Int) -> Wibble"),
+            ("main", "fn() -> Int")
+        ]
+    );
+}
+
+#[test]
+fn record_update_variant_inference_for_original_variable() {
+    assert_module_infer!(
+        r#"
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: String)
+}
+
+pub fn update(wibble: Wibble) -> Wibble {
+  case wibble {
+    Wibble(..) -> Wibble(..wibble, a: 1)
+    Wobble(..) -> Wobble(..wibble, c: "hello")
+  }
+}
+"#,
+        vec![
+            ("Wibble", "fn(Int, Int) -> Wibble"),
+            ("Wobble", "fn(Int, String) -> Wibble"),
+            ("update", "fn(Wibble) -> Wibble")
+        ]
+    );
+}
+
+#[test]
+fn record_access_variant_inference_for_original_variable() {
+    assert_module_infer!(
+        "
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: Int)
+}
+
+pub fn get(wibble) {
+  case wibble {
+    Wibble(..) -> wibble.b
+    Wobble(..) -> wibble.c
+  }
+}
+",
+        vec![
+            ("Wibble", "fn(Int, Int) -> Wibble"),
+            ("Wobble", "fn(Int, Int) -> Wibble"),
+            ("get", "fn(Wibble) -> Int")
+        ]
+    );
+}
+
+#[test]
+fn variant_inference_for_imported_type() {
+    assert_infer_with_module!(
+        (
+            "wibble",
+            "
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: Int)
+}
+"
+        ),
+        "
+import wibble.{Wibble, Wobble}
+
+pub fn main(wibble) {
+  case wibble {
+    Wibble(..) -> Wibble(a: 1, b: wibble.b + 1)
+    Wobble(..) -> Wobble(..wibble, c: wibble.c - 4)
+  }
+}
+",
+        vec![("main", "fn(Wibble) -> Wibble")]
+    );
+}
+
+#[test]
+fn local_variable_variant_inference_for_imported_type() {
+    assert_infer_with_module!(
+        (
+            "wibble",
+            "
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: Int)
+}
+"
+        ),
+        "
+import wibble.{Wibble}
+
+pub fn main() {
+  let wibble = Wibble(4, 9)
+  Wibble(..wibble, b: wibble.b)
+}
+",
+        vec![("main", "fn() -> Wibble")]
+    );
+}
+
+#[test]
+fn record_update_variant_inference_fails_for_several_possible_variants() {
+    assert_module_error!(
+        "
+pub type Vector {
+  Vector2(x: Float, y: Float)
+  Vector3(x: Float, y: Float, z: Float)
+}
+
+pub fn increase_y(vector, by increase) {
+  case vector {
+    Vector2(y:, ..) as vector | Vector3(y:, ..) as vector ->
+      Vector2(..vector, y: y +. increase)
+  }
+}
+"
+    );
+}
+
+#[test]
+fn record_update_variant_inference_fails_for_several_possible_variants_on_subject_variable() {
+    assert_module_error!(
+        r#"
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: String)
+}
+
+pub fn update(wibble: Wibble) -> Wibble {
+  case wibble {
+    Wibble(..) | Wobble(..) -> Wibble(..wibble, a: 1)
+  }
+}
+"#
+    );
+}
+
+#[test]
+fn type_unification_does_not_cause_false_positives_for_variant_matching() {
+    assert_module_error!(
+        r#"
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: String)
+}
+
+pub fn wibbler() { todo }
+
+pub fn main() {
+  let c = wibbler()
+
+  case todo {
+    Wibble(..) -> Wibble(..c, b: 1)
+    _ -> todo
+  }
+}
+"#
+    );
+}
+
+#[test]
+fn type_unification_does_not_allow_different_variants_to_be_treated_as_safe() {
+    assert_module_error!(
+        r#"
+pub type Wibble {
+  Wibble(a: Int, b: Int)
+  Wobble(a: Int, c: String)
+}
+
+pub fn main() {
+  let a = case todo {
+    Wibble(..) as b -> Wibble(..b, b: 1)
+    Wobble(..) as b -> Wobble(..b, c: "a")
+  }
+
+  a.b
+}
+"#
+    );
+}
+
+#[test]
+fn record_update_variant_inference_in_alternate_pattern_with_all_same_variants() {
+    assert_module_infer!(
+        r#"
+pub type Vector {
+  Vector2(x: Float, y: Float)
+  Vector3(x: Float, y: Float, z: Float)
+}
+
+pub fn increase_y(vector, by increase) {
+  case vector {
+    Vector2(y:, ..) as vector -> Vector2(..vector, y: y +. increase)
+    Vector3(y:, z: 12.3, ..) as vector | Vector3(y:, z: 15.0, ..) as vector ->
+      Vector3(..vector, y: y +. increase, z: 0.0)
+    _ -> panic as "Could not increase Y"
+  }
+}
+"#,
+        vec![
+            ("Vector2", "fn(Float, Float) -> Vector"),
+            ("Vector3", "fn(Float, Float, Float) -> Vector"),
+            ("increase_y", "fn(Vector, Float) -> Vector")
+        ]
+    );
+}
+
+#[test]
+fn variant_inference_does_not_escape_clause_scope() {
+    assert_module_error!(
+        "
+pub type Thingy {
+  A(a: Int)
+  B(x: Int, b: Int)
+}
+
+pub fn fun(x) {
+  case x {
+    A(..) -> x.a
+    B(..) -> x.b
+  }
+  x.b
+}
+"
+    );
+}
+
+#[test]
 fn module_constants() {
     assert_module_infer!(
         "
@@ -2530,5 +2826,56 @@ pub fn main() {
 }
 ",
         vec![("main", "fn() -> Nil")]
+    );
+}
+
+#[test]
+fn variant_inference_allows_inference() {
+    // https://github.com/gleam-lang/gleam/pull/3647#issuecomment-2423146977
+    assert_module_infer!(
+        "
+pub type Wibble {
+  Wibble(a: Int)
+  Wobble(b: Int)
+}
+
+pub fn do_a_thing(wibble) {
+  case wibble {
+    Wibble(..) -> wibble.a
+    _ -> todo
+  }
+  wibble
+}
+",
+        vec![
+            ("Wibble", "fn(Int) -> Wibble"),
+            ("Wobble", "fn(Int) -> Wibble"),
+            ("do_a_thing", "fn(Wibble) -> Wibble")
+        ]
+    );
+}
+
+#[test]
+fn variant_inference_allows_inference2() {
+    // https://github.com/gleam-lang/gleam/pull/3647#issuecomment-2423146977
+    assert_module_infer!(
+        "
+pub type Box(a) {
+  Box(inner: a)
+  UnBox
+}
+
+pub fn rebox(box) {
+  case box {
+    Box(..) -> Box(box.inner + 1)
+    UnBox -> UnBox
+  }
+}
+",
+        vec![
+            ("Box", "fn(a) -> Box(a)"),
+            ("UnBox", "Box(a)"),
+            ("rebox", "fn(Box(Int)) -> Box(Int)")
+        ]
     );
 }

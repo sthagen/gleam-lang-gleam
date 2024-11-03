@@ -4,7 +4,10 @@ use crate::{
     error::wrap,
     type_::{
         self,
-        error::{FeatureKind, LiteralCollectionKind, PanicPosition, TodoOrPanic},
+        error::{
+            FeatureKind, LiteralCollectionKind, PanicPosition, TodoOrPanic,
+            UnreachableCaseClauseReason,
+        },
         pretty::Printer,
     },
 };
@@ -727,11 +730,17 @@ Run this command to add it to your dependencies:
                     }
                 }
 
-                type_::Warning::UnreachableCaseClause { location } => {
-                    let text: String =
-                        "This case clause cannot be reached as a previous clause matches
-the same values.\n"
-                            .into();
+                type_::Warning::UnreachableCaseClause { location, reason } => {
+                    let text: String = match reason {
+                        UnreachableCaseClauseReason::DuplicatePattern => wrap(
+                            "This case clause cannot be reached as a previous clause matches \
+the same values.\n",
+                        ),
+                        UnreachableCaseClauseReason::ImpossibleVariant => wrap(
+                            "This case clause cannot be reached as it matches \
+on a variant of a type which is never present.\n",
+                        ),
+                    };
                     Diagnostic {
                         title: "Unreachable case clause".into(),
                         text,
@@ -1017,6 +1026,12 @@ See: https://tour.gleam.run/functions/pipelines/",
                         FeatureKind::InternalAnnotation => "The `@internal` annotation was",
                         FeatureKind::AtInJavascriptModules => {
                             "The ability to have `@` in a Javascript module's name was"
+                        }
+                        FeatureKind::RecordUpdateVariantInference => {
+                            "Record updates for custom types when the variant is known was"
+                        }
+                        FeatureKind::RecordAccessVariantInference => {
+                            "Field access on custom types when the variant is known was"
                         }
                     };
 
