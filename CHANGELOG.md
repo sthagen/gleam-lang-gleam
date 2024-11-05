@@ -187,6 +187,26 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- When targeting JavaScript the compiler now emits a warning for integer literals
+  and constants that lie outside JavaScript's safe integer range:
+
+  ```txt
+  warning: Int is outside the safe range on JavaScript
+    ┌─ /Users/richard/Desktop/int_test/src/int_test.gleam:1:15
+    │
+  1 │ pub const i = 9_007_199_254_740_992
+    │               ^^^^^^^^^^^^^^^^^^^^^ This is not a safe integer on JavaScript
+
+  This integer value is too large to be represented accurately by
+  JavaScript's number type. To avoid this warning integer values must be in
+  the range -(2^53 - 1) - (2^53 - 1).
+
+  See JavaScript's Number.MAX_SAFE_INTEGER and Number.MIN_SAFE_INTEGER
+  properties for more information.
+  ```
+
+  ([Richard Viney](https://github.com/richard-viney))
+
 ### Formatter
 
 - The formatter no longer removes the first argument from a function
@@ -365,6 +385,10 @@
 - Fixed a bug where attempting to jump to the definition of a type from the
   annotation of a parameter of an anonymous function would do nothing.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where referencing record constructors in JavaScript guards but
+  not calling them could produce invalid code.
+  ([PgBiel](https://github.com/PgBiel))
 
 ## v1.5.1 - 2024-09-26
 
