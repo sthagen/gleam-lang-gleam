@@ -378,6 +378,14 @@
   no arguments.
   ([Louis Pilfold](https://github.com/lpil))
 
+- Fixed a bug where the parser would incorrectly parse a generic type
+  constructor with no arguments.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the parser would incorrectly parse a generic type definition
+  with no arguments.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Fixed a bug where the language server wouldn't show hints when hovering over
   the tail of a list.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
@@ -393,6 +401,20 @@
 - Fixed a bug where using the label shorthand syntax inside of a record update
   wouldn't emit a warning when the minimum specified Gleam version was < 1.4.0.
   ([yoshi](https://github.com/joshi-monster))
+
+- Fixed a bug where no error would be reported when duplicate labelled
+  arguments were supplied in a record update.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where an incorrect bit array would be generated on JavaScript for
+  negative `Int` values when the segment's `size` was wider than 48 bits or when
+  the `Int` value was less than the minimum representable value for the segment
+  size.
+  ([Richard Viney](https://github.com/richard-viney))
+
+- Fixed a bug where an incorrect `Int` would be returned when pattern matching
+  to a negative value wider than 48 bits in a bit array.
+  ([Richard Viney](https://github.com/richard-viney))
 
 ## v1.5.1 - 2024-09-26
 
