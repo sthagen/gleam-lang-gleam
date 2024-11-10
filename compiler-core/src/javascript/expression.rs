@@ -854,7 +854,7 @@ impl<'module> Generator<'module> {
     fn record_access<'a>(&mut self, record: &'a TypedExpr, label: &'a str) -> Output<'a> {
         self.not_in_tail_position(|gen| {
             let record = gen.wrap_expression(record)?;
-            Ok(docvec![record, ".", label])
+            Ok(docvec![record, ".", maybe_escape_property_doc(label)])
         })
     }
 
@@ -868,7 +868,7 @@ impl<'module> Generator<'module> {
             let fields = updates
                 .iter()
                 .map(|TypedRecordUpdateArg { label, value, .. }| {
-                    (label.to_doc(), gen.wrap_expression(value))
+                    (maybe_escape_property_doc(label), gen.wrap_expression(value))
                 });
             let object = try_wrap_object(fields)?;
             Ok(docvec![record, ".withFields(", object, ")"])
