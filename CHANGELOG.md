@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## v1.6.0-rc2 - 2024-11-14
+
+### Build tool
+
+- The version of Erlang used in the GitHub Actions workflow created by
+  `gleam new` has been increased from v26.0.2 to v27.1.2.
+  ([Richard Viney](https://github.com/richard-viney))
 
 ### Bug fixes
 
@@ -11,6 +17,13 @@
 - Fixed a bug where a warning about unsafe integers on the JavaScript target was
   emitted when the enclosing function has an external JavaScript implementation.
   ([Richard Viney](https://github.com/richard-viney))
+
+- Fixed a bug where updating a dependency could break the build cache.
+  ([yoshi](https://github.com/joshi-monster))
+
+- Fixed a bug where if the build directory was not writable then the build tool
+  would crash when trying to lock the build directory.
+  ([Zak Farmer](https://github.com/ZakFarmer))
 
 ## v1.6.0-rc1 - 2024-11-10
 
