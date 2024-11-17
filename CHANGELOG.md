@@ -1,5 +1,11 @@
 # Changelog
 
+### Bug fixes
+
+- Fixed a bug where the language server would delete pieces of code when
+  applying a suggested autocompletion.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ## v1.6.0-rc2 - 2024-11-14
 
 ### Build tool
