@@ -8,7 +8,8 @@ use crate::{
         TypedClause, TypedClauseGuard, TypedConstant, TypedExpr, TypedMultiPattern, TypedStatement,
         UntypedArg, UntypedAssignment, UntypedClause, UntypedClauseGuard, UntypedConstant,
         UntypedConstantBitArraySegment, UntypedExpr, UntypedExprBitArraySegment,
-        UntypedMultiPattern, UntypedStatement, Use, UseAssignment, USE_ASSIGNMENT_VARIABLE,
+        UntypedMultiPattern, UntypedStatement, Use, UseAssignment, RECORD_UPDATE_VARIABLE,
+        USE_ASSIGNMENT_VARIABLE,
     },
     build::Target,
     exhaustiveness::{self, Reachability},
@@ -2105,7 +2106,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         name: EcoString,
         label: EcoString,
         location: SrcSpan,
-        record_access_erorr: Error,
+        record_access_error: Error,
     ) -> Result<TypedClauseGuard, Error> {
         let module_access = self
             .infer_module_access(&name, label, &location, location)
@@ -2139,7 +2140,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // inferring the record access, so that we can suggest possible
         // misspellings of field names
         if self.environment.scope.contains_key(&name) {
-            module_access.map_err(|_| record_access_erorr)
+            module_access.map_err(|_| record_access_error)
         } else {
             module_access
         }
@@ -2258,42 +2259,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
 
         let unknown_field = |fields| {
-            let error = |unknown_field| Error::UnknownRecordField {
-                usage,
-                type_: record_type.clone(),
-                location,
-                label: label.clone(),
-                fields,
-                unknown_field,
-            };
-
-            let Type::Named {
-                module,
-                name,
-                inferred_variant,
-                ..
-            } = &*record_type
-            else {
-                return error(UnknownField::NoFields);
-            };
-
-            let all_fields = self.environment.get_type_variants_fields(module, name);
-
-            if all_fields.is_empty() {
-                return error(UnknownField::NoFields);
-            }
-
-            if !all_fields.iter().contains(&&label) {
-                return error(UnknownField::TrulyUnknown);
-            }
-
-            // If we know the variant, the field must exist on a different
-            // variant from the one we have inferred.
-            if inferred_variant.is_some() {
-                error(UnknownField::AppearsInAnImpossibleVariant)
-            } else {
-                error(UnknownField::AppearsInAVariant)
-            }
+            self.unknown_field_error(fields, record_type.clone(), location, label.clone(), usage)
         };
         let (accessors_map, variant_accessors) = match collapse_links(record_type.clone()).as_ref()
         {
@@ -2376,7 +2342,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         args: Vec<UntypedRecordUpdateArg>,
         location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
-        let (module, name) = match self.infer(constructor.clone())? {
+        // infer the constructor being used
+        let typed_constructor = self.infer(constructor.clone())?;
+        let (module, name) = match &typed_constructor {
             TypedExpr::ModuleSelect {
                 module_alias,
                 label,
@@ -2395,97 +2363,79 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         let value_constructor = self
             .environment
-            .get_value_constructor(module.as_ref().map(|(module, _)| module), &name)
+            .get_value_constructor(module.map(|(module, _)| module), name)
             .map_err(|e| {
                 convert_get_value_constructor_error(
                     e,
                     location,
-                    module.as_ref().map(|(_, location)| *location),
+                    module.map(|(_, location)| *location),
                 )
             })?
             .clone();
 
-        // It must be a record with a field map for us to be able to update it
-        let (field_map, variants_count, variant_index) = match &value_constructor.variant {
-            ValueConstructorVariant::Record {
-                field_map: Some(field_map),
-                variants_count,
-                variant_index,
-                ..
-            } => (field_map, *variants_count, *variant_index),
-            _ => {
-                return Err(Error::RecordUpdateInvalidConstructor {
-                    location: constructor.location(),
-                });
-            }
-        };
-
-        // The type must be a function for it to be a record constructor
-        let retrn = match value_constructor.type_.as_ref() {
-            Type::Fn { retrn, .. } => retrn,
-            _ => {
-                return Err(Error::RecordUpdateInvalidConstructor {
-                    location: constructor.location(),
-                })
-            }
-        };
-
+        // infer the record being updated
         let record = self.infer(*record.base)?;
-        let return_type = self.instantiate(retrn.clone(), &mut hashmap![]);
+        let record_location = record.location();
         let record_type = record.type_();
 
-        // Check that the record variable unifies with the return type of the constructor
-        unify(return_type, record_type.clone())
-            .map_err(|e| convert_unify_error(e, record.location()))?;
+        // We create an Assignment for the old record expression and will use a Var expression
+        // to refer back to it while constructing the arguments.
+        let record_assignment = Assignment {
+            location: record_location,
+            pattern: Pattern::Variable {
+                location: record_location,
+                name: RECORD_UPDATE_VARIABLE.into(),
+                type_: record_type.clone(),
+            },
+            annotation: None,
+            kind: AssignmentKind::Generated,
+            value: Box::new(record),
+        };
 
-        let record_index = record_type.custom_type_inferred_variant();
+        let record_var = TypedExpr::Var {
+            location: record_location,
+            constructor: ValueConstructor {
+                publicity: Publicity::Private,
+                deprecation: Deprecation::NotDeprecated,
+                type_: record_type,
+                variant: ValueConstructorVariant::LocalVariable {
+                    location: record_location,
+                },
+            },
+            name: RECORD_UPDATE_VARIABLE.into(),
+        };
 
-        // Updating a record with only one variant is always safe
-        if variants_count != 1 {
-            // If we know the variant of the value being spread, and it doesn't match the
-            // one being constructed, we can tell the user that it's always wrong
-            if record_index.is_some_and(|index| index != variant_index) {
-                let Type::Named {
-                    module: record_module,
-                    name: record_name,
-                    inferred_variant: Some(record_index),
-                    ..
-                } = record_type.deref()
-                else {
-                    panic!("Spread type must be named and with an index")
-                };
+        // infer the fields of the variant we want to update
+        let variant =
+            self.infer_record_update_variant(&typed_constructor, &value_constructor, &record_var)?;
 
-                return Err(Error::UnsafeRecordUpdate {
-                    location: record.location(),
-                    reason: UnsafeRecordUpdateReason::WrongVariant {
-                        constructed_variant: name,
-                        spread_variant: self
-                            .environment
-                            .type_variant_name(record_module, record_name, *record_index)
-                            .expect("Spread type must exist and variant must be valid")
-                            .clone(),
-                    },
-                });
-            }
-            // If we don't have information about the variant being spread, we tell the user
-            // that it's not safe to update it as it could be any variant
-            else if record_index.is_none() {
-                return Err(Error::UnsafeRecordUpdate {
-                    location: record.location(),
-                    reason: UnsafeRecordUpdateReason::UnknownVariant {
-                        constructed_variant: name,
-                    },
-                });
-            }
-            // This means we can perform a safe record update due to variant inference.
-            else {
-                self.track_feature_usage(FeatureKind::RecordUpdateVariantInference, location);
-            }
-        }
+        let args = self.infer_record_update_args(&variant, &record_var, args, location)?;
 
-        let mut seen_labels = HashSet::new();
+        Ok(TypedExpr::RecordUpdate {
+            location,
+            type_: variant.retn,
+            record: record_assignment,
+            constructor: Box::new(typed_constructor),
+            args,
+        })
+    }
 
-        let args: Vec<TypedRecordUpdateArg> = args
+    fn infer_record_update_args(
+        &mut self,
+        variant: &RecordUpdateVariant<'_>,
+        record: &TypedExpr,
+        args: Vec<UntypedRecordUpdateArg>,
+        location: SrcSpan,
+    ) -> Result<Vec<TypedCallArg>, Error> {
+        let record_location = record.location();
+        let record_type = record.type_();
+        let return_type = variant.retn.clone();
+
+        // We clone the fields to remove all explicitly mentioned fields in the record update.
+        let mut fields = variant.fields.clone();
+
+        // collect explicit arguments given in the record update
+        let explicit_args = args
             .iter()
             .map(
                 |arg @ UntypedRecordUpdateArg {
@@ -2494,63 +2444,255 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                      location,
                  }| {
                     let value = self.infer(value.clone())?;
-                    let record_field = self.infer_known_record_expression_access(
-                        record.clone(),
-                        label.clone(),
-                        *location,
-                        FieldAccessUsage::RecordUpdate,
-                    )?;
 
                     if arg.uses_label_shorthand() {
                         self.track_feature_usage(FeatureKind::LabelShorthandSyntax, *location);
                     }
 
-                    if seen_labels.contains(label) {
-                        return Err(Error::DuplicateArgument {
+                    if let Some(index) = fields.remove(label) {
+                        unify(variant.arg_type(index), value.type_())
+                            .map_err(|e| convert_unify_error(e, *location))?;
+
+                        Ok((
+                            index,
+                            CallArg {
+                                label: Some(label.clone()),
+                                location: *location,
+                                value,
+                                implicit: None,
+                            },
+                        ))
+                    } else if variant.has_field(label) {
+                        Err(Error::DuplicateArgument {
                             location: *location,
                             label: label.clone(),
-                        });
-                    }
-                    _ = seen_labels.insert(label.clone());
-
-                    // Check that the update argument unifies with the corresponding
-                    // field in the record contained within the record variable. We
-                    // need to check the record, and not the constructor, in order
-                    // to handle polymorphic types.
-                    unify(record_field.type_(), value.type_())
-                        .map_err(|e| convert_unify_error(e, value.location()))?;
-
-                    match field_map.fields.get(label) {
-                        None => panic!(
-                            "Failed to lookup record field after successfully inferring that field",
-                        ),
-                        Some(p) => Ok(TypedRecordUpdateArg {
-                            location: *location,
-                            label: label.clone(),
-                            value,
-                            index: *p,
-                        }),
+                        })
+                    } else {
+                        Err(self.unknown_field_error(
+                            variant.field_names(),
+                            record_type.clone(),
+                            *location,
+                            label.clone(),
+                            FieldAccessUsage::RecordUpdate,
+                        ))
                     }
                 },
             )
-            .try_collect()?;
+            .collect::<Result<Vec<_>, _>>()?;
 
-        if args.is_empty() {
+        // Generate the remaining copied arguments, making sure they unify with our return type.
+        let convert_incompatible_fields_error = |e: UnifyError, label: EcoString| match e {
+            UnifyError::CouldNotUnify {
+                expected, given, ..
+            } => Error::UnsafeRecordUpdate {
+                location: record_location,
+                reason: UnsafeRecordUpdateReason::IncompatibleFieldTypes {
+                    constructed_variant: return_type.clone(),
+                    record_variant: record_type.clone(),
+                    expected_field_type: expected,
+                    record_field_type: given,
+                    field_name: label,
+                },
+            },
+            _ => convert_unify_error(e, record_location),
+        };
+
+        let implicit_args = fields
+            .into_iter()
+            .map(|(label, index)| {
+                let record_access = self.infer_known_record_expression_access(
+                    record.clone(),
+                    label.clone(),
+                    record_location,
+                    FieldAccessUsage::RecordUpdate,
+                )?;
+
+                unify(variant.arg_type(index), record_access.type_())
+                    .map_err(|e| convert_incompatible_fields_error(e, label.clone()))?;
+
+                Ok((
+                    index,
+                    CallArg {
+                        location: record_location,
+                        label: Some(label),
+                        value: record_access,
+                        implicit: Some(ImplicitCallArgOrigin::RecordUpdate),
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if explicit_args.is_empty() {
             self.problems
                 .warning(Warning::NoFieldsRecordUpdate { location });
         }
 
-        if args.len() == field_map.arity as usize {
+        if implicit_args.is_empty() {
             self.problems
                 .warning(Warning::AllFieldsRecordUpdate { location });
         }
 
-        Ok(TypedExpr::RecordUpdate {
-            location,
-            type_: record_type,
-            record: Box::new(record),
-            args,
+        let args = explicit_args
+            .into_iter()
+            .chain(implicit_args)
+            .sorted_by_key(|(index, _)| *index)
+            .map(|(_, value)| value)
+            .collect();
+
+        Ok(args)
+    }
+
+    fn infer_record_update_variant<'c>(
+        &mut self,
+        constructor: &TypedExpr,
+        value_constructor: &'c ValueConstructor,
+        record: &TypedExpr,
+    ) -> Result<RecordUpdateVariant<'c>, Error> {
+        let record_type = record.type_();
+        // The record constructor needs to be a function.
+        let (args_types, return_type) = match constructor.type_().as_ref() {
+            Type::Fn { args, retrn } => (args.clone(), retrn.clone()),
+            _ => {
+                return Err(Error::RecordUpdateInvalidConstructor {
+                    location: constructor.location(),
+                })
+            }
+        };
+
+        // It must be a record with a field map for us to be able to update it
+        let (field_map, variants_count, variant_index, name) = match &value_constructor.variant {
+            ValueConstructorVariant::Record {
+                field_map: Some(field_map),
+                variants_count,
+                variant_index,
+                name,
+                ..
+            } => (field_map, *variants_count, *variant_index, name.clone()),
+            _ => {
+                return Err(Error::RecordUpdateInvalidConstructor {
+                    location: constructor.location(),
+                });
+            }
+        };
+
+        // Check that the record type unifies with the return type of the constructor, and is
+        // not some unrelated other type. This should not affect our returned type, so we
+        // instantiate a new copy of the generic return type for our value constructor.
+        let return_type_copy = match value_constructor.type_.as_ref() {
+            Type::Fn { retrn, .. } => self.instantiate(retrn.clone(), &mut hashmap![]),
+            _ => {
+                return Err(Error::RecordUpdateInvalidConstructor {
+                    location: constructor.location(),
+                })
+            }
+        };
+
+        unify(return_type_copy, record_type.clone())
+            .map_err(|e| convert_unify_error(e, record.location()))?;
+
+        let record_index = record_type.custom_type_inferred_variant();
+        // Updating a record with only one variant is always safe
+        if variants_count == 1 {
+            return Ok(RecordUpdateVariant {
+                args: args_types,
+                retn: return_type,
+                fields: &field_map.fields,
+            });
+        }
+
+        // if we know the record that is being spread, and it does match the one being constructed,
+        // we can safely perform this record update due to variant inference.
+        if record_index.is_some_and(|index| index == variant_index) {
+            self.track_feature_usage(FeatureKind::RecordUpdateVariantInference, record.location());
+            return Ok(RecordUpdateVariant {
+                args: args_types,
+                retn: return_type,
+                fields: &field_map.fields,
+            });
+        }
+
+        // We definitely know that we can't do this record update safely.
+        //
+        // If we know the variant of the value being spread, and it doesn't match the
+        // one being constructed, we can tell the user that it's always wrong
+        if record_index.is_some() {
+            let Type::Named {
+                module: record_module,
+                name: record_name,
+                inferred_variant: Some(record_index),
+                ..
+            } = record_type.deref()
+            else {
+                panic!("Spread type must be named and with an index")
+            };
+
+            return Err(Error::UnsafeRecordUpdate {
+                location: record.location(),
+                reason: UnsafeRecordUpdateReason::WrongVariant {
+                    constructed_variant: name,
+                    spread_variant: self
+                        .environment
+                        .type_variant_name(record_module, record_name, *record_index)
+                        .expect("Spread type must exist and variant must be valid")
+                        .clone(),
+                },
+            });
+        }
+
+        // If we don't have information about the variant being spread, we tell the user
+        // that it's not safe to update it as it could be any variant
+        Err(Error::UnsafeRecordUpdate {
+            location: record.location(),
+            reason: UnsafeRecordUpdateReason::UnknownVariant {
+                constructed_variant: name,
+            },
         })
+    }
+
+    fn unknown_field_error(
+        &self,
+        fields: Vec<EcoString>,
+        record_type: Arc<Type>,
+        location: SrcSpan,
+        label: EcoString,
+        usage: FieldAccessUsage,
+    ) -> Error {
+        let error = |unknown_field| Error::UnknownRecordField {
+            usage,
+            type_: record_type.clone(),
+            location,
+            label: label.clone(),
+            fields,
+            unknown_field,
+        };
+
+        let Type::Named {
+            module,
+            name,
+            inferred_variant,
+            ..
+        } = record_type.deref()
+        else {
+            return error(UnknownField::NoFields);
+        };
+
+        let all_fields = self.environment.get_type_variants_fields(module, name);
+
+        if all_fields.is_empty() {
+            return error(UnknownField::NoFields);
+        }
+
+        if !all_fields.iter().contains(&&label) {
+            return error(UnknownField::TrulyUnknown);
+        }
+
+        // If we know the variant, the field must exist on a different
+        // variant from the one we have inferred.
+        if inferred_variant.is_some() {
+            error(UnknownField::AppearsInAnImpossibleVariant)
+        } else {
+            error(UnknownField::AppearsInAVariant)
+        }
     }
 
     fn infer_value_constructor(
@@ -3040,7 +3182,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 module_alias,
                 label,
                 ..
-            } => (Some(EcoString::from(module_alias.as_str())), label),
+            } => (Some(module_alias), label),
 
             TypedExpr::Var { name, .. } => (None, name),
 
@@ -3049,7 +3191,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         Ok(self
             .environment
-            .get_value_constructor(module.as_ref(), name)?
+            .get_value_constructor(module, name)?
             .field_map())
     }
 
@@ -3861,5 +4003,30 @@ impl UseAssignments {
         }
 
         assignments
+    }
+}
+
+/// Used during `infer_record_update` to return information about the updated variant.
+#[derive(Debug)]
+struct RecordUpdateVariant<'a> {
+    args: Vec<Arc<Type>>,
+    retn: Arc<Type>,
+    fields: &'a HashMap<EcoString, u32>,
+}
+
+impl<'a> RecordUpdateVariant<'a> {
+    fn arg_type(&self, index: u32) -> Arc<Type> {
+        self.args
+            .get(index as usize)
+            .expect("Failed to get record argument type after successfully inferring that field")
+            .clone()
+    }
+
+    fn has_field(&self, str: &EcoString) -> bool {
+        self.fields.contains_key(str)
+    }
+
+    fn field_names(&self) -> Vec<EcoString> {
+        self.fields.keys().cloned().collect()
     }
 }

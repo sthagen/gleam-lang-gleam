@@ -664,21 +664,6 @@ fn wrap_object<'a>(
     }
 }
 
-fn try_wrap_object<'a>(items: impl IntoIterator<Item = (Document<'a>, Output<'a>)>) -> Output<'a> {
-    let fields = items
-        .into_iter()
-        .map(|(key, value)| Ok(docvec![key, ": ", value?]));
-    let fields: Vec<_> = Itertools::intersperse(fields, Ok(break_(",", ", "))).try_collect()?;
-
-    Ok(docvec![
-        docvec!["{", break_("", " "), fields]
-            .nest(INDENT)
-            .append(break_("", " "))
-            .group(),
-        "}"
-    ])
-}
-
 fn is_usable_js_identifier(word: &str) -> bool {
     !matches!(
         word,

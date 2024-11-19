@@ -29,6 +29,7 @@ use vec1::Vec1;
 
 pub const PIPE_VARIABLE: &str = "_pipe";
 pub const USE_ASSIGNMENT_VARIABLE: &str = "_use";
+pub const RECORD_UPDATE_VARIABLE: &str = "_record";
 pub const ASSERT_FAIL_VARIABLE: &str = "_assert_fail";
 pub const ASSERT_SUBJECT_VARIABLE: &str = "_assert_subject";
 pub const CAPTURE_VARIABLE: &str = "_capture";
@@ -1216,6 +1217,10 @@ pub enum ImplicitCallArgOrigin {
     /// right hand side of `use` is being called with the wrong arity.
     ///
     IncorrectArityUse,
+    /// An argument adde by the compiler to fill in the missing args when using
+    /// the record update synax.
+    ///
+    RecordUpdate,
 }
 
 impl<A> CallArg<A> {
@@ -1248,14 +1253,28 @@ impl CallArg<TypedExpr> {
                 .or_else(|| body.iter().find_map(|s| s.find_node(byte_index))),
             // In all other cases we're happy with the default behaviour.
             //
-            _ => self.value.find_node(byte_index),
+            _ => {
+                if let Some(located) = self.value.find_node(byte_index) {
+                    Some(located)
+                } else if self.location.contains(byte_index) && self.label.is_some() {
+                    Some(Located::Label(self.location, self.value.type_()))
+                } else {
+                    None
+                }
+            }
         }
     }
 }
 
 impl CallArg<TypedPattern> {
     pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
-        self.value.find_node(byte_index)
+        if let Some(located) = self.value.find_node(byte_index) {
+            Some(located)
+        } else if self.location.contains(byte_index) && self.label.is_some() {
+            Some(Located::Label(self.location, self.value.type_()))
+        } else {
+            None
+        }
     }
 }
 
@@ -1298,25 +1317,6 @@ pub struct UntypedRecordUpdateArg {
 }
 
 impl UntypedRecordUpdateArg {
-    #[must_use]
-    pub fn uses_label_shorthand(&self) -> bool {
-        self.value.location() == self.location
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypedRecordUpdateArg {
-    pub label: EcoString,
-    pub location: SrcSpan,
-    pub value: TypedExpr,
-    pub index: u32,
-}
-
-impl TypedRecordUpdateArg {
-    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
-        self.value.find_node(byte_index)
-    }
-
     #[must_use]
     pub fn uses_label_shorthand(&self) -> bool {
         self.value.location() == self.location
@@ -2140,6 +2140,7 @@ pub enum TodoKind {
     Keyword,
     EmptyFunction,
     IncompleteUse,
+    EmptyBlock,
 }
 
 #[derive(Debug, Default)]
