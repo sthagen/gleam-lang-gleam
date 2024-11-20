@@ -27,6 +27,10 @@
   expression.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The shorthand names for the two targets, `erl` and `js` are now
+  deprecated in code such as `@target`.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Build tool
 
 - Improved the error message you get when trying to add a package that doesn't
@@ -45,6 +49,10 @@
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Bug fixed
+
+- The compiler now throws an error when a float literal ends with an `e` and
+  is missing an exponent.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.6.1 - 2024-11-19
 
