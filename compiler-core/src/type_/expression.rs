@@ -8,8 +8,8 @@ use crate::{
         TypedClause, TypedClauseGuard, TypedConstant, TypedExpr, TypedMultiPattern, TypedStatement,
         UntypedArg, UntypedAssignment, UntypedClause, UntypedClauseGuard, UntypedConstant,
         UntypedConstantBitArraySegment, UntypedExpr, UntypedExprBitArraySegment,
-        UntypedMultiPattern, UntypedStatement, Use, UseAssignment, RECORD_UPDATE_VARIABLE,
-        USE_ASSIGNMENT_VARIABLE,
+        UntypedMultiPattern, UntypedStatement, UntypedUse, UntypedUseAssignment, Use,
+        UseAssignment, RECORD_UPDATE_VARIABLE, USE_ASSIGNMENT_VARIABLE,
     },
     build::Target,
     exhaustiveness::{self, Reachability},
@@ -620,7 +620,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     fn infer_use(
         &mut self,
-        use_: Use,
+        use_: UntypedUse,
         sequence_location: SrcSpan,
         mut following_expressions: Vec<UntypedStatement>,
     ) -> TypedStatement {
@@ -628,6 +628,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let mut call = get_use_expression_call(*use_.call);
         let assignments = UseAssignments::from_use_expression(use_.assignments);
 
+        let assignments_count = assignments.body_assignments.len();
         let mut statements = assignments.body_assignments;
 
         if following_expressions.is_empty() {
@@ -693,7 +694,18 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             },
         );
 
-        Statement::Expression(call)
+        // After typing the call we know that the last argument must be an
+        // anonymous function and the first assignments in its body are the
+        // typed assignments on the left hand side of a `use`.
+        let assignments = extract_typed_use_call_assignments(&call, assignments_count);
+
+        Statement::Use(Use {
+            call: Box::new(call),
+            location: use_.location,
+            right_hand_side_location: use_.right_hand_side_location,
+            assignments_location: use_.assignments_location,
+            assignments,
+        })
     }
 
     fn infer_negate_bool(
@@ -3796,6 +3808,42 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     }
 }
 
+fn extract_typed_use_call_assignments(
+    call: &TypedExpr,
+    assignments_count: usize,
+) -> Vec<UseAssignment<Arc<Type>>> {
+    // A use call function has the use callback as its last argument, the
+    // assignments will be the first statements in its body.
+    let Some(use_callback_body) = call
+        .call_arguments()
+        .and_then(|call_arguments| call_arguments.last())
+        .and_then(|last_call_argument| last_call_argument.value.fn_expression_body())
+    else {
+        return vec![];
+    };
+
+    // Once we get a hold of the callback function body we take out the first
+    // `assignments_count` statements and turn those into typed
+    // `UseAssignments`.
+    //
+    // Note how we can't just `.expect` them to be a `Statement::Assignment`
+    // because in case of type errors those might be invalid expressions and we
+    // don't want to crash the compiler in that case!
+    use_callback_body
+        .iter()
+        .take(assignments_count)
+        .map(|statement| match statement {
+            Statement::Expression(_) | Statement::Use(_) => None,
+            Statement::Assignment(assignment) => Some(UseAssignment {
+                location: assignment.location,
+                pattern: assignment.pattern.clone(),
+                annotation: assignment.annotation.clone(),
+            }),
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or(vec![])
+}
+
 fn check_subject_for_redundant_match(
     subject: &TypedExpr,
     case_used_like_if: bool,
@@ -3938,7 +3986,7 @@ struct UseAssignments {
 }
 
 impl UseAssignments {
-    fn from_use_expression(sugar_assignments: Vec<UseAssignment>) -> UseAssignments {
+    fn from_use_expression(sugar_assignments: Vec<UntypedUseAssignment>) -> UseAssignments {
         let mut assignments = UseAssignments::default();
 
         for (index, assignment) in sugar_assignments.into_iter().enumerate() {

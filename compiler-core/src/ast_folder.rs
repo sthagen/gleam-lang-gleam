@@ -12,7 +12,7 @@ use crate::{
         UntypedCustomType, UntypedDefinition, UntypedExpr, UntypedExprBitArraySegment,
         UntypedFunction, UntypedImport, UntypedModule, UntypedModuleConstant, UntypedPattern,
         UntypedPatternBitArraySegment, UntypedRecordUpdateArg, UntypedStatement, UntypedTypeAlias,
-        Use, UseAssignment,
+        UntypedUse, UntypedUseAssignment, Use, UseAssignment,
     },
     build::Target,
 };
@@ -606,6 +606,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
 
             Statement::Use(Use {
                 location,
+                right_hand_side_location,
                 assignments_location,
                 call,
                 assignments,
@@ -621,6 +622,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
                 let call = Box::new(self.fold_expr(*call));
                 Statement::Use(Use {
                     location,
+                    right_hand_side_location,
                     assignments_location,
                     call,
                     assignments,
@@ -630,7 +632,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
     }
 
     /// You probably don't want to override this method.
-    fn fold_use_assignment(&mut self, use_: UseAssignment) -> UseAssignment {
+    fn fold_use_assignment(&mut self, use_: UntypedUseAssignment) -> UntypedUseAssignment {
         let UseAssignment {
             location,
             pattern,
@@ -836,7 +838,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
         assignment
     }
 
-    fn fold_use(&mut self, use_: Use) -> Use {
+    fn fold_use(&mut self, use_: UntypedUse) -> UntypedUse {
         use_
     }
 }

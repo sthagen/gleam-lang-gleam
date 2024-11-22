@@ -43,6 +43,28 @@
   labels.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The Language Server now suggests a code action to desugar a use expression
+  into the equivalent function call. For example, this snippet of code:
+
+  ```gleam
+  pub fn main() {
+    use profile <- result.try(fetch_profile(user))
+    render_welcome(user, profile)
+  }
+  ```
+
+  Will be turned into:
+
+  ```gleam
+  pub fn main() {
+    result.try(fetch_profile(user), fn(profile) {
+      render_welcome(user, profile)
+    })
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 - The formatter now adds a `todo` inside empty blocks.
@@ -52,6 +74,10 @@
 
 - The compiler now throws an error when a float literal ends with an `e` and
   is missing an exponent.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the compiler would crash when pattern matching on multiple
+  subjects and one of them being a constant record.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.6.1 - 2024-11-19
