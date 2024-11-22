@@ -75,6 +75,48 @@ impl CodeActionBuilder {
     }
 }
 
+/// A little wrapper around LineNumbers to make it easier to build text edits.
+///
+struct TextEdits<'a> {
+    line_numbers: &'a LineNumbers,
+    edits: Vec<TextEdit>,
+}
+
+impl<'a> TextEdits<'a> {
+    pub fn new(line_numbers: &'a LineNumbers) -> Self {
+        TextEdits {
+            line_numbers,
+            edits: vec![],
+        }
+    }
+
+    pub fn src_span_to_lsp_range(&self, location: SrcSpan) -> Range {
+        src_span_to_lsp_range(location, self.line_numbers)
+    }
+
+    pub fn replace(&mut self, location: SrcSpan, new_text: String) {
+        self.edits.push(TextEdit {
+            range: src_span_to_lsp_range(location, self.line_numbers),
+            new_text,
+        })
+    }
+
+    pub fn insert(&mut self, at: u32, new_text: String) {
+        self.replace(SrcSpan { start: at, end: at }, new_text)
+    }
+
+    pub fn delete(&mut self, location: SrcSpan) {
+        self.replace(location, "".to_string())
+    }
+
+    fn delete_range(&mut self, range: Range) {
+        self.edits.push(TextEdit {
+            range,
+            new_text: "".into(),
+        })
+    }
+}
+
 /// Code action to remove literal tuples in case subjects, essentially making
 /// the elements of the tuples into the case's subjects.
 ///
@@ -110,12 +152,11 @@ impl CodeActionBuilder {
 /// }
 /// ```
 pub struct RedundantTupleInCaseSubject<'a> {
-    line_numbers: LineNumbers,
+    edits: TextEdits<'a>,
     code: &'a EcoString,
     extra: &'a ModuleExtra,
     params: &'a CodeActionParams,
     module: &'a ast::TypedModule,
-    edits: Vec<TextEdit>,
     hovered: bool,
 }
 
@@ -127,7 +168,7 @@ impl<'ast> ast::visit::Visit<'ast> for RedundantTupleInCaseSubject<'_> {
         subjects: &'ast [TypedExpr],
         clauses: &'ast [ast::TypedClause],
     ) {
-        'subj: for (subject_idx, subject) in subjects.iter().enumerate() {
+        for (subject_idx, subject) in subjects.iter().enumerate() {
             let TypedExpr::Tuple {
                 location, elems, ..
             } = subject
@@ -140,32 +181,36 @@ impl<'ast> ast::visit::Visit<'ast> for RedundantTupleInCaseSubject<'_> {
                 continue;
             }
 
-            let mut clause_edits = vec![];
-            for clause in clauses {
-                match clause.pattern.get(subject_idx) {
-                    Some(Pattern::Tuple { location, elems }) => {
-                        clause_edits.extend(self.delete_tuple_tokens(
-                            *location,
-                            elems.last().map(|elem| elem.location()),
-                        ))
-                    }
+            // We cannot rewrite clauses whose i-th pattern is not a discard or
+            // tuples.
+            let all_ith_patterns_are_tuples_or_discards = clauses
+                .iter()
+                .map(|clause| clause.pattern.get(subject_idx))
+                .all(|pattern| {
+                    matches!(
+                        pattern,
+                        Some(Pattern::Tuple { .. } | Pattern::Discard { .. })
+                    )
+                });
 
-                    Some(Pattern::Discard { location, .. }) => {
-                        clause_edits.push(self.discard_tuple_items(*location, elems.len()))
-                    }
-
-                    // Do not edit for this subject at all and go to the next subject
-                    _ => continue 'subj,
-                }
+            if !all_ith_patterns_are_tuples_or_discards {
+                continue;
             }
 
-            let range = src_span_to_lsp_range(*location, &self.line_numbers);
-            self.hovered = self.hovered || overlaps(self.params.range, range);
+            self.delete_tuple_tokens(*location, elems.last().map(|elem| elem.location()));
 
-            self.edits.extend(
-                self.delete_tuple_tokens(*location, elems.last().map(|elem| elem.location())),
-            );
-            self.edits.extend(clause_edits);
+            for clause in clauses {
+                match clause.pattern.get(subject_idx) {
+                    Some(Pattern::Tuple { location, elems }) => self
+                        .delete_tuple_tokens(*location, elems.last().map(|elem| elem.location())),
+                    Some(Pattern::Discard { location, .. }) => {
+                        self.discard_tuple_items(*location, elems.len())
+                    }
+                    _ => panic!("safe: we've just checked all patterns must be discards/tuples"),
+                }
+            }
+            let range = self.edits.src_span_to_lsp_range(*location);
+            self.hovered = self.hovered || overlaps(self.params.range, range);
         }
 
         ast::visit::visit_typed_expr_case(self, location, type_, subjects, clauses)
@@ -173,14 +218,17 @@ impl<'ast> ast::visit::Visit<'ast> for RedundantTupleInCaseSubject<'_> {
 }
 
 impl<'a> RedundantTupleInCaseSubject<'a> {
-    pub fn new(module: &'a Module, params: &'a CodeActionParams) -> Self {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
         Self {
-            line_numbers: LineNumbers::new(&module.code),
+            edits: TextEdits::new(line_numbers),
             code: &module.code,
             extra: &module.extra,
             params,
             module: &module.ast,
-            edits: vec![],
             hovered: false,
         }
     }
@@ -191,38 +239,27 @@ impl<'a> RedundantTupleInCaseSubject<'a> {
             return vec![];
         }
 
-        self.edits.sort_by_key(|edit| edit.range.start);
+        self.edits.edits.sort_by_key(|edit| edit.range.start);
 
         let mut actions = vec![];
         CodeActionBuilder::new("Remove redundant tuples")
             .kind(CodeActionKind::REFACTOR_REWRITE)
-            .changes(self.params.text_document.uri.clone(), self.edits)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
             .preferred(true)
             .push_to(&mut actions);
 
         actions
     }
 
-    fn delete_tuple_tokens(
-        &self,
-        location: SrcSpan,
-        last_elem_location: Option<SrcSpan>,
-    ) -> Vec<TextEdit> {
+    fn delete_tuple_tokens(&mut self, location: SrcSpan, last_elem_location: Option<SrcSpan>) {
         let tuple_code = self
             .code
             .get(location.start as usize..location.end as usize)
             .expect("valid span");
 
-        let mut edits = vec![];
-
         // Delete `#`
-        edits.push(TextEdit {
-            range: src_span_to_lsp_range(
-                SrcSpan::new(location.start, location.start + 1),
-                &self.line_numbers,
-            ),
-            new_text: "".to_string(),
-        });
+        self.edits
+            .delete(SrcSpan::new(location.start, location.start + 1));
 
         // Delete `(`
         let (lparen_offset, _) = tuple_code
@@ -231,16 +268,10 @@ impl<'a> RedundantTupleInCaseSubject<'a> {
             .find(|(i, _)| !self.extra.is_within_comment(location.start + *i as u32))
             .expect("`(` not found in tuple");
 
-        edits.push(TextEdit {
-            range: src_span_to_lsp_range(
-                SrcSpan::new(
-                    location.start + lparen_offset as u32,
-                    location.start + lparen_offset as u32 + 1,
-                ),
-                &self.line_numbers,
-            ),
-            new_text: "".to_string(),
-        });
+        self.edits.delete(SrcSpan::new(
+            location.start + lparen_offset as u32,
+            location.start + lparen_offset as u32 + 1,
+        ));
 
         // Delete trailing `,` (if applicable)
         if let Some(last_elem_location) = last_elem_location {
@@ -259,38 +290,25 @@ impl<'a> RedundantTupleInCaseSubject<'a> {
                         .is_within_comment(last_elem_location.end + *i as u32)
                 })
             {
-                edits.push(TextEdit {
-                    range: src_span_to_lsp_range(
-                        SrcSpan::new(
-                            last_elem_location.end + trailing_comma_offset as u32,
-                            last_elem_location.end + trailing_comma_offset as u32 + 1,
-                        ),
-                        &self.line_numbers,
-                    ),
-                    new_text: "".to_string(),
-                });
+                self.edits.delete(SrcSpan::new(
+                    last_elem_location.end + trailing_comma_offset as u32,
+                    last_elem_location.end + trailing_comma_offset as u32 + 1,
+                ));
             }
         }
 
         // Delete )
-        edits.push(TextEdit {
-            range: src_span_to_lsp_range(
-                SrcSpan::new(location.end - 1, location.end),
-                &self.line_numbers,
-            ),
-            new_text: "".to_string(),
-        });
-
-        edits
+        self.edits
+            .delete(SrcSpan::new(location.end - 1, location.end));
     }
 
-    fn discard_tuple_items(&self, discard_location: SrcSpan, tuple_items: usize) -> TextEdit {
+    fn discard_tuple_items(&mut self, discard_location: SrcSpan, tuple_items: usize) {
         // Replace the old discard with multiple discard, one for each of the
         // tuple items.
-        TextEdit {
-            range: src_span_to_lsp_range(discard_location, &self.line_numbers),
-            new_text: itertools::intersperse(iter::repeat("_").take(tuple_items), ", ").collect(),
-        }
+        self.edits.replace(
+            discard_location,
+            itertools::intersperse(iter::repeat("_").take(tuple_items), ", ").collect(),
+        )
     }
 }
 
@@ -300,7 +318,7 @@ pub struct LetAssertToCase<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
     actions: Vec<CodeAction>,
-    line_numbers: LineNumbers,
+    edits: TextEdits<'a>,
     pattern_variables: Vec<EcoString>,
 }
 
@@ -310,7 +328,8 @@ impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
         // we only check for the code action between the `let` and `=`.
         let code_action_location =
             SrcSpan::new(assignment.location.start, assignment.value.location().start);
-        let code_action_range = src_span_to_lsp_range(code_action_location, &self.line_numbers);
+        let code_action_range =
+            src_span_to_lsp_range(code_action_location, self.edits.line_numbers);
 
         self.visit_typed_expr(&assignment.value);
 
@@ -340,7 +359,7 @@ impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
             .get(pattern_location.start as usize..pattern_location.end as usize)
             .expect("Location must be valid");
 
-        let range = src_span_to_lsp_range(assignment.location, &self.line_numbers);
+        let range = src_span_to_lsp_range(assignment.location, self.edits.line_numbers);
         let indent = " ".repeat(range.start.character as usize);
 
         // Figure out which variables are assigned in the pattern
@@ -413,13 +432,16 @@ impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
 }
 
 impl<'a> LetAssertToCase<'a> {
-    pub fn new(module: &'a Module, params: &'a CodeActionParams) -> Self {
-        let line_numbers = LineNumbers::new(&module.code);
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
         Self {
             module,
             params,
             actions: Vec::new(),
-            line_numbers,
+            edits: TextEdits::new(line_numbers),
             pattern_variables: Vec::new(),
         }
     }
@@ -436,37 +458,31 @@ impl<'a> LetAssertToCase<'a> {
 pub struct LabelShorthandSyntax<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
-    line_numbers: LineNumbers,
-    edits: Vec<TextEdit>,
+    edits: TextEdits<'a>,
 }
 
 impl<'a> LabelShorthandSyntax<'a> {
-    pub fn new(module: &'a Module, params: &'a CodeActionParams) -> Self {
-        let line_numbers = LineNumbers::new(&module.code);
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
         Self {
             module,
             params,
-            line_numbers,
-            edits: vec![],
+            edits: TextEdits::new(line_numbers),
         }
-    }
-
-    fn push_delete_edit(&mut self, location: &SrcSpan) {
-        self.edits.push(TextEdit {
-            range: src_span_to_lsp_range(*location, &self.line_numbers),
-            new_text: "".into(),
-        })
     }
 
     pub fn code_actions(mut self) -> Vec<CodeAction> {
         self.visit_typed_module(&self.module.ast);
-        if self.edits.is_empty() {
+        if self.edits.edits.is_empty() {
             return vec![];
         }
         let mut action = Vec::with_capacity(1);
         CodeActionBuilder::new("Use label shorthand syntax")
             .kind(CodeActionKind::REFACTOR)
-            .changes(self.params.text_document.uri.clone(), self.edits)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
             .preferred(false)
             .push_to(&mut action);
         action
@@ -475,7 +491,7 @@ impl<'a> LabelShorthandSyntax<'a> {
 
 impl<'ast> ast::visit::Visit<'ast> for LabelShorthandSyntax<'_> {
     fn visit_typed_call_arg(&mut self, arg: &'ast TypedCallArg) {
-        let arg_range = src_span_to_lsp_range(arg.location, &self.line_numbers);
+        let arg_range = self.edits.src_span_to_lsp_range(arg.location);
         let is_selected = overlaps(arg_range, self.params.range);
 
         match arg {
@@ -484,7 +500,7 @@ impl<'ast> ast::visit::Visit<'ast> for LabelShorthandSyntax<'_> {
                 value: TypedExpr::Var { name, location, .. },
                 ..
             } if is_selected && !arg.uses_label_shorthand() && label == name => {
-                self.push_delete_edit(location)
+                self.edits.delete(*location)
             }
             _ => (),
         }
@@ -493,7 +509,7 @@ impl<'ast> ast::visit::Visit<'ast> for LabelShorthandSyntax<'_> {
     }
 
     fn visit_typed_pattern_call_arg(&mut self, arg: &'ast CallArg<TypedPattern>) {
-        let arg_range = src_span_to_lsp_range(arg.location, &self.line_numbers);
+        let arg_range = self.edits.src_span_to_lsp_range(arg.location);
         let is_selected = overlaps(arg_range, self.params.range);
 
         match arg {
@@ -502,7 +518,7 @@ impl<'ast> ast::visit::Visit<'ast> for LabelShorthandSyntax<'_> {
                 value: TypedPattern::Variable { name, location, .. },
                 ..
             } if is_selected && !arg.uses_label_shorthand() && label == name => {
-                self.push_delete_edit(location)
+                self.edits.delete(*location)
             }
             _ => (),
         }
@@ -517,17 +533,20 @@ impl<'ast> ast::visit::Visit<'ast> for LabelShorthandSyntax<'_> {
 pub struct FillInMissingLabelledArgs<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
-    line_numbers: LineNumbers,
+    edits: TextEdits<'a>,
     selected_call: Option<(SrcSpan, &'a FieldMap, &'a [TypedCallArg])>,
 }
 
 impl<'a> FillInMissingLabelledArgs<'a> {
-    pub fn new(module: &'a Module, params: &'a CodeActionParams) -> Self {
-        let line_numbers = LineNumbers::new(&module.code);
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
         Self {
             module,
             params,
-            line_numbers,
+            edits: TextEdits::new(line_numbers),
             selected_call: None,
         }
     }
@@ -563,25 +582,19 @@ impl<'a> FillInMissingLabelledArgs<'a> {
                 return vec![];
             }
 
-            let add_labels_edit = TextEdit {
-                range: src_span_to_lsp_range(
-                    SrcSpan {
-                        start: call_location.end - 1,
-                        end: call_location.end - 1,
-                    },
-                    &self.line_numbers,
-                ),
-                new_text: missing_labels
+            self.edits.insert(
+                call_location.end - 1,
+                missing_labels
                     .iter()
                     .sorted_by_key(|(position, _label)| *position)
                     .map(|(_, label)| format!("{label}: todo"))
                     .join(", "),
-            };
+            );
 
             let mut action = Vec::with_capacity(1);
             CodeActionBuilder::new("Fill labels")
                 .kind(CodeActionKind::REFACTOR)
-                .changes(self.params.text_document.uri.clone(), vec![add_labels_edit])
+                .changes(self.params.text_document.uri.clone(), self.edits.edits)
                 .preferred(false)
                 .push_to(&mut action);
             return action;
@@ -599,7 +612,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
         fun: &'ast TypedExpr,
         args: &'ast [TypedCallArg],
     ) {
-        let call_range = src_span_to_lsp_range(*location, &self.line_numbers);
+        let call_range = self.edits.src_span_to_lsp_range(*location);
         if !within(self.params.range, call_range) {
             return;
         }
@@ -640,6 +653,7 @@ struct ImportSuggestion {
 
 pub fn code_action_import_module(
     module: &Module,
+    line_numbers: &LineNumbers,
     params: &CodeActionParams,
     error: &Option<Error>,
     actions: &mut Vec<CodeAction>,
@@ -665,20 +679,15 @@ pub fn code_action_import_module(
         return;
     }
 
-    let line_numbers = LineNumbers::new(&module.code);
-    let first_import_pos = position_of_first_definition_if_import(module, &line_numbers);
+    let first_import_pos = position_of_first_definition_if_import(module, line_numbers);
     let first_is_import = first_import_pos.is_some();
     let import_location = first_import_pos.unwrap_or_default();
 
-    let after_import_newlines = add_newlines_after_import(
-        import_location,
-        first_is_import,
-        &line_numbers,
-        &module.code,
-    );
+    let after_import_newlines =
+        add_newlines_after_import(import_location, first_is_import, line_numbers, &module.code);
 
     for missing_import in missing_imports {
-        let range = src_span_to_lsp_range(missing_import.location, &line_numbers);
+        let range = src_span_to_lsp_range(missing_import.location, line_numbers);
         if !overlaps(params.range, range) {
             continue;
         }
@@ -744,6 +753,7 @@ fn suggest_imports(
 
 pub fn code_action_add_missing_patterns(
     module: &Module,
+    line_numbers: &LineNumbers,
     params: &CodeActionParams,
     error: &Option<Error>,
     actions: &mut Vec<CodeAction>,
@@ -766,15 +776,12 @@ pub fn code_action_add_missing_patterns(
         return;
     }
 
-    let line_numbers = LineNumbers::new(&module.code);
-
     for (location, missing) in missing_patterns {
-        let range = src_span_to_lsp_range(location, &line_numbers);
+        let mut edits = TextEdits::new(line_numbers);
+        let range = edits.src_span_to_lsp_range(location);
         if !overlaps(params.range, range) {
             return;
         }
-
-        let mut edits = Vec::new();
 
         let Some(Located::Expression(TypedExpr::Case {
             clauses, subjects, ..
@@ -794,7 +801,8 @@ pub fn code_action_add_missing_patterns(
         // we think we are more indented than we actually are
         //
         let mut indent_size = 0;
-        let line_start = *line_numbers
+        let line_start = *edits
+            .line_numbers
             .line_starts
             .get(range.start.line as usize)
             .expect("Line number should be valid");
@@ -809,25 +817,15 @@ pub fn code_action_add_missing_patterns(
 
         // Insert the missing patterns just after the final clause, or just before
         // the closing brace if there are no clauses
-        let insert_span = clauses
-            .last()
-            .map(|clause| SrcSpan {
-                start: clause.location.end,
-                end: clause.location.end,
-            })
-            .unwrap_or(SrcSpan {
-                start: location.end - 1,
-                end: location.end - 1,
-            });
 
-        let insert_range = src_span_to_lsp_range(insert_span, &line_numbers);
+        let insert_at = clauses
+            .last()
+            .map(|clause| clause.location.end)
+            .unwrap_or(location.end - 1);
 
         for pattern in missing {
             let new_text = format!("\n{indent}  {pattern} -> todo");
-            edits.push(TextEdit {
-                range: insert_range,
-                new_text,
-            })
+            edits.insert(insert_at, new_text);
         }
 
         // Add a newline + indent after the last pattern if there are no clauses
@@ -873,26 +871,14 @@ pub fn code_action_add_missing_patterns(
                 }
             }
 
-            let range = src_span_to_lsp_range(
-                SrcSpan::new(start_brace_location, insert_span.start),
-                &line_numbers,
-            );
-
             // Remove any blank spaces/lines between the start brace and end brace
-            edits.push(TextEdit {
-                range,
-                new_text: String::new(),
-            });
-
-            edits.push(TextEdit {
-                range: insert_range,
-                new_text: format!("\n{indent}"),
-            })
+            edits.delete(SrcSpan::new(start_brace_location, insert_at));
+            edits.insert(insert_at, format!("\n{indent}"));
         }
 
         CodeActionBuilder::new("Add missing patterns")
             .kind(CodeActionKind::QUICKFIX)
-            .changes(uri.clone(), edits)
+            .changes(uri.clone(), edits.edits)
             .preferred(true)
             .push_to(actions);
     }
@@ -903,8 +889,7 @@ pub fn code_action_add_missing_patterns(
 pub struct AddAnnotations<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
-    edits: Vec<TextEdit>,
-    line_numbers: LineNumbers,
+    edits: TextEdits<'a>,
     printer: Printer<'a>,
 }
 
@@ -917,7 +902,7 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
         // which is part of a let binding.
         let pattern_location = assignment.pattern.location();
         let location = SrcSpan::new(assignment.location.start, pattern_location.end);
-        let code_action_range = src_span_to_lsp_range(location, &self.line_numbers);
+        let code_action_range = self.edits.src_span_to_lsp_range(location);
 
         // Only offer the code action if the cursor is over the statement
         if !overlaps(code_action_range, self.params.range) {
@@ -935,17 +920,14 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
             return;
         }
 
-        let insert_location = SrcSpan::new(pattern_location.end, pattern_location.end);
-        let range = src_span_to_lsp_range(insert_location, &self.line_numbers);
-
-        self.edits.push(TextEdit {
-            range,
-            new_text: format!(": {}", self.printer.print_type(&assignment.type_())),
-        });
+        self.edits.insert(
+            pattern_location.end,
+            format!(": {}", self.printer.print_type(&assignment.type_())),
+        );
     }
 
     fn visit_typed_module_constant(&mut self, constant: &'ast TypedModuleConstant) {
-        let code_action_range = src_span_to_lsp_range(constant.location, &self.line_numbers);
+        let code_action_range = self.edits.src_span_to_lsp_range(constant.location);
 
         // Only offer the code action if the cursor is over the statement
         if !overlaps(code_action_range, self.params.range) {
@@ -957,19 +939,16 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
             return;
         }
 
-        let insert_location = SrcSpan::new(constant.name_location.end, constant.name_location.end);
-        let range = src_span_to_lsp_range(insert_location, &self.line_numbers);
-
-        self.edits.push(TextEdit {
-            range,
-            new_text: format!(": {}", self.printer.print_type(&constant.type_)),
-        });
+        self.edits.insert(
+            constant.name_location.end,
+            format!(": {}", self.printer.print_type(&constant.type_)),
+        );
     }
 
     fn visit_typed_function(&mut self, fun: &'ast ast::TypedFunction) {
         ast::visit::visit_typed_function(self, fun);
 
-        let code_action_range = src_span_to_lsp_range(fun.location, &self.line_numbers);
+        let code_action_range = self.edits.src_span_to_lsp_range(fun.location);
 
         // Only offer the code action if the cursor is over the statement
         if !overlaps(code_action_range, self.params.range) {
@@ -983,24 +962,18 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
                 continue;
             }
 
-            let insert_location = SrcSpan::new(argument.location.end, argument.location.end);
-            let range = src_span_to_lsp_range(insert_location, &self.line_numbers);
-
-            self.edits.push(TextEdit {
-                range,
-                new_text: format!(": {}", self.printer.print_type(&argument.type_)),
-            });
+            self.edits.insert(
+                argument.location.end,
+                format!(": {}", self.printer.print_type(&argument.type_)),
+            );
         }
 
         // Annotate the return type if it isn't already annotated
         if fun.return_annotation.is_none() {
-            let insert_location = SrcSpan::new(fun.location.end, fun.location.end);
-            let range = src_span_to_lsp_range(insert_location, &self.line_numbers);
-
-            self.edits.push(TextEdit {
-                range,
-                new_text: format!(" -> {}", self.printer.print_type(&fun.return_type)),
-            });
+            self.edits.insert(
+                fun.location.end,
+                format!(" -> {}", self.printer.print_type(&fun.return_type)),
+            );
         }
     }
 
@@ -1023,7 +996,7 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
             FunctionLiteralKind::Use { location } => location,
         };
 
-        let code_action_range = src_span_to_lsp_range(*location, &self.line_numbers);
+        let code_action_range = self.edits.src_span_to_lsp_range(*location);
 
         // Only offer the code action if the cursor is over the expression
         if !overlaps(code_action_range, self.params.range) {
@@ -1037,41 +1010,33 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
                 continue;
             }
 
-            let insert_location = SrcSpan::new(argument.location.end, argument.location.end);
-            let range = src_span_to_lsp_range(insert_location, &self.line_numbers);
-
-            self.edits.push(TextEdit {
-                range,
-                new_text: format!(": {}", self.printer.print_type(&argument.type_)),
-            });
+            self.edits.insert(
+                argument.location.end,
+                format!(": {}", self.printer.print_type(&argument.type_)),
+            );
         }
 
         // Annotate the return type if it isn't already annotated, and this is
         // an anonymous function.
         if return_annotation.is_none() && matches!(kind, FunctionLiteralKind::Anonymous { .. }) {
-            let insert_location = SrcSpan::new(location.end, location.end);
-            let range = src_span_to_lsp_range(insert_location, &self.line_numbers);
-
-            self.edits.push(TextEdit {
-                range,
-                new_text: format!(
-                    " -> {}",
-                    self.printer
-                        .print_type(&type_.return_type().expect("Type must be a function"))
-                ),
-            });
+            let return_type = &type_.return_type().expect("Type must be a function");
+            let pretty_type = self.printer.print_type(return_type);
+            self.edits
+                .insert(location.end, format!(" -> {pretty_type}"));
         }
     }
 }
 
 impl<'a> AddAnnotations<'a> {
-    pub fn new(module: &'a Module, params: &'a CodeActionParams) -> Self {
-        let line_numbers = LineNumbers::new(&module.code);
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
         Self {
             module,
             params,
-            edits: Vec::new(),
-            line_numbers,
+            edits: TextEdits::new(line_numbers),
             // We need to use the same printer for all the edits because otherwise
             // we could get duplicate type variable names.
             printer: Printer::new(&module.ast.names),
@@ -1083,7 +1048,7 @@ impl<'a> AddAnnotations<'a> {
 
         let uri = &self.params.text_document.uri;
 
-        let title = match self.edits.len() {
+        let title = match self.edits.edits.len() {
             // We don't offer a code action if there is no action to perform
             0 => return,
             1 => "Add type annotation",
@@ -1092,7 +1057,7 @@ impl<'a> AddAnnotations<'a> {
 
         CodeActionBuilder::new(title)
             .kind(CodeActionKind::REFACTOR)
-            .changes(uri.clone(), self.edits)
+            .changes(uri.clone(), self.edits.edits)
             .preferred(true)
             .push_to(actions);
     }
@@ -1317,9 +1282,8 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass<'as
 pub struct QualifiedToUnqualifiedImportSecondPass<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
-    line_numbers: LineNumbers,
+    edits: TextEdits<'a>,
     qualified_constructor: QualifiedConstructor<'a>,
-    edits: Vec<TextEdit>,
 }
 
 enum QualifiedConstructorType {
@@ -1332,21 +1296,20 @@ impl<'a> QualifiedToUnqualifiedImportSecondPass<'a> {
     pub fn new(
         module: &'a Module,
         params: &'a CodeActionParams,
-        line_numbers: LineNumbers,
+        line_numbers: &'a LineNumbers,
         qualified_constructor: QualifiedConstructor<'a>,
     ) -> Self {
         Self {
             module,
             params,
-            line_numbers,
-            edits: vec![],
+            edits: TextEdits::new(line_numbers),
             qualified_constructor,
         }
     }
 
     pub fn code_actions(mut self) -> Vec<CodeAction> {
         self.visit_typed_module(&self.module.ast);
-        if self.edits.is_empty() {
+        if self.edits.edits.is_empty() {
             return vec![];
         }
         self.edit_import();
@@ -1356,7 +1319,7 @@ impl<'a> QualifiedToUnqualifiedImportSecondPass<'a> {
             self.qualified_constructor.used_name, self.qualified_constructor.constructor
         ))
         .kind(CodeActionKind::REFACTOR)
-        .changes(self.params.text_document.uri.clone(), self.edits)
+        .changes(self.params.text_document.uri.clone(), self.edits.edits)
         .preferred(false)
         .push_to(&mut action);
         action
@@ -1384,10 +1347,7 @@ impl<'a> QualifiedToUnqualifiedImportSecondPass<'a> {
                 location.start + self.qualified_constructor.used_name.len() as u32 + 1, // plus .
             )
         };
-        self.edits.push(TextEdit {
-            range: src_span_to_lsp_range(span, &self.line_numbers),
-            new_text: "".to_string(),
-        });
+        self.edits.delete(span);
     }
 
     fn edit_import(&mut self) {
@@ -1413,10 +1373,7 @@ impl<'a> QualifiedToUnqualifiedImportSecondPass<'a> {
         }
         let (insert_pos, new_text) = self.determine_insert_position_and_text();
         let span = SrcSpan::new(insert_pos, insert_pos);
-        self.edits.push(TextEdit {
-            range: src_span_to_lsp_range(span, &self.line_numbers),
-            new_text,
-        });
+        self.edits.replace(span, new_text);
     }
 
     fn find_last_char_before_closing_brace(&self) -> Option<(usize, char)> {
@@ -1649,10 +1606,10 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
 
 pub fn code_action_convert_qualified_constructor_to_unqualified(
     module: &Module,
+    line_numbers: &LineNumbers,
     params: &CodeActionParams,
     actions: &mut Vec<CodeAction>,
 ) {
-    let line_numbers = LineNumbers::new(&module.code);
     let mut first_pass =
         QualifiedToUnqualifiedImportFirstPass::new(module, params, line_numbers.clone());
     first_pass.visit_typed_module(&module.ast);
@@ -1855,48 +1812,44 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
 struct UnqualifiedToQualifiedImportSecondPass<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
-    line_numbers: LineNumbers,
+    edits: TextEdits<'a>,
     unqualified_constructor: UnqualifiedConstructor<'a>,
-    edits: Vec<TextEdit>,
 }
 
 impl<'a> UnqualifiedToQualifiedImportSecondPass<'a> {
     pub fn new(
         module: &'a Module,
         params: &'a CodeActionParams,
-        line_numbers: LineNumbers,
+        line_numbers: &'a LineNumbers,
         unqualified_constructor: UnqualifiedConstructor<'a>,
     ) -> Self {
         Self {
             module,
             params,
-            line_numbers,
+            edits: TextEdits::new(line_numbers),
             unqualified_constructor,
-            edits: vec![],
         }
     }
 
     fn add_module_qualifier(&mut self, location: SrcSpan) {
-        self.edits.push(TextEdit {
-            range: src_span_to_lsp_range(
-                SrcSpan::new(
-                    location.start,
-                    location.start
-                        + self.unqualified_constructor.constructor.used_name().len() as u32,
-                ),
-                &self.line_numbers,
-            ),
-            new_text: format!(
+        let src_span = SrcSpan::new(
+            location.start,
+            location.start + self.unqualified_constructor.constructor.used_name().len() as u32,
+        );
+
+        self.edits.replace(
+            src_span,
+            format!(
                 "{}.{}",
                 self.unqualified_constructor.module_name,
                 self.unqualified_constructor.constructor.name
             ),
-        });
+        );
     }
 
     pub fn code_actions(mut self) -> Vec<CodeAction> {
         self.visit_typed_module(&self.module.ast);
-        if self.edits.is_empty() {
+        if self.edits.edits.is_empty() {
             return vec![];
         }
         self.edit_import();
@@ -1913,7 +1866,7 @@ impl<'a> UnqualifiedToQualifiedImportSecondPass<'a> {
             constructor.name,
         ))
         .kind(CodeActionKind::REFACTOR)
-        .changes(self.params.text_document.uri.clone(), self.edits)
+        .changes(self.params.text_document.uri.clone(), self.edits.edits)
         .preferred(false)
         .push_to(&mut action);
         action
@@ -1940,13 +1893,10 @@ impl<'a> UnqualifiedToQualifiedImportSecondPass<'a> {
             last_char_pos += 1;
         }
 
-        self.edits.push(TextEdit {
-            range: src_span_to_lsp_range(
-                SrcSpan::new(constructor_import_span.start, last_char_pos as u32),
-                &self.line_numbers,
-            ),
-            new_text: "".to_string(),
-        });
+        self.edits.delete(SrcSpan::new(
+            constructor_import_span.start,
+            last_char_pos as u32,
+        ));
     }
 }
 
@@ -2054,10 +2004,10 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportSecondPass<'a
 
 pub fn code_action_convert_unqualified_constructor_to_qualified(
     module: &Module,
+    line_numbers: &LineNumbers,
     params: &CodeActionParams,
     actions: &mut Vec<CodeAction>,
 ) {
-    let line_numbers = LineNumbers::new(&module.code);
     let mut first_pass =
         UnqualifiedToQualifiedImportFirstPass::new(module, params, line_numbers.clone());
     first_pass.visit_typed_module(&module.ast);
@@ -2079,17 +2029,20 @@ pub fn code_action_convert_unqualified_constructor_to_qualified(
 pub struct DesugarUse<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
-    line_numbers: LineNumbers,
+    edits: TextEdits<'a>,
     selected_use: Option<&'a TypedUse>,
 }
 
 impl<'a> DesugarUse<'a> {
-    pub fn new(module: &'a Module, params: &'a CodeActionParams) -> Self {
-        let line_numbers = LineNumbers::new(&module.code);
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
         Self {
             module,
             params,
-            line_numbers,
+            edits: TextEdits::new(line_numbers),
             selected_use: None,
         }
     }
@@ -2114,8 +2067,6 @@ impl<'a> DesugarUse<'a> {
             return vec![];
         };
 
-        let mut edits = vec![];
-
         // If there's arguments on the left hand side of the function we extract
         // those so we can paste them back as the anonymous function arguments.
         let assignments = if type_.fn_arity().map_or(false, |arity| arity >= 1) {
@@ -2131,10 +2082,10 @@ impl<'a> DesugarUse<'a> {
 
         // We first delete everything on the left hand side of use and the use
         // arrow.
-        edits.push(self.delete_edit(SrcSpan {
+        self.edits.delete(SrcSpan {
             start: use_.location.start,
             end: use_.right_hand_side_location.start,
-        }));
+        });
 
         let use_line_end = use_.right_hand_side_location.end;
         let use_rhs_function_has_some_explicit_args = args.len() > 1;
@@ -2144,7 +2095,7 @@ impl<'a> DesugarUse<'a> {
             .get(use_line_end as usize - 1..use_line_end as usize)
             == Some(")");
 
-        edits.push(if use_rhs_function_ends_with_closed_parentheses {
+        if use_rhs_function_ends_with_closed_parentheses {
             // If the function on the right hand side of use ends with a closed
             // parentheses then we have to remove it and add it later at the end
             // of the anonymous function we're inserting.
@@ -2153,7 +2104,7 @@ impl<'a> DesugarUse<'a> {
             //                   ^ To add the fn() we need to first remove this
             //
             // So here we write over the last closed parentheses to remove it.
-            self.src_span_edit(
+            self.edits.replace(
                 SrcSpan {
                     start: use_line_end - 1,
                     end: use_line_end,
@@ -2174,17 +2125,17 @@ impl<'a> DesugarUse<'a> {
             //     use <- wibble
             //                  ^ No parentheses
             //
-            self.add_edit(use_line_end, format!("(fn({}) {{", assignments))
-        });
+            self.edits
+                .insert(use_line_end, format!("(fn({}) {{", assignments))
+        };
 
         // Then we have to increase indentation for all the lines of the use
         // body.
-        let first_fn_expression_range =
-            src_span_to_lsp_range(body.first().location(), &self.line_numbers);
-        let use_body_range = src_span_to_lsp_range(use_.call.location(), &self.line_numbers);
+        let first_fn_expression_range = self.edits.src_span_to_lsp_range(body.first().location());
+        let use_body_range = self.edits.src_span_to_lsp_range(use_.call.location());
 
         for line in first_fn_expression_range.start.line..=use_body_range.end.line {
-            edits.push(TextEdit {
+            self.edits.edits.push(TextEdit {
                 range: Range {
                     start: Position { line, character: 0 },
                     end: Position { line, character: 0 },
@@ -2194,33 +2145,18 @@ impl<'a> DesugarUse<'a> {
         }
 
         let final_line_indentation = " ".repeat(use_body_range.start.character as usize);
-        edits.push(self.add_edit(
+        self.edits.insert(
             use_.call.location().end,
             format!("\n{final_line_indentation}}})"),
-        ));
+        );
 
         let mut action = Vec::with_capacity(1);
-        CodeActionBuilder::new("Desugar use expression")
+        CodeActionBuilder::new("Convert from `use`")
             .kind(CodeActionKind::REFACTOR_REWRITE)
-            .changes(self.params.text_document.uri.clone(), edits)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
             .preferred(false)
             .push_to(&mut action);
         action
-    }
-
-    fn src_span_edit(&self, location: SrcSpan, new_text: String) -> TextEdit {
-        TextEdit {
-            range: src_span_to_lsp_range(location, &self.line_numbers),
-            new_text,
-        }
-    }
-
-    fn add_edit(&self, at: u32, new_text: String) -> TextEdit {
-        self.src_span_edit(SrcSpan { start: at, end: at }, new_text)
-    }
-
-    fn delete_edit(&self, location: SrcSpan) -> TextEdit {
-        self.src_span_edit(location, "".to_string())
     }
 }
 
@@ -2231,7 +2167,7 @@ impl<'ast> ast::visit::Visit<'ast> for DesugarUse<'ast> {
         // and have to keep traversing it in case we're inside some nested
         // `use`s.
         let use_src_span = use_.location.merge(&use_.call.location());
-        let use_range = src_span_to_lsp_range(use_src_span, &self.line_numbers);
+        let use_range = self.edits.src_span_to_lsp_range(use_src_span);
         if !within(self.params.range, use_range) {
             return;
         }
@@ -2255,4 +2191,241 @@ impl<'ast> ast::visit::Visit<'ast> for DesugarUse<'ast> {
 
         self.visit_typed_expr(&use_.call);
     }
+}
+
+/// Builder for code action to apply the turn into use expression.
+///
+pub struct TurnIntoUse<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    selected_call: Option<CallLocations>,
+}
+
+/// All the locations we'll need to transform a function call into a use
+/// expression.
+struct CallLocations {
+    call_span: SrcSpan,
+    called_function_span: SrcSpan,
+    callback_args_span: Option<SrcSpan>,
+    arg_before_callback_span: Option<SrcSpan>,
+    callback_body_span: SrcSpan,
+}
+
+impl<'a> TurnIntoUse<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            selected_call: None,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let Some(CallLocations {
+            call_span,
+            called_function_span,
+            callback_args_span,
+            arg_before_callback_span,
+            callback_body_span,
+        }) = self.selected_call
+        else {
+            return vec![];
+        };
+
+        // This is the nesting level of the `use` keyword we've inserted, we
+        // want to move the entire body of the anonymous function to this level.
+        let use_nesting_level = self.edits.src_span_to_lsp_range(call_span).start.character;
+        let indentation = " ".repeat(use_nesting_level as usize);
+
+        // First we move the callback arguments to the left hand side of the
+        // call and add the `use` keyword.
+        let left_hand_side_text = if let Some(args_location) = callback_args_span {
+            let args_start = args_location.start as usize;
+            let args_end = args_location.end as usize;
+            let args_text = self.module.code.get(args_start..args_end).expect("fn args");
+            format!("use {args_text} <- ")
+        } else {
+            "use <- ".into()
+        };
+
+        self.edits.insert(call_span.start, left_hand_side_text);
+
+        match arg_before_callback_span {
+            // If the function call has no other arguments besides the callback then
+            // we just have to remove the `fn(...) {` part.
+            //
+            //     wibble(fn(...) { ... })
+            //           ^^^^^^^^^^ This goes from the end of the called function
+            //                      To the start of the first thing in the anonymous
+            //                      function's body.
+            //
+            None => self.edits.replace(
+                SrcSpan::new(called_function_span.end, callback_body_span.start),
+                format!("\n{indentation}"),
+            ),
+            // If it has other arguments we'll have to remove those and add a closed
+            // parentheses too:
+            //
+            //     wibble(1, 2, fn(...) { ... })
+            //                ^^^^^^^^^^^ We have to replace this with a `)`, it
+            //                            goes from the end of the second-to-last
+            //                            argument to the start of the first thing
+            //                            in the anonymous function's body.
+            //
+            Some(arg_before_callback) => self.edits.replace(
+                SrcSpan::new(arg_before_callback.end, callback_body_span.start),
+                format!(")\n{indentation}"),
+            ),
+        };
+
+        // Then we have to remove two spaces of indentation from each line of
+        // the callback function's body.
+        let body_range = self.edits.src_span_to_lsp_range(callback_body_span);
+        for line in body_range.start.line + 1..=body_range.end.line {
+            self.edits.delete_range(Range::new(
+                Position { line, character: 0 },
+                Position { line, character: 2 },
+            ))
+        }
+
+        // Then we have to remove the anonymous fn closing `}` and the call's
+        // closing `)`.
+        self.edits
+            .delete(SrcSpan::new(callback_body_span.end, call_span.end));
+
+        let mut action = Vec::with_capacity(1);
+        CodeActionBuilder::new("Convert to `use`")
+            .kind(CodeActionKind::REFACTOR_REWRITE)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
+            .preferred(false)
+            .push_to(&mut action);
+        action
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for TurnIntoUse<'ast> {
+    fn visit_typed_function(&mut self, fun: &'ast ast::TypedFunction) {
+        // The cursor has to be inside the last statement of the function to
+        // offer the code action.
+        let last_statement_range = self.edits.src_span_to_lsp_range(fun.body.last().location());
+        if within(self.params.range, last_statement_range) {
+            if let Some(call_data) = turn_statement_into_use(fun.body.last()) {
+                self.selected_call = Some(call_data);
+            }
+        }
+
+        ast::visit::visit_typed_function(self, fun)
+    }
+
+    fn visit_typed_expr_fn(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        kind: &'ast FunctionLiteralKind,
+        args: &'ast [ast::TypedArg],
+        body: &'ast [ast::TypedStatement],
+        return_annotation: &'ast Option<ast::TypeAst>,
+    ) {
+        // The cursor has to be inside the last statement of the body to
+        // offer the code action.
+        let Some(last_statement) = body.last() else {
+            return;
+        };
+        let last_statement_range = self.edits.src_span_to_lsp_range(last_statement.location());
+        if within(self.params.range, last_statement_range) {
+            if let Some(call_data) = turn_statement_into_use(last_statement) {
+                self.selected_call = Some(call_data);
+            }
+        }
+
+        ast::visit::visit_typed_expr_fn(self, location, type_, kind, args, body, return_annotation);
+    }
+
+    fn visit_typed_expr_block(
+        &mut self,
+        location: &'ast SrcSpan,
+        statements: &'ast [ast::TypedStatement],
+    ) {
+        let Some(last_statement) = statements.last() else {
+            return;
+        };
+
+        // The cursor has to be inside the last statement of the block to offer
+        // the code action.
+        let statement_range = self.edits.src_span_to_lsp_range(last_statement.location());
+        if within(self.params.range, statement_range) {
+            // Only the last statement of a block can be turned into a use!
+            if let Some(selected_call) = turn_statement_into_use(last_statement) {
+                self.selected_call = Some(selected_call)
+            }
+        }
+
+        ast::visit::visit_typed_expr_block(self, location, statements);
+    }
+}
+
+fn turn_statement_into_use(statement: &ast::TypedStatement) -> Option<CallLocations> {
+    match statement {
+        ast::Statement::Use(_) | ast::Statement::Assignment(_) => None,
+        ast::Statement::Expression(expression) => turn_expression_into_use(expression),
+    }
+}
+
+fn turn_expression_into_use(expr: &TypedExpr) -> Option<CallLocations> {
+    let TypedExpr::Call {
+        args,
+        location: call_span,
+        fun: called_function,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+
+    let CallArg {
+        value: last_arg,
+        implicit: None,
+        ..
+    } = args.last()?
+    else {
+        return None;
+    };
+
+    let TypedExpr::Fn {
+        args: callback_args,
+        body,
+        ..
+    } = last_arg
+    else {
+        return None;
+    };
+
+    let callback_args_span = match (callback_args.first(), callback_args.last()) {
+        (Some(first), Some(last)) => Some(first.location.merge(&last.location)),
+        _ => None,
+    };
+
+    let arg_before_callback_span = if args.len() >= 2 {
+        args.get(args.len() - 2).map(|call_arg| call_arg.location)
+    } else {
+        None
+    };
+
+    let callback_body_span = body.first().location().merge(&body.last().last_location());
+
+    Some(CallLocations {
+        call_span: *call_span,
+        called_function_span: called_function.location(),
+        callback_args_span,
+        arg_before_callback_span,
+        callback_body_span,
+    })
 }

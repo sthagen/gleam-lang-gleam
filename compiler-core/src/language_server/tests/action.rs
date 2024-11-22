@@ -66,7 +66,8 @@ const ASSIGN_UNUSED_RESULT: &str = "Assign unused Result value to `_`";
 const ADD_MISSING_PATTERNS: &str = "Add missing patterns";
 const ADD_ANNOTATION: &str = "Add type annotation";
 const ADD_ANNOTATIONS: &str = "Add type annotations";
-const DESUGAR_USE_EXPRESSION: &str = "Desugar use expression";
+const DESUGAR_USE_EXPRESSION: &str = "Convert from `use`";
+const CONVERT_TO_USE: &str = "Convert to `use`";
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range:expr $(,)?) => {
@@ -1414,8 +1415,7 @@ fn add_missing_patterns_bool() {
     assert_code_action!(
         ADD_MISSING_PATTERNS,
         "
-pub fn main() {
-  let bool = True
+pub fn main(bool: Bool) {
   case bool {}
 }
 ",
@@ -1449,8 +1449,7 @@ fn add_missing_patterns_tuple() {
     assert_code_action!(
         ADD_MISSING_PATTERNS,
         "
-pub fn main() {
-  let two_at_once = #(True, Ok(1))
+pub fn main(two_at_once: #(Bool, Result(Int, Nil))) {
   case two_at_once {
     #(False, Error(_)) -> Nil
   }
@@ -1499,8 +1498,7 @@ fn add_missing_patterns_multi() {
     assert_code_action!(
         ADD_MISSING_PATTERNS,
         r#"
-pub fn main() {
-  let a = True
+pub fn main(a: Bool) {
   let b = 1
   case a, b {
 
@@ -1518,8 +1516,7 @@ fn add_missing_patterns_inline() {
     assert_code_action!(
         ADD_MISSING_PATTERNS,
         r#"
-pub fn main() {
-  let a = True
+pub fn main(a: Bool) {
   let value = case a {}
 }
 "#,
@@ -3399,5 +3396,226 @@ fn wibble(n, m, f) {
         DESUGAR_USE_EXPRESSION,
         TestProject::for_source(src),
         find_position_of("<-").select_until(find_position_of("wibble")),
+    );
+}
+
+#[test]
+fn turn_call_into_use_with_single_line_body() {
+    let src = r#"
+pub fn main() {
+  wibble(fn(a, b) { todo })
+}
+
+fn wibble(f) {
+  f(todo, todo)
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("wibble").to_selection(),
+    );
+}
+
+#[test]
+fn turn_call_into_use_with_fn_with_no_args() {
+    let src = r#"
+pub fn main() {
+  wibble(fn() { todo })
+}
+
+fn wibble(f) {
+  f()
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("wibble").to_selection(),
+    );
+}
+
+#[test]
+fn turn_call_with_multiple_arguments_into_use() {
+    let src = r#"
+pub fn main() {
+  wibble(1, 2, fn(a) { todo })
+}
+
+fn wibble(m, n, f) {
+  f(1)
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("todo").to_selection(),
+    );
+}
+
+#[test]
+fn turn_call_with_multiline_fn_into_use() {
+    let src = r#"
+pub fn main() {
+  wibble(1, 2, fn(a) {
+    todo
+    case todo {
+      _ -> todo
+    }
+  })
+}
+
+fn wibble(m, n, f) {
+  f(1)
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("1, 2").select_until(find_position_of("fn(a)")),
+    );
+}
+
+#[test]
+fn turn_call_with_fn_with_type_annotations_into_use() {
+    let src = r#"
+pub fn main() {
+  wibble(1, 2, fn(a: Int) {
+    todo
+  })
+}
+
+fn wibble(m, n, f) {
+  f(1)
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("wibble").select_until(find_position_of("a: ")),
+    );
+}
+
+#[test]
+fn turn_call_into_use_only_works_on_last_call_in_a_block() {
+    let src = r#"
+pub fn main() {
+  wibble(10, 20, fn(a) { todo })
+  wibble(1, 2, fn(a) { todo })
+}
+
+fn wibble(m, n, f) {
+  f(1)
+}
+"#;
+    assert_no_code_actions!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("10").to_selection(),
+    );
+}
+
+#[test]
+fn turn_call_into_use_only_works_on_last_call_in_a_block_2() {
+    let src = r#"
+pub fn main() {
+  {
+    wibble(10, 20, fn(a) { todo })
+    wibble(1, 2, fn(a) { todo })
+  }
+  Nil
+}
+
+fn wibble(m, n, f) {
+  f(1)
+}
+"#;
+    assert_no_code_actions!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("10").to_selection(),
+    );
+}
+
+#[test]
+fn turn_call_into_use_with_last_function_in_a_block() {
+    let src = r#"
+pub fn main() {
+  {
+    wibble(10, 20, fn(a) { todo })
+    wibble(1, 11, fn(a) { todo })
+  }
+  Nil
+}
+
+fn wibble(m, n, f) {
+  f(1)
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("wibble(1,").select_until(find_position_of("11")),
+    );
+}
+
+#[test]
+fn turn_call_into_use_starts_from_innermost_function() {
+    let src = r#"
+pub fn main() {
+  wibble(10, 20, fn(a) {
+    wibble(30, 40, fn(b) {
+      a + b
+    })
+  })
+}
+
+fn wibble(m, n, f) {
+  f(1)
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("30").select_until(find_position_of("40")),
+    );
+}
+
+#[test]
+fn turn_call_into_use_with_another_use_in_the_way() {
+    let src = r#"
+pub fn main() {
+  wibble(10, 20, fn(a) {
+    use b <- wibble(30, 40)
+    a + b
+  })
+}
+
+fn wibble(m, n, f) {
+  f(1)
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src),
+        find_position_of("use").to_selection(),
+    );
+}
+
+#[test]
+fn turn_call_into_use_with_module_function() {
+    let src = r#"
+import other
+pub fn main() {
+  other.wibble(10, 20, fn(a) {
+    todo
+    a + b
+  })
+}
+"#;
+    assert_code_action!(
+        CONVERT_TO_USE,
+        TestProject::for_source(src).add_module("other", "pub fn wibble(n, m, f) { todo }"),
+        find_position_of("wibble").to_selection(),
     );
 }
