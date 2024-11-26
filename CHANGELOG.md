@@ -171,9 +171,16 @@
   file of same name without warning. It now produces an error.
   ([PgBiel](https://github.com/PgBiel))
 
+- Modules depending on removed or renamed modules now get automatically recompiled.
+  ([Sakari Bergen](https://github.com/sbergen))
+
 - The compiler now raises a warning for unused case expressions, code blocks and
   pipelines that would be safe to remove.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+ - Fixed a bug where assigning the prefix of a string pattern to a variable
+   nested inside another pattern would produce invalid code on Javascript.
+   ([yoshi](https://github.com/joshi-monster))
 
 ## v1.6.1 - 2024-11-19
 
