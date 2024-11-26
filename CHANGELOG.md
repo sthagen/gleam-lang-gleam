@@ -29,12 +29,24 @@
 
 - The shorthand names for the two targets, `erl` and `js` are now
   deprecated in code such as `@target`.
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- A custom panic message can now be specified when asserting a value with `let assert`:
+
+  ```gleam
+  let assert Ok(regex) = regex.compile("ab?c+") as "This regex is always valid"
+  ```
+
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 - When targeting JavaScript the compiler now generates faster and smaller code
   for `Int` values in bit array expressions and patterns by evaluating them at
   compile time where possible.
   ([Richard Viney](https://github.com/richard-viney))
+
+- Qualified records can now be used in clause guards.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Build tool
 
@@ -46,10 +58,17 @@
   `src/` and `test/`.
   ([PgBiel](https://github.com/PgBiel))
 
+- `gleam publish` now requires more verbose confirmation for publishing Gleam
+  team packages and v0 packages.
+  ([Louis Pilfold](https://github.com/lpil))
+
+- New projects now require `gleam_stdlib` v0.44.0.
+
 ### Language Server
 
 - The language server now provides type information when hovering over argument
   labels.
+
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 - The Language Server now suggests a code action to desugar a use expression
@@ -98,6 +117,29 @@
 
 - The language server now provides correct information when hovering over
   patterns in use expressions.
+
+- The language server now suggests a code action to convert an inexhaustive
+  `let` assignment into a `case` expression:
+
+  ```gleam
+  pub fn unwrap_result(result: Result(a, b)) -> a {
+    let Ok(inner) = result
+    inner
+  }
+  ```
+
+  Becomes:
+
+  ```gleam
+  pub fn unwrap_result(result: Result(a, b)) -> a {
+    let inner = case result {
+      Ok(inner) -> inner
+      Error(_) -> todo
+    }
+    inner
+  }
+  ```
+
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Formatter
@@ -128,6 +170,10 @@
 - Fixed a bug where a `module.mjs` file would be overwritten by a `module.gleam`
   file of same name without warning. It now produces an error.
   ([PgBiel](https://github.com/PgBiel))
+
+- The compiler now raises a warning for unused case expressions, code blocks and
+  pipelines that would be safe to remove.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ## v1.6.1 - 2024-11-19
 

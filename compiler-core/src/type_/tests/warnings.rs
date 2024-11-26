@@ -2520,6 +2520,18 @@ pub fn main(wibble) {
 }
 
 #[test]
+fn let_assert_with_message_requires_v1_7() {
+    assert_warnings_with_gleam_version!(
+        Range::higher_than(Version::new(1, 0, 0)),
+        r#"
+pub fn main() {
+  let assert Ok(10) = Error(20) as "This will crash..."
+}
+"#,
+    );
+}
+
+#[test]
 fn javascript_unsafe_int_decimal() {
     assert_js_warning!(
         r#"
@@ -2737,5 +2749,202 @@ fn deprecated_target_shorthand_javascript() {
 @target(js)
 pub fn wibble() { panic }
 "
+    );
+}
+
+#[test]
+fn unused_block_wrapping_pure_expressions() {
+    assert_warning!(
+        r#"
+pub fn main() {
+  {
+    True
+    1
+  }
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn unused_block_wrapping_pure_expression() {
+    assert_warning!(
+        r#"
+pub fn main() {
+  { 1 }
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn unused_block_wrapping_impure_expressions_is_not_reported_as_pure() {
+    assert_no_warnings!(
+        r#"
+pub fn main() {
+  {
+    wibble()
+    1
+  }
+  Nil
+}
+
+fn wibble() { wibble() }
+"#
+    );
+}
+
+#[test]
+fn unused_case_expression() {
+    assert_warning!(
+        r#"
+pub fn main() {
+    let a = 1
+    case a {
+        1 -> a
+        _ -> 12
+    }
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn impure_case_expression_is_not_marked_as_unused() {
+    assert_no_warnings!(
+        r#"
+pub fn main() {
+    let a = 1
+    case a {
+        1 -> wibble()
+        _ -> 12
+    }
+    Nil
+}
+
+fn wibble() { wibble() }
+"#
+    );
+}
+
+#[test]
+fn impure_case_expression_is_not_marked_as_unused_2() {
+    assert_no_warnings!(
+        r#"
+pub fn main() {
+    let a = 1
+    case wibble() {
+        1 -> a
+        _ -> 12
+    }
+    Nil
+}
+
+fn wibble() { wibble() }
+"#
+    );
+}
+
+#[test]
+fn unused_fn_function_call() {
+    assert_warning!(
+        r#"
+pub fn main() {
+    fn(a) { a + 1 }(1)
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn impure_fn_function_call_not_mark_as_unused() {
+    assert_no_warnings!(
+        r#"
+pub fn main() {
+    fn(_) { panic }(1)
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn unused_pipeline_ending_with_pure_fn() {
+    assert_warning!(
+        r#"
+pub fn main() {
+    1
+    |> fn(n) { n + 1 }
+
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn unused_pipeline_ending_with_impure_fn() {
+    assert_no_warnings!(
+        r#"
+pub fn main() {
+    1
+    |> fn(_) { panic }
+
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn pipeline_with_regular_function_call_is_never_marked_unused() {
+    assert_no_warnings!(
+        r#"
+pub fn main() {
+    1 |> wibble
+
+    Nil
+}
+
+fn wibble(n) { n }
+"#
+    );
+}
+
+#[test]
+fn use_with_pure_fn_expression_is_marked_as_unused() {
+    assert_warning!(
+        r#"
+pub fn main() {
+    {
+        use _ <- fn(a) { a }
+        1
+    }
+
+    Nil
+}
+"#
+    );
+}
+
+#[test]
+fn use_statement_calling_regular_function_is_never_marked_unused() {
+    assert_no_warnings!(
+        r#"
+pub fn main() {
+    {
+        use _ <- each([1, 2, 3])
+        1
+    }
+
+    Nil
+}
+
+fn each(list, _fun) { list }
+"#
     );
 }

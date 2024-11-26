@@ -1365,16 +1365,26 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         // Do not perform exhaustiveness checking if user explicitly used `let assert ... = ...`.
         let exhaustiveness_check = self.check_let_exhaustiveness(location, value.type_(), &pattern);
-        match (kind, exhaustiveness_check) {
+        match (&kind, exhaustiveness_check) {
             (AssignmentKind::Let | AssignmentKind::Generated, Ok(_)) => {}
             (AssignmentKind::Let | AssignmentKind::Generated, Err(e)) => {
                 self.problems.error(e);
             }
-            (AssignmentKind::Assert { location }, Ok(_)) => self
-                .problems
-                .warning(Warning::RedundantAssertAssignment { location }),
+            (AssignmentKind::Assert { location, .. }, Ok(_)) => {
+                self.problems.warning(Warning::RedundantAssertAssignment {
+                    location: *location,
+                })
+            }
             (AssignmentKind::Assert { .. }, _) => {}
         }
+
+        let kind = match self.infer_assignment_kind(kind) {
+            Ok(kind) => kind,
+            Err(error) => {
+                self.problems.error(error);
+                AssignmentKind::Generated
+            }
+        };
 
         Assignment {
             location,
@@ -1382,6 +1392,33 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             kind,
             pattern,
             value: Box::new(value),
+        }
+    }
+
+    fn infer_assignment_kind(
+        &mut self,
+        kind: AssignmentKind<UntypedExpr>,
+    ) -> Result<AssignmentKind<TypedExpr>, Error> {
+        match kind {
+            AssignmentKind::Let => Ok(AssignmentKind::Let),
+            AssignmentKind::Generated => Ok(AssignmentKind::Generated),
+            AssignmentKind::Assert { location, message } => {
+                let message = match message {
+                    Some(message) => {
+                        self.track_feature_usage(
+                            FeatureKind::LetAssertWithMessage,
+                            message.location(),
+                        );
+                        let message = self.infer(*message)?;
+
+                        unify(string(), message.type_())
+                            .map_err(|e| convert_unify_error(e, message.location()))?;
+                        Some(Box::new(message))
+                    }
+                    None => None,
+                };
+                Ok(AssignmentKind::Assert { location, message })
+            }
         }
     }
 

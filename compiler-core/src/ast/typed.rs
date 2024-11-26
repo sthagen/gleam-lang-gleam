@@ -561,19 +561,45 @@ impl TypedExpr {
             // long as it's not called!
             TypedExpr::ModuleSelect { .. } => true,
 
-            // A pipeline is a pure value constructor if its last step is a record builder.
-            // For example `wibble() |> wobble() |> Ok`
-            TypedExpr::Pipeline { finally, .. } => finally.is_record_builder(),
+            // A pipeline is a pure value constructor if its last step is a record builder,
+            // or a call to a fn expression that has a body comprised of just pure value
+            // constructors. For example:
+            //  - `wibble() |> wobble() |> Ok`
+            //  - `"hello" |> fn(s) { s <> " world!" }`
+            TypedExpr::Pipeline { finally, .. } => match finally.as_ref() {
+                TypedExpr::Fn { body, .. } => body.iter().all(|s| s.is_pure_value_constructor()),
+                fun => fun.is_pure_value_constructor(),
+            },
 
-            // A function call is a pure record constructor if it is a record builder.
-            // For example `Ok(wobble(wibble()))`
-            TypedExpr::Call { fun, .. } => fun.as_ref().is_record_builder(),
+            TypedExpr::Call { fun, .. } => match fun.as_ref() {
+                // Immediately calling a fn expression that has a body comprised of just
+                // pure value constructors is in itself pure.
+                TypedExpr::Fn { body, .. } => body.iter().all(|s| s.is_pure_value_constructor()),
+                // And calling a record builder is a pure value constructor:
+                // `Some(1)`
+                fun => fun.is_record_builder(),
+            },
 
-            // Blocks and Cases are not considered pure value constructors for now,
-            // in the future we might want to do something a bit smarter and inspect
-            // their content to see if they end up returning something that is a
-            // pure value constructor and raise a warning for those as well.
-            TypedExpr::Block { .. } | TypedExpr::Case { .. } => false,
+            // A block is pure if all the statements it's made of are pure.
+            // For example `{ True 1 }`
+            TypedExpr::Block { statements, .. } => {
+                statements.iter().all(|s| s.is_pure_value_constructor())
+            }
+
+            // A case is pure if its subject and all its branches are.
+            // For example:
+            // ```gleam
+            // case 1 + 1 {
+            //   0 -> 1
+            //   _ -> 2
+            // }
+            // ```
+            TypedExpr::Case {
+                subjects, clauses, ..
+            } => {
+                subjects.iter().all(|s| s.is_pure_value_constructor())
+                    && clauses.iter().all(|c| c.then.is_pure_value_constructor())
+            }
 
             // `panic`, `todo`, and placeholders are never considered pure value constructors,
             // we don't want to raise a warning for an unused value if it's one
@@ -582,6 +608,7 @@ impl TypedExpr {
         }
     }
 
+    #[must_use]
     pub fn is_record_builder(&self) -> bool {
         match self {
             TypedExpr::Call { fun, .. } => fun.is_record_builder(),

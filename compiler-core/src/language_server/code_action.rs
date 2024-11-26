@@ -7,7 +7,8 @@ use crate::{
             visit_typed_call_arg, visit_typed_expr_call, visit_typed_pattern_call_arg, Visit as _,
         },
         AssignName, AssignmentKind, CallArg, FunctionLiteralKind, ImplicitCallArgOrigin, Pattern,
-        SrcSpan, TypedExpr, TypedModuleConstant, TypedPattern, TypedUse,
+        SrcSpan, TypedAssignment, TypedExpr, TypedModuleConstant, TypedPattern, TypedStatement,
+        TypedUse,
     },
     build::{Located, Module},
     line_numbers::LineNumbers,
@@ -319,11 +320,10 @@ pub struct LetAssertToCase<'a> {
     params: &'a CodeActionParams,
     actions: Vec<CodeAction>,
     edits: TextEdits<'a>,
-    pattern_variables: Vec<EcoString>,
 }
 
 impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
-    fn visit_typed_assignment(&mut self, assignment: &'ast ast::TypedAssignment) {
+    fn visit_typed_assignment(&mut self, assignment: &'ast TypedAssignment) {
         // To prevent weird behaviour when `let assert` statements are nested,
         // we only check for the code action between the `let` and `=`.
         let code_action_location =
@@ -339,7 +339,7 @@ impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
         }
 
         // This pattern only applies to `let assert`
-        if !matches!(assignment.kind, AssignmentKind::Assert { .. }) {
+        let AssignmentKind::Assert { message, .. } = &assignment.kind else {
             return;
         };
 
@@ -359,13 +359,18 @@ impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
             .get(pattern_location.start as usize..pattern_location.end as usize)
             .expect("Location must be valid");
 
+        let message = message.as_ref().map(|message| {
+            let location = message.location();
+            self.module
+                .code
+                .get(location.start as usize..location.end as usize)
+                .expect("Location must be valid")
+        });
+
         let range = src_span_to_lsp_range(assignment.location, self.edits.line_numbers);
-        let indent = " ".repeat(range.start.character as usize);
 
         // Figure out which variables are assigned in the pattern
-        self.pattern_variables.clear();
-        self.visit_typed_pattern(&assignment.pattern);
-        let variables = std::mem::take(&mut self.pattern_variables);
+        let variables = PatternVariableFinder::find_variables_in_pattern(&assignment.pattern);
 
         let assigned = match variables.len() {
             0 => "_",
@@ -373,27 +378,76 @@ impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
             _ => &format!("#({})", variables.join(", ")),
         };
 
-        let edit = TextEdit {
-            range,
-            new_text: format!(
-                "let {assigned} = case {expr} {{
-{indent}  {pattern} -> {value}
-{indent}  _ -> panic
-{indent}}}",
-                // "_" isn't a valid expression, so we just return Nil from the case expression
-                value = if assigned == "_" { "Nil" } else { assigned }
-            ),
+        let mut new_text = format!("let {assigned} = ");
+        let panic_message = if let Some(message) = message {
+            &format!("panic as {message}")
+        } else {
+            "panic"
         };
+        let clauses = vec![
+            // The existing pattern
+            CaseClause {
+                pattern,
+                // `_` is not a valid expression, so if we are not
+                // binding any variables in the pattern, we simply return Nil.
+                expression: if assigned == "_" { "Nil" } else { assigned },
+            },
+            CaseClause {
+                pattern: "_",
+                expression: panic_message,
+            },
+        ];
+        print_case_expression(range.start.character as usize, expr, clauses, &mut new_text);
 
         let uri = &self.params.text_document.uri;
 
         CodeActionBuilder::new("Convert to case")
             .kind(CodeActionKind::REFACTOR)
-            .changes(uri.clone(), vec![edit])
+            .changes(uri.clone(), vec![TextEdit { range, new_text }])
             .preferred(true)
             .push_to(&mut self.actions);
     }
+}
 
+impl<'a> LetAssertToCase<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            actions: Vec::new(),
+            edits: TextEdits::new(line_numbers),
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+        self.actions
+    }
+}
+
+struct PatternVariableFinder {
+    pattern_variables: Vec<EcoString>,
+}
+
+impl PatternVariableFinder {
+    fn new() -> Self {
+        Self {
+            pattern_variables: Vec::new(),
+        }
+    }
+
+    fn find_variables_in_pattern(pattern: &TypedPattern) -> Vec<EcoString> {
+        let mut finder = Self::new();
+        finder.visit_typed_pattern(pattern);
+        finder.pattern_variables
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for PatternVariableFinder {
     fn visit_typed_pattern_variable(
         &mut self,
         _location: &'ast SrcSpan,
@@ -431,25 +485,140 @@ impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
     }
 }
 
-impl<'a> LetAssertToCase<'a> {
-    pub fn new(
-        module: &'a Module,
-        line_numbers: &'a LineNumbers,
-        params: &'a CodeActionParams,
-    ) -> Self {
-        Self {
-            module,
-            params,
-            actions: Vec::new(),
-            edits: TextEdits::new(line_numbers),
-            pattern_variables: Vec::new(),
-        }
+pub fn code_action_inexhaustive_let_to_case(
+    module: &Module,
+    line_numbers: &LineNumbers,
+    params: &CodeActionParams,
+    error: &Option<Error>,
+    actions: &mut Vec<CodeAction>,
+) {
+    let Some(Error::Type { errors, .. }) = error else {
+        return;
+    };
+    let inexhaustive_assignments = errors
+        .iter()
+        .filter_map(|error| match error {
+            type_::Error::InexhaustiveLetAssignment { location, missing } => {
+                Some((*location, missing))
+            }
+            _ => None,
+        })
+        .collect_vec();
+
+    if inexhaustive_assignments.is_empty() {
+        return;
     }
 
-    pub fn code_actions(mut self) -> Vec<CodeAction> {
-        self.visit_typed_module(&self.module.ast);
-        self.actions
+    for (location, missing) in inexhaustive_assignments {
+        let mut text_edits = TextEdits::new(line_numbers);
+
+        let range = text_edits.src_span_to_lsp_range(location);
+        if !overlaps(params.range, range) {
+            return;
+        }
+
+        let Some(Located::Statement(TypedStatement::Assignment(TypedAssignment {
+            value,
+            pattern,
+            kind: AssignmentKind::Let,
+            location,
+            annotation: _,
+        }))) = module.find_node(location.start)
+        else {
+            continue;
+        };
+
+        // Get the source code for the tested expression
+        let value_location = value.location();
+        let expr = module
+            .code
+            .get(value_location.start as usize..value_location.end as usize)
+            .expect("Location must be valid");
+
+        // Get the source code for the pattern
+        let pattern_location = pattern.location();
+        let pattern_code = module
+            .code
+            .get(pattern_location.start as usize..pattern_location.end as usize)
+            .expect("Location must be valid");
+
+        let range = text_edits.src_span_to_lsp_range(*location);
+
+        // Figure out which variables are assigned in the pattern
+        let variables = PatternVariableFinder::find_variables_in_pattern(pattern);
+
+        let assigned = match variables.len() {
+            0 => "_",
+            1 => variables.first().expect("Variables is length one"),
+            _ => &format!("#({})", variables.join(", ")),
+        };
+
+        let mut new_text = format!("let {assigned} = ");
+        print_case_expression(
+            range.start.character as usize,
+            expr,
+            iter::once(CaseClause {
+                pattern: pattern_code,
+                expression: if assigned == "_" { "Nil" } else { assigned },
+            })
+            .chain(missing.iter().map(|pattern| CaseClause {
+                pattern,
+                expression: "todo",
+            }))
+            .collect(),
+            &mut new_text,
+        );
+
+        let uri = &params.text_document.uri;
+
+        text_edits.replace(*location, new_text);
+
+        CodeActionBuilder::new("Convert to case")
+            .kind(CodeActionKind::QUICKFIX)
+            .changes(uri.clone(), text_edits.edits)
+            .preferred(true)
+            .push_to(actions);
     }
+}
+
+struct CaseClause<'a> {
+    pattern: &'a str,
+    expression: &'a str,
+}
+
+fn print_case_expression(
+    indent_size: usize,
+    subject: &str,
+    clauses: Vec<CaseClause<'_>>,
+    buffer: &mut String,
+) {
+    let indent = " ".repeat(indent_size);
+
+    // Print the beginning of the expression
+    buffer.push_str("case ");
+    buffer.push_str(subject);
+    buffer.push_str(" {");
+
+    for clause in clauses.iter() {
+        // Print the newline and indentation for this clause
+        buffer.push('\n');
+        buffer.push_str(&indent);
+        // Indent this clause one level deeper than the case expression
+        buffer.push_str("  ");
+
+        // Print the clause
+        buffer.push_str(clause.pattern);
+        buffer.push_str(" -> ");
+        buffer.push_str(clause.expression);
+    }
+
+    // If there are no clauses to print, the closing brace should be
+    // on the same line as the opening one, with no space between.
+    if !clauses.is_empty() {
+        buffer.push('\n');
+        buffer.push_str(&indent);
+    }
+    buffer.push('}');
 }
 
 /// Builder for code action to apply the label shorthand syntax on arguments
@@ -894,7 +1063,7 @@ pub struct AddAnnotations<'a> {
 }
 
 impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
-    fn visit_typed_assignment(&mut self, assignment: &'ast ast::TypedAssignment) {
+    fn visit_typed_assignment(&mut self, assignment: &'ast TypedAssignment) {
         self.visit_typed_expr(&assignment.value);
 
         // We only offer this code action between `let` and `=`, because
@@ -983,7 +1152,7 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
         type_: &'ast Arc<Type>,
         kind: &'ast FunctionLiteralKind,
         args: &'ast [ast::TypedArg],
-        body: &'ast [ast::TypedStatement],
+        body: &'ast [TypedStatement],
         return_annotation: &'ast Option<ast::TypeAst>,
     ) {
         ast::visit::visit_typed_expr_fn(self, location, type_, kind, args, body, return_annotation);
@@ -1136,7 +1305,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass<'as
         type_: &'ast Arc<Type>,
         kind: &'ast FunctionLiteralKind,
         args: &'ast [ast::TypedArg],
-        body: &'ast [ast::TypedStatement],
+        body: &'ast [TypedStatement],
         return_annotation: &'ast Option<ast::TypeAst>,
     ) {
         for arg in args {
@@ -1483,7 +1652,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
         type_: &'ast Arc<Type>,
         kind: &'ast FunctionLiteralKind,
         args: &'ast [ast::TypedArg],
-        body: &'ast [ast::TypedStatement],
+        body: &'ast [TypedStatement],
         return_annotation: &'ast Option<ast::TypeAst>,
     ) {
         for arg in args {
@@ -1708,7 +1877,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
         type_: &'ast Arc<Type>,
         kind: &'ast FunctionLiteralKind,
         args: &'ast [ast::TypedArg],
-        body: &'ast [ast::TypedStatement],
+        body: &'ast [TypedStatement],
         return_annotation: &'ast Option<ast::TypeAst>,
     ) {
         for arg in args {
@@ -1907,7 +2076,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportSecondPass<'a
         type_: &'ast Arc<Type>,
         kind: &'ast FunctionLiteralKind,
         args: &'ast [ast::TypedArg],
-        body: &'ast [ast::TypedStatement],
+        body: &'ast [TypedStatement],
         return_annotation: &'ast Option<ast::TypeAst>,
     ) {
         for arg in args {
@@ -2331,7 +2500,7 @@ impl<'ast> ast::visit::Visit<'ast> for TurnIntoUse<'ast> {
         type_: &'ast Arc<Type>,
         kind: &'ast FunctionLiteralKind,
         args: &'ast [ast::TypedArg],
-        body: &'ast [ast::TypedStatement],
+        body: &'ast [TypedStatement],
         return_annotation: &'ast Option<ast::TypeAst>,
     ) {
         // The cursor has to be inside the last statement of the body to
@@ -2352,7 +2521,7 @@ impl<'ast> ast::visit::Visit<'ast> for TurnIntoUse<'ast> {
     fn visit_typed_expr_block(
         &mut self,
         location: &'ast SrcSpan,
-        statements: &'ast [ast::TypedStatement],
+        statements: &'ast [TypedStatement],
     ) {
         let Some(last_statement) = statements.last() else {
             return;
@@ -2372,7 +2541,7 @@ impl<'ast> ast::visit::Visit<'ast> for TurnIntoUse<'ast> {
     }
 }
 
-fn turn_statement_into_use(statement: &ast::TypedStatement) -> Option<CallLocations> {
+fn turn_statement_into_use(statement: &TypedStatement) -> Option<CallLocations> {
     match statement {
         ast::Statement::Use(_) | ast::Statement::Assignment(_) => None,
         ast::Statement::Expression(expression) => turn_expression_into_use(expression),

@@ -896,9 +896,16 @@ impl<'comments> Formatter<'comments> {
 
         let _ = self.pop_empty_lines(pattern.location().end);
 
-        let keyword = match kind {
-            AssignmentKind::Let | AssignmentKind::Generated => "let ",
-            AssignmentKind::Assert { .. } => "let assert ",
+        let (keyword, message) = match kind {
+            AssignmentKind::Let | AssignmentKind::Generated => ("let ", None),
+            AssignmentKind::Assert { message, .. } => (
+                "let assert ",
+                message.as_ref().map(|message| {
+                    break_("", " ")
+                        .nest(INDENT)
+                        .append("as ".to_doc().append(self.expr(message).group()))
+                }),
+            ),
         };
 
         let pattern = self.pattern(pattern);
@@ -911,7 +918,8 @@ impl<'comments> Formatter<'comments> {
             .to_doc()
             .append(pattern.append(annotation).group())
             .append(" =")
-            .append(self.assigned_value(value));
+            .append(self.assigned_value(value))
+            .append(message);
         commented(doc, comments)
     }
 
