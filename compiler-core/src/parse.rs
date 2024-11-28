@@ -2202,6 +2202,24 @@ where
             let constructors = Parser::series_of(
                 self,
                 &|p| {
+                    // The only attribute supported on constructors is @deprecated
+                    let mut attributes = Attributes::default();
+                    let attr_loc = Parser::parse_attributes(p, &mut attributes)?;
+
+                    if let Some(attr_span) = attr_loc {
+                        // Expecting all but the deprecated atterbutes to be default
+                        if attributes.external_erlang.is_some()
+                            || attributes.external_javascript.is_some()
+                            || attributes.target.is_some()
+                            || attributes.internal != InternalAttribute::Missing
+                        {
+                            return parse_error(
+                                ParseErrorType::UnknownAttributeRecordVariant,
+                                attr_span,
+                            );
+                        }
+                    }
+
                     if let Some((c_s, c_n, c_e)) = Parser::maybe_upname(p) {
                         let documentation = p.take_documentation(c_s);
                         let (args, args_e) = Parser::parse_type_constructor_args(p)?;
@@ -2215,6 +2233,7 @@ where
                             name: c_n,
                             arguments: args,
                             documentation,
+                            deprecation: attributes.deprecated,
                         }))
                     } else {
                         Ok(None)
@@ -2250,6 +2269,7 @@ where
         } else {
             (vec![], end)
         };
+
         Ok(Some(Definition::CustomType(CustomType {
             documentation,
             location: SrcSpan { start, end },

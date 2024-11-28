@@ -561,6 +561,26 @@ pub enum Error {
         kind: Named,
         name: EcoString,
     },
+
+    /// Occers when all the variant types of a custom type are deprecated
+    ///
+    /// ```gleam
+    /// type Wibble {
+    ///     @deprecated("1")
+    ///     Wobble1
+    ///     @deprecated("1")
+    ///     Wobble1
+    /// }
+    /// ```
+    AllVariantsDeprecated {
+        location: SrcSpan,
+    },
+
+    /// Occers when any varient of a custom type is deprecated while
+    /// the custom type itself is deprecated
+    DeprecatedVariantOnDeprecatedType {
+        location: SrcSpan,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -861,25 +881,35 @@ pub enum FeatureKind {
     RecordUpdateVariantInference,
     RecordAccessVariantInference,
     LetAssertWithMessage,
+    VariantWithDeprecatedAnnotation,
 }
 
 impl FeatureKind {
     pub fn required_version(&self) -> Version {
         match self {
-            FeatureKind::InternalAnnotation => Version::new(1, 1, 0),
-            FeatureKind::NestedTupleAccess => Version::new(1, 1, 0),
+            FeatureKind::InternalAnnotation | FeatureKind::NestedTupleAccess => {
+                Version::new(1, 1, 0)
+            }
+
             FeatureKind::AtInJavascriptModules => Version::new(1, 2, 0),
+
             FeatureKind::ArithmeticInGuards => Version::new(1, 3, 0),
-            FeatureKind::LabelShorthandSyntax => Version::new(1, 4, 0),
-            FeatureKind::ConstantStringConcatenation => Version::new(1, 4, 0),
+
+            FeatureKind::LabelShorthandSyntax | FeatureKind::ConstantStringConcatenation => {
+                Version::new(1, 4, 0)
+            }
+
             FeatureKind::UnannotatedUtf8StringSegment => Version::new(1, 5, 0),
+
             FeatureKind::RecordUpdateVariantInference
             | FeatureKind::RecordAccessVariantInference => Version::new(1, 6, 0),
-            FeatureKind::LetAssertWithMessage => Version::new(1, 7, 0),
+
+            FeatureKind::VariantWithDeprecatedAnnotation | FeatureKind::LetAssertWithMessage => {
+                Version::new(1, 7, 0)
+            }
         }
     }
 }
-
 #[derive(Debug, Eq, PartialEq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum PanicPosition {
     /// When the unreachable part is a function argument, this means that one
@@ -974,7 +1004,9 @@ impl Error {
             }
             | Error::UseFnDoesntTakeCallback { location, .. }
             | Error::UseFnIncorrectArity { location, .. }
-            | Error::BadName { location, .. } => location.start,
+            | Error::BadName { location, .. }
+            | Error::AllVariantsDeprecated { location }
+            | Error::DeprecatedVariantOnDeprecatedType { location } => location.start,
             Error::UnknownLabels { unknown, .. } => {
                 unknown.iter().map(|(_, s)| s.start).min().unwrap_or(0)
             }

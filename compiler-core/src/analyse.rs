@@ -823,7 +823,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             } => self.track_feature_usage(FeatureKind::InternalAnnotation, location),
         }
 
-        let constructors = constructors
+        let constructors: Vec<RecordConstructor<Arc<Type>>> = constructors
             .into_iter()
             .map(
                 |RecordConstructor {
@@ -832,8 +832,15 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                      name,
                      arguments: args,
                      documentation,
+                     deprecation: constructor_deprecation,
                  }| {
                     self.check_name_case(name_location, &name, Named::CustomTypeVariant);
+                    if constructor_deprecation.is_deprecated() {
+                        self.track_feature_usage(
+                            FeatureKind::VariantWithDeprecatedAnnotation,
+                            location,
+                        );
+                    }
 
                     let preregistered_fn = environment
                         .get_variable(&name)
@@ -868,6 +875,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                         name,
                         arguments: args,
                         documentation,
+                        deprecation: constructor_deprecation,
                     }
                 },
             )
@@ -877,6 +885,36 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             .expect("Could not find preregistered type constructor ")
             .parameters
             .clone();
+
+        // Check if all constructors are deprecated if so error.
+        if !constructors.is_empty()
+            && constructors
+                .iter()
+                .all(|record| record.deprecation.is_deprecated())
+        {
+            self.problems
+                .error(Error::AllVariantsDeprecated { location });
+        }
+
+        // If any constructor record/varient is deprecated while
+        // the type is deprecated as a whole that is considered an error.
+        if deprecation.is_deprecated()
+            && !constructors.is_empty()
+            && constructors
+                .iter()
+                .any(|record| record.deprecation.is_deprecated())
+        {
+            // Report error on all variants attibuted with deprecated
+            constructors
+                .iter()
+                .filter(|record| record.deprecation.is_deprecated())
+                .for_each(|record| {
+                    self.problems
+                        .error(Error::DeprecatedVariantOnDeprecatedType {
+                            location: record.location,
+                        });
+                });
+        }
 
         Ok(Definition::CustomType(CustomType {
             documentation: doc,
@@ -1014,11 +1052,19 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 *publicity
             };
 
+            // If the whole custom type is deprecated all of its varints are too.
+            // Otherwise just the varint(s) attributed as deprecated are.
+            let deprecate_constructor = if deprecation.is_deprecated() {
+                deprecation
+            } else {
+                &constructor.deprecation
+            };
+
             environment.insert_module_value(
                 constructor.name.clone(),
                 ValueConstructor {
                     publicity: value_constructor_publicity,
-                    deprecation: deprecation.clone(),
+                    deprecation: deprecate_constructor.clone(),
                     type_: type_.clone(),
                     variant: constructor_info.clone(),
                 },
@@ -1042,7 +1088,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 constructor_info,
                 type_,
                 value_constructor_publicity,
-                deprecation.clone(),
+                deprecate_constructor.clone(),
             );
 
             environment.names.named_constructor_in_scope(

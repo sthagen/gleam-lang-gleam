@@ -3212,6 +3212,52 @@ Try: _{}", kind_str.to_title_case(), name.to_snake_case()),
                         }),
                     }
                 },
+                        TypeError::AllVariantsDeprecated { location } => {
+                            let text = String::from("Consider deprecating the type as a whole.
+
+  @deprecated(\"message\")
+  type Wibble {
+    Wobble1
+    Wobble2
+  }
+");
+                            Diagnostic {
+                                title: "All variants of custom type deprecated.".into(),
+                                text,
+                                hint: None,
+                                level: Level::Error,
+                                location: Some(Location {
+                                    label: Label {
+                                        text: None,
+                                        span: *location,
+                                    },
+                                    path: path.clone(),
+                                    src: src.clone(),
+                                    extra_labels: vec![],
+                                })
+                            }
+                        },
+                        TypeError::DeprecatedVariantOnDeprecatedType{ location } => {
+                            let text = wrap("This custom type has already been deprecated, so deprecating \
+one of its variants does nothing.
+Consider removing the deprecation attribute on the variant.");
+
+                            Diagnostic {
+                                title: "Custom type already deprecated".into(),
+                                text,
+                                hint: None,
+                                level: Level::Error,
+                                location: Some(Location {
+                                    label: Label {
+                                        text: None,
+                                        span: *location,
+                                    },
+                                    path: path.clone(),
+                                    src: src.clone(),
+                                    extra_labels: vec![],
+                                })
+                            }
+                        }
             }
         }).collect_vec(),
 

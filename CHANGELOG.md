@@ -48,6 +48,24 @@
 - Qualified records can now be used in clause guards.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The compiler now allows deprecating specific custom type variants using the
+  `@deprecated` attribute:
+
+  ```gleam
+  pub type HashAlgorithm {
+    @deprecated("Please upgrade to another algorithm")
+    Md5
+    Sha224
+    Sha512
+  }
+
+  pub fn hash_password(input: String) -> String {
+    hash(input:, algorithm: Md5) // Warning: Deprecated value used
+  }
+  ```
+
+  ([Iesha](https://github.com/wilbert-mad))
+
 ### Build tool
 
 - Improved the error message you get when trying to add a package that doesn't
