@@ -79,18 +79,27 @@
   exist with `gleam add`.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- FFI files (such as `.mjs` and `.erl`) are now permitted in subdirectories of
-  `src/` and `test/`.
+- External files (such as `.mjs` and `.erl`) are now permitted in subdirectories
+  of `src/` and `test/`.
   ([PgBiel](https://github.com/PgBiel))
 
 - `gleam publish` now requires more verbose confirmation for publishing Gleam
   team packages and v0 packages.
   ([Louis Pilfold](https://github.com/lpil))
 
+- `gleam publish` now warns when publishing packages that define multiple top-level
+  modules, as this can lead to namespace pollution and conflicts for consumers.
+  ([Aleksei Gurianov](https://github.com/guria))
+
 - New projects now require `gleam_stdlib` v0.44.0.
 
 - `gleam remove` no longer requires a network connection.
   ([yoshi](https://github.com/joshi-monster))
+
+- Commands that work with the Hex package manager API now create and store an
+  API key rather than creating a new one each time. This API key is encrypted
+  with a local password, reducing risk of your Hex password being compromised.
+  ([Louis Pilfold](https://github.com/lpil))
 
 ### Language Server
 
@@ -213,6 +222,14 @@
 - Fixed a bug where expressions which use an unsafe integer on JavaScript would
   not emit a warning if an @external function had been referenced.
   ([Richard Viney](https://github.com/richard-viney))
+
+- Fixed a bug where nested tuple access would not be parsed correctly when
+  the left-hand side was a function call.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+ - Fixed a bug where Gleam would be unable to compile to BEAM bytecode on older
+   versions of Erlang/OTP.
+   ([yoshi](https://github.com/joshi-monster))
 
 ## v1.6.1 - 2024-11-19
 
