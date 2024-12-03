@@ -4,6 +4,9 @@
 
 ### Compiler
 
+- Removed compiler hint about pattern matching a `Result(a, b)` when being used where `a` is expected.
+  ([Kieran O'Reilly](https://github.com/SoTeKie))
+
 - Optimised code generated for record updates.
   ([yoshi](https://github.com/joshi-monster))
 
@@ -66,6 +69,10 @@
 
   ([Iesha](https://github.com/wilbert-mad))
 
+- On the JavaScript target, taking byte-aligned slices of bit arrays is now an
+  O(1) operation instead of O(N), significantly improving performance.
+  ([Richard Viney](https://github.com/richard-viney))
+
 ### Build tool
 
 - Improved the error message you get when trying to add a package that doesn't
@@ -81,6 +88,9 @@
   ([Louis Pilfold](https://github.com/lpil))
 
 - New projects now require `gleam_stdlib` v0.44.0.
+
+- `gleam remove` no longer requires a network connection.
+  ([yoshi](https://github.com/joshi-monster))
 
 ### Language Server
 
@@ -199,6 +209,10 @@
  - Fixed a bug where assigning the prefix of a string pattern to a variable
    nested inside another pattern would produce invalid code on Javascript.
    ([yoshi](https://github.com/joshi-monster))
+
+- Fixed a bug where expressions which use an unsafe integer on JavaScript would
+  not emit a warning if an @external function had been referenced.
+  ([Richard Viney](https://github.com/richard-viney))
 
 ## v1.6.1 - 2024-11-19
 
