@@ -201,6 +201,7 @@ pub enum Error {
         module_name: EcoString,
         value_constructors: Vec<EcoString>,
         type_with_same_name: bool,
+        context: ModuleValueUsageContext,
     },
 
     ModuleAliasUsedAsName {
@@ -581,6 +582,12 @@ pub enum Error {
     DeprecatedVariantOnDeprecatedType {
         location: SrcSpan,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleValueUsageContext {
+    UnqualifiedImport,
+    ModuleAccess,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1135,6 +1142,7 @@ pub fn convert_get_value_constructor_error(
             module_name,
             value_constructors,
             type_with_same_name: imported_value_as_type,
+            context: ModuleValueUsageContext::ModuleAccess,
         },
     }
 }
