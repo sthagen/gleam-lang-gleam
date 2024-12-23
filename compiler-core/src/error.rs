@@ -18,7 +18,6 @@ use pubgrub::report::DerivationTree;
 use pubgrub::version::Version;
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::env;
 use std::fmt::{Debug, Display};
 use std::io::Write;
 use std::path::PathBuf;
@@ -31,6 +30,9 @@ use camino::{Utf8Path, Utf8PathBuf};
 pub type Name = EcoString;
 
 pub type Result<Ok, Err = Error> = std::result::Result<Ok, Err>;
+
+#[cfg(test)]
+pub mod tests;
 
 macro_rules! wrap_format {
     ($($tts:tt)*) => {
@@ -149,7 +151,7 @@ pub enum Error {
     Gzip(String),
 
     #[error("shell program `{program}` not found")]
-    ShellProgramNotFound { program: String },
+    ShellProgramNotFound { program: String, os: OS },
 
     #[error("shell program `{program}` failed")]
     ShellCommand {
@@ -342,6 +344,37 @@ impl SmallVersion {
             minor: version.minor as u8,
             patch: version.patch as u8,
         }
+    }
+}
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+pub enum OS {
+    Linux(Distro),
+    MacOS,
+    Windows,
+    Other,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+pub enum Distro {
+    Ubuntu,
+    Debian,
+    Other,
+}
+
+pub fn parse_os(os: &str, distro: &str) -> OS {
+    match os {
+        "macos" => OS::MacOS,
+        "windows" => OS::Windows,
+        "linux" => OS::Linux(parse_linux_distribution(distro)),
+        _ => OS::Other,
+    }
+}
+
+pub fn parse_linux_distribution(distro: &str) -> Distro {
+    match distro {
+        "ubuntu" => Distro::Ubuntu,
+        "debian" => Distro::Debian,
+        _ => Distro::Other,
     }
 }
 
@@ -1018,8 +1051,44 @@ your app.src file \"{app_ver}\"."
                 }]
             }
 
-            Error::ShellProgramNotFound { program } => {
+            Error::ShellProgramNotFound { program , os } => {
                 let mut text = format!("The program `{program}` was not found. Is it installed?");
+
+                match os {
+                    OS::MacOS => {
+                        fn brew_install(name: &str, pkg: &str) -> String {
+                            format!("\n\nYou can install {} via homebrew: brew install {}", name, pkg)
+                        }
+                        match program.as_str() {
+                            "erl" | "erlc" | "escript" => text.push_str(&brew_install("Erlang", "erlang")),
+                            "rebar3" => text.push_str(&brew_install("Rebar3", "rebar3")),
+                            "deno" => text.push_str(&brew_install("Deno", "deno")),
+                            "elixir" => text.push_str(&brew_install("Elixir", "elixir")),
+                            "node" => text.push_str(&brew_install("Node.js", "node")),
+                            "bun" => text.push_str(&brew_install("Bun", "oven-sh/bun/bun")),
+                            "git" => text.push_str(&brew_install("Git", "git")),
+                            _ => (),
+                        }
+                    }
+                    OS::Linux(distro) => {
+                        fn apt_install(name: &str, pkg: &str) -> String {
+                            format!("\n\nYou can install {} via apt: sudo apt install {}", name, pkg)
+                        }
+                        match distro {
+                            Distro::Ubuntu | Distro::Debian => {
+                                match program.as_str() {
+                                    "elixir" => text.push_str(&apt_install("Elixir", "elixir")),
+                                    "git" => text.push_str(&apt_install("Git", "git")),
+                                    _ => (),
+                                }
+                            }
+                            Distro::Other => (),
+                        }
+                    }
+                    _ => (),
+                }
+
+                text.push('\n');
 
                 match program.as_str() {
                     "erl" | "erlc" | "escript" => text.push_str(
@@ -1029,23 +1098,36 @@ https://gleam.run/getting-started/installing/",
                     ),
                     "rebar3" => text.push_str(
                         "
-Documentation for installing rebar3 can be viewed here:
-https://gleam.run/getting-started/installing/",
+Documentation for installing Rebar3 can be viewed here:
+https://rebar3.org/docs/getting-started/",
+                    ),
+                    "deno" => text.push_str(
+                        "
+Documentation for installing Deno can be viewed here:
+https://docs.deno.com/runtime/getting_started/installation/",
+                    ),
+                    "elixir" => text.push_str(
+                        "
+Documentation for installing Elixir can be viewed here:
+https://elixir-lang.org/install.html",
+                    ),
+                    "node" => text.push_str(
+                        "
+Documentation for installing Node.js via package manager can be viewed here:
+https://nodejs.org/en/download/package-manager/all/",
+                    ),
+                    "bun" => text.push_str(
+                        "
+Documentation for installing Bun can be viewed here:
+https://bun.sh/docs/installation/",
+                    ),
+                    "git" => text.push_str(
+                        "
+Documentation for installing Git can be viewed here:
+https://git-scm.com/book/en/v2/Getting-Started-Installing-Git",
                     ),
                     _ => (),
                 }
-                match (program.as_str(), env::consts::OS) {
-                    // TODO: Further suggestions for other OSes?
-                    ("erl" | "erlc" | "escript", "macos") => text.push_str(
-                        "
-You can also install Erlang via homebrew using \"brew install erlang\"",
-                    ),
-                    ("rebar3", "macos") => text.push_str(
-                        "
-You can also install rebar3 via homebrew using \"brew install rebar3\"",
-                    ),
-                    _ => (),
-                };
 
                 vec![Diagnostic {
                     title: "Program not found".into(),
