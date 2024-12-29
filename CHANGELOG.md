@@ -111,6 +111,12 @@
   with a local password, reducing risk of your Hex password being compromised.
   ([Louis Pilfold](https://github.com/lpil))
 
+- The build tool now sets the `REBAR_SKIP_PROJECT_PLUGINS` environment variable
+  when using rebar3 to compile Erlang dependencies. With future versions of
+  rebar3 this will cause it to skip project plugins, significantly reducing the
+  amount of code it'll need to download and compile, improving compile times.
+  ([Tristan Sloughter](https://github.com/tsloughter))
+
 ### Language Server
 
 - The language server now provides type information when hovering over argument
@@ -210,6 +216,34 @@
   ```
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server now suggests a code action to generate a dynamic decoder
+  for a custom type. For example, this code:
+
+  ```gleam
+  pub type Person {
+    Person(name: String, age: Int)
+  }
+  ```
+
+  Will become:
+
+  ```gleam
+  import gleam/dynamic/decode
+
+  pub type Person {
+    Person(name: String, age: Int)
+  }
+
+  fn person_decoder() -> decode.Decoder(Person) {
+    use name <- decode.field("name", decode.string)
+    use age <- decode.field("age", decode.int)
+
+    decode.success(Person(name:, age:))
+  }
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Formatter
 
