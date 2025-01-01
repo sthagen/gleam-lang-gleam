@@ -6317,3 +6317,78 @@ fn let_assert_as_variable_message() {
 "#
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/4121
+#[test]
+fn function_capture_formatted_like_regular_calls() {
+    assert_format!(
+        r#"pub fn main() {
+  capture(a, _, [
+    really_long_thing_that_can_be_broken,
+    something_else_for_good_measure,
+  ])
+}
+"#
+    );
+}
+
+#[test]
+fn function_capture_formatted_like_regular_calls_2() {
+    assert_format!(
+        r#"pub fn main() {
+  capture(
+    a,
+    _,
+    really_long_thing_that_cannot_be_broken,
+    something_else_for_good_measure,
+  )
+}
+"#
+    );
+}
+
+#[test]
+fn function_capture_formatted_like_regular_calls_3() {
+    assert_format!(
+        r#"pub fn main() {
+  list.fold(my_list, _, fn(a) {
+    io.print("Meh")
+    io.print("Meh")
+  })
+}
+"#
+    );
+}
+
+#[test]
+fn function_capture_formatted_like_regular_calls_inside_a_long_list() {
+    assert_format!(
+        r#"pub fn main() {
+  [
+    capture(a, _, [
+      really_long_thing_that_can_be_broken,
+      something_else_for_good_measure,
+    ]),
+    regular_call(a, [
+      really_long_thing_that_can_be_broken,
+      something_else_for_good_measure,
+    ]),
+  ]
+}
+"#
+    );
+}
+
+#[test]
+fn function_capture_formatted_like_regular_calls_in_a_pipe() {
+    assert_format!(
+        r#"pub fn main() {
+  [1, 2, 3]
+  |> list.fold(from: 1, over: _, with: fn(a, b) {
+    // a comment!
+    a + b
+  })
+}
+"#
+    );
+}
