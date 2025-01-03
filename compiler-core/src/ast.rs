@@ -1231,6 +1231,14 @@ impl<A> CallArg<A> {
     pub fn is_implicit(&self) -> bool {
         self.implicit.is_some()
     }
+
+    #[must_use]
+    pub fn is_use_implicit_callback(&self) -> bool {
+        match self.implicit {
+            Some(ImplicitCallArgOrigin::Use | ImplicitCallArgOrigin::IncorrectArityUse) => true,
+            Some(_) | None => false,
+        }
+    }
 }
 
 impl CallArg<TypedExpr> {
@@ -1323,6 +1331,12 @@ impl UntypedRecordUpdateArg {
     #[must_use]
     pub fn uses_label_shorthand(&self) -> bool {
         self.value.location() == self.location
+    }
+}
+
+impl HasLocation for UntypedRecordUpdateArg {
+    fn location(&self) -> SrcSpan {
+        self.location
     }
 }
 

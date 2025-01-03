@@ -1,11 +1,23 @@
 # Changelog
 
-## Unreleased
+## 1.7.0-rc3 - 2025-12-02
 
 ### Formatter
 
 - Function captures are now formatted like regular function calls.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Record updates are now formatted like function calls.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+### Bug fixes
+
+- Fixed a bug where the "convert from use" code action would generate invalid
+  code with labelled arguments.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where private types would be allowed to be used in other modules.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## 1.7.0-rc2 - 2024-12-30
 
@@ -89,11 +101,12 @@
   O(1) operation instead of O(N), significantly improving performance.
   ([Richard Viney](https://github.com/richard-viney))
 
-- Better error message for existed type constructor being used as value
+- Better error message for when an existing type constructor is used as a value
   constructor.
   ([Jiangda Wang](https://github.com/Frank-III))
 
-- Print better error messages when shell commands used by compiler cannot be found.
+- Print better error messages when shell commands used by compiler cannot be
+  found.
   ([wheatfox](https://github.com/enkerewpo))
 
 ### Build tool
@@ -132,13 +145,13 @@
   amount of code it'll need to download and compile, improving compile times.
   ([Tristan Sloughter](https://github.com/tsloughter))
 
-### Language Server
+### Language server
 
 - The language server now provides type information when hovering over argument
   labels.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- The Language Server now suggests a code action to desugar a use expression
+- The language server now suggests a code action to desugar a use expression
   into the equivalent function call. For example, this snippet of code:
 
   ```gleam
@@ -160,7 +173,7 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The Language Server now suggests a code action to turn a function call into
+- The language server now suggests a code action to turn a function call into
   the equivalent use expression. For example, this snippet of code:
 
   ```gleam
@@ -213,7 +226,7 @@
 - The language server now provides an action to extract a value into a variable.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The Language Server now suggests a code action to expand a function capture
+- The language server now suggests a code action to expand a function capture
   into the equivalent anonymous function. For example, this snippet of code:
 
   ```gleam
@@ -264,6 +277,9 @@
 - The formatter now adds a `todo` inside empty blocks.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The formatter now formats lists the same in constants as in expressions.
+  ([Jiangda Wang](https://github.com/Frank-III))
+
 ### Documentation
 
 - Canonical links created for documentation pages if published on Hex.
@@ -271,16 +287,13 @@
   Resolves versioned pages to point to latest page for search engines.
   ([Dave Lage](https://github.com/rockerBOO))
 
-- The formatter now format lists the same in constants as in expressions
-  ([Jiangda Wang](https://github.com/Frank-III))
-
 ### Bug fixed
 
 - The compiler now throws an error when a float literal ends with an `e` and
   is missing an exponent.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- Fixed a crash with ENOTEMPTY (os error 39) when building on NTFS partitions
+- Fixed a crash with ENOTEMPTY (os error 39) when building on NTFS partitions.
   ([Ivan Ermakov](https://github.com/ivanjermakov))
 
 - Fixed a bug where the compiler would crash when pattern matching on multiple
@@ -312,7 +325,7 @@
   ([yoshi](https://github.com/joshi-monster))
 
 - Fixed a bug where expressions which use an unsafe integer on JavaScript would
-  not emit a warning if an @external function had been referenced.
+  not emit a warning if an external function had been referenced.
   ([Richard Viney](https://github.com/richard-viney))
 
 - Fixed a bug where nested tuple access would not be parsed correctly when
@@ -324,7 +337,7 @@
   ([yoshi](https://github.com/joshi-monster))
 
 - Fixed a bug where the inferred variant of values was not properly cached,
-  leading to incorrect errors on incremental builds and in the Language Server.
+  leading to incorrect errors on incremental builds and in the language server.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 - Fixed a bug where Gleam would be unable to compile to BEAM bytecode if the
@@ -335,8 +348,8 @@
   unused variables in certain cases.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- Fixed a bug where the completer would not include braces in type import completions
-  when it should have.
+- Fixed a bug where the completer would not include braces in type import
+  completions when it should have.
   ([Jiangda Wang](https://github.com/Frank-III))
 
 - Fixed a bug where `gleam new` would generate the github `test` workflow
