@@ -4,6 +4,14 @@
 
 ### Compiler
 
+- Improved code generation for blocks in tail position on the Javascript target.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Function documentation comments and module documentation comments are now
+  included in the generated Erlang code and can be browsed from the Erlang
+  shell starting from OTP27.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Build tool
 
 ### Language server

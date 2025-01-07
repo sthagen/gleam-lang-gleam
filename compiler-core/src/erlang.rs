@@ -46,6 +46,7 @@ struct Env<'a> {
     module: &'a str,
     function: &'a str,
     line_numbers: &'a LineNumbers,
+    needs_function_docs: bool,
     current_scope_vars: im::HashMap<String, usize>,
     erl_function_scope_vars: im::HashMap<String, usize>,
 }
@@ -56,6 +57,7 @@ impl<'env> Env<'env> {
         Self {
             current_scope_vars: vars.clone(),
             erl_function_scope_vars: vars,
+            needs_function_docs: false,
             line_numbers,
             function,
             module,
@@ -217,21 +219,53 @@ fn module_document<'a>(
 
     let src_path = EcoString::from(module.type_info.src_path.as_str());
 
-    let statements = join(
-        module
-            .definitions
-            .iter()
-            .flat_map(|s| module_statement(s, &module.name, line_numbers, &src_path)),
-        lines(2),
-    );
+    let mut needs_function_docs = false;
+    let mut statements = Vec::with_capacity(module.definitions.len());
+    for definition in module.definitions.iter() {
+        if let Some((statement_document, env)) =
+            module_statement(definition, &module.name, line_numbers, &src_path)
+        {
+            needs_function_docs = needs_function_docs || env.needs_function_docs;
+            statements.push(statement_document);
+        }
+    }
 
-    Ok(header
-        .append("-compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch]).")
-        .append(lines(2))
-        .append(exports)
-        .append(type_defs)
-        .append(statements)
-        .append(line()))
+    // We're going to need the documentation directives if any of the module's
+    // functions need it, or if the module has a module comment that we want to
+    // include in the generated Erlang source.
+    let needs_function_docs = needs_function_docs || !module.documentation.is_empty();
+    let documentation_directive = if needs_function_docs {
+        "-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-define(DOC(Str), -doc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-define(DOC(Str), -compile([])).
+-endif."
+            .to_doc()
+            .append(lines(2))
+    } else {
+        nil()
+    };
+
+    let module_doc = if module.documentation.is_empty() {
+        nil()
+    } else {
+        doc_attribute(DocCommentKind::Module, &module.documentation).append(lines(2))
+    };
+
+    let module = docvec![
+        header,
+        "-compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch]).",
+        lines(2),
+        exports,
+        documentation_directive,
+        module_doc,
+        type_defs,
+        join(statements, lines(2)),
+    ];
+
+    Ok(module.append(line()))
 }
 
 fn register_imports(
@@ -354,7 +388,7 @@ fn module_statement<'a>(
     module: &'a str,
     line_numbers: &'a LineNumbers,
     src_path: &EcoString,
-) -> Option<Document<'a>> {
+) -> Option<(Document<'a>, Env<'a>)> {
     match statement {
         Definition::TypeAlias(TypeAlias { .. })
         | Definition::CustomType(CustomType { .. })
@@ -372,7 +406,7 @@ fn module_function<'a>(
     module: &'a str,
     line_numbers: &'a LineNumbers,
     src_path: EcoString,
-) -> Option<Document<'a>> {
+) -> Option<(Document<'a>, Env<'a>)> {
     // Private external functions don't need to render anything, the underlying
     // Erlang implementation is used directly at the call site.
     if function.external_erlang.is_some() && function.publicity.is_private() {
@@ -424,16 +458,35 @@ fn module_function<'a>(
         })
         .unwrap_or_else(|| statement_sequence(&function.body, &mut env));
 
-    Some(docvec![
-        file_attribute,
-        line(),
-        spec,
-        atom_string(escape_erlang_existing_name(function_name).to_string()),
-        arguments,
-        " ->",
-        line().append(body).nest(INDENT).group(),
-        ".",
-    ])
+    let attributes = file_attribute;
+    let attributes = if let Some((_, documentation)) = &function.documentation {
+        env.needs_function_docs = true;
+        let doc_lines = documentation
+            .trim_end()
+            .split('\n')
+            .map(EcoString::from)
+            .collect_vec();
+
+        attributes
+            .append(line())
+            .append(doc_attribute(DocCommentKind::Function, &doc_lines))
+    } else {
+        attributes
+    };
+
+    Some((
+        docvec![
+            attributes,
+            line(),
+            spec,
+            atom_string(escape_erlang_existing_name(function_name).to_string()),
+            arguments,
+            " ->",
+            line().append(body).nest(INDENT).group(),
+            ".",
+        ],
+        env,
+    ))
 }
 
 fn file_attribute<'a>(
@@ -444,6 +497,32 @@ fn file_attribute<'a>(
     let line = line_numbers.line_number(function.location.start);
     let path = path.replace("\\", "\\\\");
     docvec!["-file(\"", path, "\", ", line, ")."]
+}
+
+enum DocCommentKind {
+    Module,
+    Function,
+}
+
+fn doc_attribute<'a>(kind: DocCommentKind, doc_lines: &[EcoString]) -> Document<'a> {
+    let prefix = match kind {
+        DocCommentKind::Module => "?MODULEDOC",
+        DocCommentKind::Function => "?DOC",
+    };
+    let is_multiline_doc_comment = doc_lines.len() > 1;
+    let doc_lines = join(
+        doc_lines.iter().map(|line| {
+            let line = line.replace("\\", "\\\\").replace("\"", "\\\"");
+            docvec!["\"", line, "\\n\""]
+        }),
+        line(),
+    );
+    if is_multiline_doc_comment {
+        let nested_documentation = docvec![line(), doc_lines].nest(INDENT);
+        docvec![prefix, "(", nested_documentation, line(), ")."]
+    } else {
+        docvec![prefix, "(", doc_lines, ")."]
+    }
 }
 
 fn external_fun_args<'a>(args: &'a [TypedArg], env: &mut Env<'a>) -> Document<'a> {
