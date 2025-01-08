@@ -16,6 +16,29 @@
 
 ### Language server
 
+- The language server can now fill in the labels of any function call, even when
+  only some of the arguments are provided. For example:
+
+  ```gleam
+  import gleam/string
+
+  pub fn main() {
+    string.replace("wibble")
+  }
+  ```
+
+  Will be completed to:
+
+  ```gleam
+  import gleam/string
+
+  pub fn main() {
+    string.replace("wibble", each: todo, with: todo)
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 ### Bug fixes
@@ -27,3 +50,8 @@
 - Fixed a bug where build tool could fail to add new dependencies when
   dependencies with optional dependencies are present in the manifest.
   ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where a block expression containing a singular record update would
+  produce invalid erlang.
+  ([yoshi](https://github.com/joshi-monster))
+  
