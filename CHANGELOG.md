@@ -14,6 +14,11 @@
 
 ### Build tool
 
+- `gleam new` now has refined project name validation - rather than failing on
+  invalid project names, it suggests a valid alternative and prompts for
+  confirmation to use it.
+  ([Diemo Gebhardt](https://github.com/diemogebhardt))
+
 ### Language server
 
 - The language server can now fill in the labels of any function call, even when
@@ -39,6 +44,63 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The language server now suggests a code action to pattern match on a
+  function's argument. For example:
+
+  ```gleam
+  pub type Pokemon {
+    Pokemon(pokedex_number: Int, name: String)
+  }
+
+  pub fn to_string(pokemon: Pokemon) {
+    //             ^ If you put your cursor over the argument
+    todo
+  }
+  ```
+
+  Triggering the code action on the `pokemon` argument will generate the
+  following code for you:
+
+  ```gleam
+  pub type Pokemon {
+    Pokemon(pokedex_number: Int, name: String)
+  }
+
+  pub fn to_string(pokemon: Pokemon) {
+    let Pokemon(pokedex_number:, name:) = pokemon
+    todo
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server now suggests a code action to pattern match on a variable.
+  For example:
+
+  ```gleam
+  pub fn main() {
+    let result = list.first(a_list)
+    //  ^ If you put your cursor over the variable
+    todo
+  }
+  ```
+
+  Triggering the code action on the `result` variable will generate the
+  following code for you:
+
+  ```gleam
+  pub fn main() {
+    let result = list.first(a_list)
+    case result {
+      Ok(value) -> todo
+      Error(value) -> todo
+    }
+    todo
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 ### Bug fixes
@@ -47,6 +109,10 @@
   code for use expressions ending with a trailing comma.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a bug where floats outside of Erlang's floating point range were not
+  causing errors.
+  ([shayan](https://github.com/massivefermion))
+
 - Fixed a bug where build tool could fail to add new dependencies when
   dependencies with optional dependencies are present in the manifest.
   ([Louis Pilfold](https://github.com/lpil))
@@ -54,4 +120,4 @@
 - Fixed a bug where a block expression containing a singular record update would
   produce invalid erlang.
   ([yoshi](https://github.com/joshi-monster))
-  
+
