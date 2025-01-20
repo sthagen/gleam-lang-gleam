@@ -1485,9 +1485,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             let typed_clause = self.infer_clause(clause, &typed_subjects);
             all_clauses_panic = all_clauses_panic && self.previous_panics;
 
-            if let Err(e) = unify(return_type.clone(), typed_clause.then.type_())
-                .map_err(|e| e.case_clause_mismatch().into_error(typed_clause.location()))
-            {
+            if let Err(e) = unify(return_type.clone(), typed_clause.then.type_()).map_err(|e| {
+                e.case_clause_mismatch(typed_clause.location)
+                    .into_error(typed_clause.then.type_defining_location())
+            }) {
                 self.problems.error(e);
             }
             typed_clauses.push(typed_clause);
@@ -1652,8 +1653,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 let constructor = self.infer_value_constructor(&None, &name, &location)?;
 
                 // We cannot support all values in guard expressions as the BEAM does not
-                match &constructor.variant {
-                    ValueConstructorVariant::LocalVariable { .. } => (),
+                let definition_location = match &constructor.variant {
+                    ValueConstructorVariant::LocalVariable { location, .. } => *location,
                     ValueConstructorVariant::ModuleFn { .. }
                     | ValueConstructorVariant::Record { .. } => {
                         return Err(Error::NonLocalClauseGuardVariable { location, name });
@@ -1669,6 +1670,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     location,
                     name,
                     type_: constructor.type_,
+                    definition_location,
                 })
             }
 
@@ -2465,6 +2467,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 type_: record_type,
                 variant: ValueConstructorVariant::LocalVariable {
                     location: record_location,
+                    origin: VariableOrigin::Generated,
                 },
             },
             name: RECORD_UPDATE_VARIABLE.into(),
@@ -3669,7 +3672,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
             for (arg, t) in args.iter().zip(args.iter().map(|arg| arg.type_.clone())) {
                 match &arg.names {
-                    ArgNames::Named { name, .. } | ArgNames::NamedLabelled { name, .. } => {
+                    ArgNames::Named { name, location }
+                    | ArgNames::NamedLabelled {
+                        name,
+                        name_location: location,
+                        ..
+                    } => {
                         // Check that this name has not already been used for
                         // another argument
                         if !argument_names.insert(name) {
@@ -3680,9 +3688,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         }
 
                         // Insert a variable for the argument into the environment
-                        body_typer
-                            .environment
-                            .insert_local_variable(name.clone(), arg.location, t);
+                        body_typer.environment.insert_local_variable(
+                            name.clone(),
+                            *location,
+                            VariableOrigin::Variable(name.clone()),
+                            t,
+                        );
 
                         if !body.first().is_placeholder() {
                             // Register the variable in the usage tracker so that we
