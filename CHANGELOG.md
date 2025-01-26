@@ -250,6 +250,17 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- `Unqualify` Action now get triggered when hovering over the module name
+  for record value constructor.
+  For example:
+
+  ```gleam
+  pub fn main() {
+    let my_option = option.Some(1)
+    //                 ^ would trigger "Unqualify option.Some"
+  }
+  ```
+  ([Jiangda Wang](https://github.com/Frank-III))
 
 ### Formatter
 
@@ -278,3 +289,7 @@
 - Fixed a bug where the "Extract variable" code action would erroneously extract
   a pipeline step as a variable.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where variables bound in `let assert` assignments would be allowed
+  to be used in the custom panic message.
+  ([Surya Rose](https://github.com/GearsDatapacks))
