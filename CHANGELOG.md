@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+Dedicated to the memory of Len Pilfold.
+
+## v1.8.0-rc1 - 2025-02-03
 
 ### Compiler
 
@@ -63,6 +65,11 @@
     │   ^
   The custom type variant constructor `X` is not in scope here.
   ```
+
+  ([Roeeeee](https://github.com/5c077m4n))
+
+- Erlang `file` module attributes now use paths relative to the root.
+  ([Kasim](https://github.com/oneness))
 
 ### Build tool
 
