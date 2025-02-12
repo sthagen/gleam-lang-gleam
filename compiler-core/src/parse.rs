@@ -4128,7 +4128,6 @@ pub fn make_call(
     start: u32,
     end: u32,
 ) -> Result<UntypedExpr, ParseError> {
-    let mut num_holes = 0;
     let mut hole_location = None;
 
     let args = args
@@ -4141,9 +4140,11 @@ pub fn make_call(
                 name,
                 label,
             } => {
-                num_holes += 1;
-                hole_location = Some(arg_location);
+                if hole_location.is_some() {
+                    return parse_error(ParseErrorType::TooManyArgHoles, SrcSpan { start, end });
+                }
 
+                hole_location = Some(arg_location);
                 if name != "_" {
                     return parse_error(
                         ParseErrorType::UnexpectedToken {
@@ -4167,34 +4168,36 @@ pub fn make_call(
             }
         })
         .collect::<Result<_, _>>()?;
+
     let call = UntypedExpr::Call {
         location: SrcSpan { start, end },
         fun: Box::new(fun),
         arguments: args,
     };
-    match num_holes {
+
+    match hole_location {
         // A normal call
-        0 => Ok(call),
+        None => Ok(call),
 
         // An anon function using the capture syntax run(_, 1, 2)
-        1 => Ok(UntypedExpr::Fn {
+        Some(hole_location) => Ok(UntypedExpr::Fn {
             location: call.location(),
             end_of_head_byte_index: call.location().end,
-            kind: FunctionLiteralKind::Capture,
+            kind: FunctionLiteralKind::Capture {
+                hole: hole_location,
+            },
             arguments: vec![Arg {
-                location: hole_location.expect("At least a capture hole"),
+                location: hole_location,
                 annotation: None,
                 names: ArgNames::Named {
                     name: CAPTURE_VARIABLE.into(),
-                    location: hole_location.expect("At least a capture hole"),
+                    location: hole_location,
                 },
                 type_: (),
             }],
             body: vec1![Statement::Expression(call)],
             return_annotation: None,
         }),
-
-        _ => parse_error(ParseErrorType::TooManyArgHoles, SrcSpan { start, end }),
     }
 }
 

@@ -5,8 +5,8 @@ use crate::{
         self,
         visit::{visit_typed_call_arg, visit_typed_pattern_call_arg, Visit as _},
         AssignName, AssignmentKind, CallArg, FunctionLiteralKind, ImplicitCallArgOrigin, Pattern,
-        SrcSpan, TodoKind, TypedArg, TypedAssignment, TypedExpr, TypedModuleConstant, TypedPattern,
-        TypedStatement, TypedUse,
+        PipelineAssignmentKind, SrcSpan, TodoKind, TypedArg, TypedAssignment, TypedExpr,
+        TypedModuleConstant, TypedPattern, TypedPipelineAssignment, TypedStatement, TypedUse,
     },
     build::{Located, Module},
     io::{BeamCompiler, CommandExecutor, FileSystemReader, FileSystemWriter},
@@ -1151,7 +1151,7 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
         // If the function doesn't have a head, we can't annotate it
         let location = match kind {
             // Function captures don't need any type annotations
-            FunctionLiteralKind::Capture => return,
+            FunctionLiteralKind::Capture { .. } => return,
             FunctionLiteralKind::Anonymous { head } => head,
             FunctionLiteralKind::Use { location } => location,
         };
@@ -2190,16 +2190,17 @@ pub fn code_action_convert_unqualified_constructor_to_qualified(
     actions.extend(new_actions);
 }
 
-/// Builder for code action to apply the desugar use expression.
+/// Builder for code action to apply the convert from use action, turning a use
+/// expression into a regular function call.
 ///
-pub struct DesugarUse<'a> {
+pub struct ConvertFromUse<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
     edits: TextEdits<'a>,
     selected_use: Option<&'a TypedUse>,
 }
 
-impl<'a> DesugarUse<'a> {
+impl<'a> ConvertFromUse<'a> {
     pub fn new(
         module: &'a Module,
         line_numbers: &'a LineNumbers,
@@ -2381,7 +2382,7 @@ impl<'a> DesugarUse<'a> {
     }
 }
 
-impl<'ast> ast::visit::Visit<'ast> for DesugarUse<'ast> {
+impl<'ast> ast::visit::Visit<'ast> for ConvertFromUse<'ast> {
     fn visit_typed_use(&mut self, use_: &'ast TypedUse) {
         // We only want to take into account the innermost use we find ourselves
         // into, so we can't stop at the first use we find (the outermost one)
@@ -2414,9 +2415,9 @@ impl<'ast> ast::visit::Visit<'ast> for DesugarUse<'ast> {
     }
 }
 
-/// Builder for code action to apply the turn into use expression.
+/// Builder for code action to apply the convert to use action.
 ///
-pub struct TurnIntoUse<'a> {
+pub struct ConvertToUse<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
     edits: TextEdits<'a>,
@@ -2434,7 +2435,7 @@ struct CallLocations {
     callback_body_span: SrcSpan,
 }
 
-impl<'a> TurnIntoUse<'a> {
+impl<'a> ConvertToUse<'a> {
     pub fn new(
         module: &'a Module,
         line_numbers: &'a LineNumbers,
@@ -2533,7 +2534,7 @@ impl<'a> TurnIntoUse<'a> {
     }
 }
 
-impl<'ast> ast::visit::Visit<'ast> for TurnIntoUse<'ast> {
+impl<'ast> ast::visit::Visit<'ast> for ConvertToUse<'ast> {
     fn visit_typed_function(&mut self, fun: &'ast ast::TypedFunction) {
         // The cursor has to be inside the last statement of the function to
         // offer the code action.
@@ -2761,12 +2762,17 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
     fn visit_typed_expr_pipeline(
         &mut self,
         _location: &'ast SrcSpan,
-        assignments: &'ast [ast::TypedPipelineAssignment],
+        first_value: &'ast TypedPipelineAssignment,
+        assignments: &'ast [(TypedPipelineAssignment, PipelineAssignmentKind)],
         finally: &'ast TypedExpr,
+        _finally_kind: &'ast PipelineAssignmentKind,
     ) {
         // When visiting the assignments or the final pipeline call we want to
         // keep track of out position so that we can avoid extracting those.
-        for assignment in assignments {
+        let all_assignments =
+            iter::once(first_value).chain(assignments.iter().map(|(assignment, _kind)| assignment));
+
+        for assignment in all_assignments {
             self.at_position(ExtractVariablePosition::PipelineCall, |this| {
                 this.visit_typed_pipeline_assignment(assignment);
             });
@@ -2839,7 +2845,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
             // If a fn is a capture `int.wibble(1, _)` its body will consist of
             // just a single expression statement. When visiting we must record
             // we're inside a capture body.
-            FunctionLiteralKind::Capture => Some(ExtractVariablePosition::InsideCaptureBody),
+            FunctionLiteralKind::Capture { .. } => Some(ExtractVariablePosition::InsideCaptureBody),
             FunctionLiteralKind::Anonymous { .. } | FunctionLiteralKind::Use { .. } => {
                 self.position
             }
@@ -3272,6 +3278,277 @@ impl<'a> DecoderPrinter<'a> {
             variable = field.label.variable_name(),
             field = field.label.field_key(),
             module = self.printer.print_module(DECODE_MODULE)
+        )
+    }
+}
+
+/// Builder for code action to apply the "Generate JSON encoder" action.
+///
+pub struct GenerateJsonEncoder<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    printer: Printer<'a>,
+    actions: &'a mut Vec<CodeAction>,
+}
+
+const JSON_MODULE: &str = "gleam/json";
+const JSON_PACKAGE_NAME: &str = "gleam_json";
+
+impl<'a> GenerateJsonEncoder<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+        actions: &'a mut Vec<CodeAction>,
+    ) -> Self {
+        let printer = Printer::new(&module.ast.names);
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            printer,
+            actions,
+        }
+    }
+
+    pub fn code_actions(&mut self) {
+        self.visit_typed_module(&self.module.ast);
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for GenerateJsonEncoder<'ast> {
+    fn visit_typed_custom_type(&mut self, custom_type: &'ast ast::TypedCustomType) {
+        let range = self.edits.src_span_to_lsp_range(custom_type.location);
+        if !overlaps(self.params.range, range) {
+            return;
+        }
+
+        // For now, we only generate json encoders for types with one variant.
+        let constructor = match custom_type.constructors.as_slice() {
+            [constructor] => constructor,
+            _ => return,
+        };
+
+        let record_name = custom_type.name.to_snake_case();
+        let name = eco_format!("encode_{record_name}");
+
+        let Some(fields): Option<Vec<_>> = constructor
+            .arguments
+            .iter()
+            .map(|argument| {
+                Some(RecordField {
+                    label: RecordLabel::Labeled(
+                        argument.label.as_ref().map(|(_, name)| name.as_str())?,
+                    ),
+                    type_: &argument.type_,
+                })
+            })
+            .collect()
+        else {
+            return;
+        };
+
+        let mut encoder_printer = EncoderPrinter::new(
+            &self.module.ast.names,
+            custom_type.name.clone(),
+            self.module.name.clone(),
+        );
+
+        let encoders = fields
+            .iter()
+            .map(|field| encoder_printer.encode_field(&record_name, field, 4))
+            .join(",\n");
+
+        let json_type = self.printer.print_type(&Type::Named {
+            publicity: ast::Publicity::Public,
+            package: JSON_PACKAGE_NAME.into(),
+            module: JSON_MODULE.into(),
+            name: "Json".into(),
+            args: vec![],
+            inferred_variant: None,
+        });
+        let json_module = self.printer.print_module(JSON_MODULE);
+        let parameters = match custom_type.parameters.len() {
+            0 => EcoString::new(),
+            _ => eco_format!(
+                "({})",
+                custom_type
+                    .parameters
+                    .iter()
+                    .map(|(_, name)| name)
+                    .join(", ")
+            ),
+        };
+
+        let function = format!(
+            "
+
+fn {name}({record_name}: {type_name}{parameters}) -> {json_type} {{
+  {json_module}.object([
+{encoders},
+  ])
+}}",
+            type_name = custom_type.name,
+        );
+
+        self.edits.insert(custom_type.end_position, function);
+        maybe_import(&mut self.edits, self.module, JSON_MODULE);
+
+        CodeActionBuilder::new("Generate JSON encoder")
+            .kind(CodeActionKind::REFACTOR)
+            .preferred(false)
+            .changes(
+                self.params.text_document.uri.clone(),
+                std::mem::take(&mut self.edits.edits),
+            )
+            .push_to(self.actions);
+    }
+}
+
+struct EncoderPrinter<'a> {
+    printer: Printer<'a>,
+    /// The name of the root type we are printing an encoder for
+    type_name: EcoString,
+    /// The module name of the root type we are printing an encoder for
+    type_module: EcoString,
+}
+
+impl<'a> EncoderPrinter<'a> {
+    fn new(names: &'a Names, type_name: EcoString, type_module: EcoString) -> Self {
+        Self {
+            type_name,
+            type_module,
+            printer: Printer::new(names),
+        }
+    }
+
+    fn encoder_for(&mut self, encoded_value: &str, type_: &Type, indent: usize) -> EcoString {
+        let module_name = self.printer.print_module(JSON_MODULE);
+        let is_capture = encoded_value == "_";
+        let maybe_capture = |mut function: EcoString| {
+            if is_capture {
+                function
+            } else {
+                function.push('(');
+                function.push_str(encoded_value);
+                function.push(')');
+                function
+            }
+        };
+
+        if type_.is_bool() {
+            maybe_capture(eco_format!("{module_name}.bool"))
+        } else if type_.is_float() {
+            maybe_capture(eco_format!("{module_name}.float"))
+        } else if type_.is_int() {
+            maybe_capture(eco_format!("{module_name}.int"))
+        } else if type_.is_string() {
+            maybe_capture(eco_format!("{module_name}.string"))
+        } else if let Some(types) = type_.tuple_types() {
+            let (tuple, new_indent) = if is_capture {
+                ("value", indent + 4)
+            } else {
+                (encoded_value, indent + 2)
+            };
+
+            let encoders = types
+                .iter()
+                .enumerate()
+                .map(|(index, type_)| {
+                    self.encoder_for(&format!("{tuple}.{index}"), type_, new_indent)
+                })
+                .collect_vec();
+
+            if is_capture {
+                eco_format!(
+                    "fn(value) {{
+{indent}  {module_name}.preprocessed_array([
+{indent}    {encoders},
+{indent}  ])
+{indent}}}",
+                    indent = " ".repeat(indent),
+                    encoders = encoders.join(&format!(",\n{}", " ".repeat(new_indent))),
+                )
+            } else {
+                eco_format!(
+                    "{module_name}.preprocessed_array([
+{indent}  {encoders},
+{indent}])",
+                    indent = " ".repeat(indent),
+                    encoders = encoders.join(&format!(",\n{}", " ".repeat(new_indent))),
+                )
+            }
+        } else {
+            let type_information = type_.named_type_information();
+            let type_information: Option<(&str, &str, &[Arc<Type>])> =
+                type_information.as_ref().map(|(module, name, arguments)| {
+                    (module.as_str(), name.as_str(), arguments.as_slice())
+                });
+
+            match type_information {
+                Some(("gleam", "List", [element])) => {
+                    eco_format!(
+                        "{module_name}.array({encoded_value}, {map_function})",
+                        map_function = self.encoder_for("_", element, indent)
+                    )
+                }
+                Some(("gleam/option", "Option", [some])) => {
+                    eco_format!(
+                        "case {encoded_value} {{
+{indent}  {none} -> {module_name}.null()
+{indent}  {some}(value) -> {encoder}
+{indent}}}",
+                        indent = " ".repeat(indent),
+                        none = self
+                            .printer
+                            .print_constructor(&"gleam/option".into(), &"None".into()),
+                        some = self
+                            .printer
+                            .print_constructor(&"gleam/option".into(), &"Some".into()),
+                        encoder = self.encoder_for("value", some, indent + 2)
+                    )
+                }
+                Some(("gleam/dict", "Dict", [key, value])) => {
+                    let stringify_function = match key.named_type_information().as_ref().map(
+                        |(module, name, arguments)| {
+                            (module.as_str(), name.as_str(), arguments.as_slice())
+                        },
+                    ) {
+                        Some(("gleam", "String", [])) => "fn(string) { string }",
+                        _ => &format!(
+                            r#"todo as "Function to stringify {}""#,
+                            self.printer.print_type(key)
+                        ),
+                    };
+                    eco_format!(
+                        "{module_name}.dict({encoded_value}, {stringify_function}, {})",
+                        self.encoder_for("_", value, indent)
+                    )
+                }
+                Some((module, name, _)) if module == self.type_module && name == self.type_name => {
+                    maybe_capture(eco_format!("encode_{}", name.to_snake_case()))
+                }
+                _ => eco_format!(
+                    r#"todo as "Encoder for {}""#,
+                    self.printer.print_type(type_)
+                ),
+            }
+        }
+    }
+
+    fn encode_field(
+        &mut self,
+        record_name: &str,
+        field: &RecordField<'_>,
+        indent: usize,
+    ) -> EcoString {
+        let field_name = field.label.variable_name();
+        let encoder = self.encoder_for(&format!("{record_name}.{field_name}"), field.type_, indent);
+
+        eco_format!(
+            r#"{indent}#("{field_name}", {encoder})"#,
+            indent = " ".repeat(indent),
         )
     }
 }
@@ -4008,4 +4285,160 @@ fn is_valid_lowercase_name(name: &str) -> bool {
     }
 
     str_to_keyword(name).is_none()
+}
+
+/// Code action to rewrite a single-step pipeline into a regular function call.
+/// For example: `a |> b(c, _)` would be rewritten as `b(c, a)`.
+///
+pub struct ConvertToFunctionCall<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    locations: Option<ConvertToFunctionCallLocations>,
+}
+
+/// All the different locations the "Convert to function call" code action needs
+/// to properly rewrite a pipeline into a function call.
+///
+struct ConvertToFunctionCallLocations {
+    /// This is the location of the value being piped into a call.
+    ///
+    /// ```gleam
+    ///    [1, 2, 3] |> list.length
+    /// // ^^^^^^^^^ This one here
+    /// ```
+    ///
+    first_value: SrcSpan,
+
+    /// This is the location of the call the value is being piped into.
+    ///
+    /// ```gleam
+    ///    [1, 2, 3] |> list.length
+    /// //              ^^^^^^^^^^^ This one here
+    /// ```
+    ///
+    call: SrcSpan,
+
+    /// This is the kind of desugaring that is taking place when piping
+    /// `first_value` into `call`.
+    ///
+    call_kind: PipelineAssignmentKind,
+}
+
+impl<'a> ConvertToFunctionCall<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            locations: None,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        // If we couldn't find a pipeline to rewrite we don't return any action.
+        let Some(ConvertToFunctionCallLocations {
+            first_value,
+            call,
+            call_kind,
+        }) = self.locations
+        else {
+            return vec![];
+        };
+
+        // We first delete the first value of the pipeline as it's going to be
+        // inlined as a function call argument.
+        self.edits.delete(SrcSpan {
+            start: first_value.start,
+            end: call.start,
+        });
+
+        // Then we have to insert the piped value in the appropriate position.
+        // This will change based on how the pipeline is being desugared, we
+        // know this thanks to the `call_kind`
+        let first_value_text = self
+            .module
+            .code
+            .get(first_value.start as usize..first_value.end as usize)
+            .expect("invalid code span")
+            .to_string();
+
+        match call_kind {
+            // When piping into a `_` we replace the hole with the piped value:
+            // `[1, 2] |> map(_, todo)` becomes `map([1, 2], todo)`.
+            PipelineAssignmentKind::Hole { hole } => self.edits.replace(hole, first_value_text),
+
+            // When piping is desguared as a function call we need to add the
+            // missing parentheses:
+            // `[1, 2] |> length` becomes `length([1, 2])`
+            PipelineAssignmentKind::FunctionCall => {
+                self.edits.insert(call.end, format!("({first_value_text})"))
+            }
+
+            // When the piped value is inserted as the first argument there's two
+            // possible scenarios:
+            // - there's a second argument as well: in that case we insert it
+            //   before the second arg and add a comma
+            // - there's no other argument: `[1, 2] |> length()` becomes
+            //   `length([1, 2])`, we insert the value between the empty
+            //   parentheses
+            PipelineAssignmentKind::FirstArgument {
+                second_argument: Some(SrcSpan { start, .. }),
+            } => self.edits.insert(start, format!("{first_value_text}, ")),
+            PipelineAssignmentKind::FirstArgument {
+                second_argument: None,
+            } => self.edits.insert(call.end - 1, first_value_text),
+        }
+
+        let mut action = Vec::with_capacity(1);
+        CodeActionBuilder::new("Convert to function call")
+            .kind(CodeActionKind::REFACTOR_REWRITE)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
+            .preferred(false)
+            .push_to(&mut action);
+        action
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for ConvertToFunctionCall<'ast> {
+    fn visit_typed_expr_pipeline(
+        &mut self,
+        location: &'ast SrcSpan,
+        first_value: &'ast TypedPipelineAssignment,
+        assignments: &'ast [(TypedPipelineAssignment, PipelineAssignmentKind)],
+        finally: &'ast TypedExpr,
+        finally_kind: &'ast PipelineAssignmentKind,
+    ) {
+        let pipeline_range = self.edits.src_span_to_lsp_range(*location);
+        if within(self.params.range, pipeline_range) {
+            // We will always desugar the pipeline's first step. If there's no
+            // intermediate assignment it means we're dealing with a single step
+            // pipeline and the call is `finally`.
+            let (call, call_kind) = assignments
+                .first()
+                .map(|(call, kind)| (call.location, *kind))
+                .unwrap_or_else(|| (finally.location(), *finally_kind));
+
+            self.locations = Some(ConvertToFunctionCallLocations {
+                first_value: first_value.location,
+                call,
+                call_kind,
+            });
+
+            ast::visit::visit_typed_expr_pipeline(
+                self,
+                location,
+                first_value,
+                assignments,
+                finally,
+                finally_kind,
+            );
+        }
+    }
 }

@@ -1,5 +1,5 @@
 use bimap::BiMap;
-use ecow::EcoString;
+use ecow::{eco_format, EcoString};
 use im::HashMap;
 use std::{collections::HashSet, sync::Arc};
 
@@ -381,6 +381,21 @@ impl<'a> Printer<'a> {
                 self.print_arguments(elems, buffer, print_mode);
                 buffer.push(')');
             }
+        }
+    }
+
+    pub fn print_constructor(&mut self, module: &EcoString, name: &EcoString) -> EcoString {
+        let (module, name) = match self.names.named_constructor(module, name) {
+            NameContextInformation::Qualified(module, name) => (Some(module), name),
+            NameContextInformation::Unqualified(name) => (None, name),
+            NameContextInformation::Unimported(name) => {
+                (Some(module.split('/').last().unwrap_or(module)), name)
+            }
+        };
+
+        match module {
+            Some(module) => eco_format!("{module}.{name}"),
+            None => name.into(),
         }
     }
 
