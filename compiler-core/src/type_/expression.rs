@@ -384,9 +384,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 label_location,
                 label,
                 container,
-                ..
+                location,
             } => Ok(self.infer_field_access(
                 *container,
+                location,
                 label,
                 label_location,
                 FieldAccessUsage::Other,
@@ -975,7 +976,22 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     fn infer_field_access(
         &mut self,
         container: UntypedExpr,
+
+        // The SrcSpan of the entire field access:
+        // ```gleam
+        //    wibble.wobble
+        // // ^^^^^^^^^^^^^ This
+        // ```
+        //
+        location: SrcSpan,
         label: EcoString,
+
+        // The SrcSpan of the selection label:
+        // ```gleam
+        //    wibble.wobble
+        // // ^^^^^^ This
+        // ```
+        //
         label_location: SrcSpan,
         usage: FieldAccessUsage,
     ) -> TypedExpr {
@@ -1011,7 +1027,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             (_, Some((Err(module_access_err), false))) => {
                 self.problems.error(module_access_err);
                 TypedExpr::Invalid {
-                    location: label_location,
+                    location,
                     type_: self.new_unbound_var(),
                 }
             }
@@ -1030,7 +1046,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         record: Box::new(record),
                     },
                     Err(_) => TypedExpr::Invalid {
-                        location: label_location,
+                        location,
                         type_: self.new_unbound_var(),
                     },
                 }
@@ -2177,6 +2193,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             .and_then(|ma| match ma {
                 TypedExpr::ModuleSelect {
                     location,
+                    field_start: _,
                     type_,
                     label,
                     module_name,
@@ -2217,6 +2234,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         module_location: &SrcSpan,
         select_location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
+        let location = module_location.merge(&select_location);
+
         let (module_name, constructor) = {
             let (_, module) = self
                 .environment
@@ -2235,10 +2254,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     .get_public_value(&label)
                     .ok_or_else(|| Error::UnknownModuleValue {
                         name: label.clone(),
-                        location: SrcSpan {
-                            start: module_location.end,
-                            end: select_location.end,
-                        },
+                        location: select_location,
                         module_name: module.name.clone(),
                         value_constructors: module.public_value_names(),
                         type_with_same_name: module.get_public_type(&label).is_some(),
@@ -2280,9 +2296,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         };
 
         Ok(TypedExpr::ModuleSelect {
+            location,
+            field_start: select_location.start,
             label,
             type_: Arc::clone(&type_),
-            location: select_location,
             module_name,
             module_alias: module_alias.clone(),
             constructor,
@@ -2992,7 +3009,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 // TODO: resvisit this. It is rather awkward at present how we
                 // have to convert to this other data structure.
                 let fun = match &module {
-                    Some((module_alias, _)) => {
+                    Some((module_alias, module_location)) => {
                         let type_ = Arc::clone(&constructor.type_);
                         let module_name = self
                             .environment
@@ -3013,12 +3030,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         };
 
                         TypedExpr::ModuleSelect {
+                            location: module_location.merge(&location),
+                            field_start: location.start,
                             label: name.clone(),
                             module_alias: module_alias.clone(),
                             module_name,
                             type_,
                             constructor: module_value_constructor,
-                            location,
                         }
                     }
 
@@ -3282,9 +3300,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 label,
                 container,
                 label_location,
-                ..
+                location,
             } => Ok(self.infer_field_access(
                 *container,
+                location,
                 label,
                 label_location,
                 FieldAccessUsage::MethodCall,

@@ -211,9 +211,11 @@ pub trait Visit<'ast> {
         visit_typed_expr_record_access(self, location, type_, label, index, record);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn visit_typed_expr_module_select(
         &mut self,
         location: &'ast SrcSpan,
+        field_start: &'ast u32,
         type_: &'ast Arc<Type>,
         label: &'ast EcoString,
         module_name: &'ast EcoString,
@@ -223,6 +225,7 @@ pub trait Visit<'ast> {
         visit_typed_expr_module_select(
             self,
             location,
+            field_start,
             type_,
             label,
             module_name,
@@ -759,6 +762,7 @@ where
         } => v.visit_typed_expr_record_access(location, type_, label, index, record),
         TypedExpr::ModuleSelect {
             location,
+            field_start,
             type_,
             label,
             module_name,
@@ -766,6 +770,7 @@ where
             constructor,
         } => v.visit_typed_expr_module_select(
             location,
+            field_start,
             type_,
             label,
             module_name,
@@ -986,9 +991,11 @@ pub fn visit_typed_expr_record_access<'a, V>(
     v.visit_typed_expr(record);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn visit_typed_expr_module_select<'a, V>(
     _v: &mut V,
     _location: &'a SrcSpan,
+    _field_start: &'a u32,
     _typ: &'a Arc<Type>,
     _label: &'a EcoString,
     _module_name: &'a EcoString,

@@ -98,6 +98,7 @@ pub enum TypedExpr {
 
     ModuleSelect {
         location: SrcSpan,
+        field_start: u32,
         type_: Arc<Type>,
         label: EcoString,
         module_name: EcoString,
@@ -194,8 +195,26 @@ impl TypedExpr {
             | Self::Panic { .. }
             | Self::Float { .. }
             | Self::String { .. }
-            | Self::ModuleSelect { .. }
             | Self::Invalid { .. } => self.self_if_contains_location(byte_index),
+
+            Self::ModuleSelect {
+                location,
+                field_start,
+                ..
+            } => {
+                // We want to return the `ModuleSelect` only when we're hovering
+                // over the selected field, not on the module part.
+                let field_span = SrcSpan {
+                    start: *field_start,
+                    end: location.end,
+                };
+
+                if field_span.contains(byte_index) {
+                    Some(self.into())
+                } else {
+                    None
+                }
+            }
 
             Self::Todo { kind, .. } => match kind {
                 TodoKind::Keyword => self.self_if_contains_location(byte_index),
@@ -327,6 +346,134 @@ impl TypedExpr {
                 .find_map(|arg| arg.find_node(byte_index))
                 .or_else(|| record.find_node(byte_index))
                 .or_else(|| self.self_if_contains_location(byte_index)),
+        }
+    }
+
+    pub fn find_statement(&self, byte_index: u32) -> Option<&TypedStatement> {
+        match self {
+            Self::Var { .. }
+            | Self::Int { .. }
+            | Self::Panic { .. }
+            | Self::Float { .. }
+            | Self::String { .. }
+            | Self::ModuleSelect { .. }
+            | Self::Invalid { .. }
+            | Self::Todo { .. } => None,
+
+            Self::Pipeline {
+                first_value,
+                assignments,
+                finally,
+                ..
+            } => first_value
+                .find_statement(byte_index)
+                .or_else(|| {
+                    assignments
+                        .iter()
+                        .find_map(|(e, _)| e.find_statement(byte_index))
+                })
+                .or_else(|| finally.find_statement(byte_index)),
+
+            // Exit the search and return None if during iteration a statement
+            // is found with a start index beyond the index under search.
+            Self::Block { statements, .. } => {
+                for statement in statements {
+                    if statement.location().start > byte_index {
+                        break;
+                    }
+
+                    if let Some(located) = statement.find_statement(byte_index) {
+                        return Some(located);
+                    }
+                }
+
+                None
+            }
+
+            // Exit the search and return the encompassing type (e.g., list or tuple)
+            // if during iteration, an element is encountered with a start index
+            // beyond the index under search.
+            Self::Tuple {
+                elems: expressions, ..
+            } => {
+                for expression in expressions {
+                    if expression.location().start > byte_index {
+                        break;
+                    }
+
+                    if let Some(located) = expression.find_statement(byte_index) {
+                        return Some(located);
+                    }
+                }
+
+                None
+            }
+
+            Self::List {
+                elements: expressions,
+                tail,
+                ..
+            } => {
+                for expression in expressions {
+                    if expression.location().start > byte_index {
+                        break;
+                    }
+
+                    if let Some(located) = expression.find_statement(byte_index) {
+                        return Some(located);
+                    }
+                }
+
+                if let Some(tail) = tail {
+                    if let Some(node) = tail.find_statement(byte_index) {
+                        return Some(node);
+                    }
+                }
+                None
+            }
+
+            Self::NegateBool { value, .. } | Self::NegateInt { value, .. } => {
+                value.find_statement(byte_index)
+            }
+
+            Self::Fn { body, .. } => body.iter().find_map(|s| s.find_statement(byte_index)),
+
+            Self::Call { fun, args, .. } => args
+                .iter()
+                .find_map(|arg| arg.find_statement(byte_index))
+                .or_else(|| fun.find_statement(byte_index)),
+
+            Self::BinOp { left, right, .. } => left
+                .find_statement(byte_index)
+                .or_else(|| right.find_statement(byte_index)),
+
+            Self::Case {
+                subjects, clauses, ..
+            } => subjects
+                .iter()
+                .find_map(|subject| subject.find_statement(byte_index))
+                .or_else(|| {
+                    clauses
+                        .iter()
+                        .find_map(|c| c.then.find_statement(byte_index))
+                }),
+
+            Self::RecordAccess {
+                record: expression, ..
+            }
+            | Self::TupleIndex {
+                tuple: expression, ..
+            } => expression.find_statement(byte_index),
+
+            Self::BitArray { segments, .. } => segments
+                .iter()
+                .find_map(|arg| arg.value.find_statement(byte_index)),
+
+            Self::RecordUpdate { record, args, .. } => args
+                .iter()
+                .filter(|arg| arg.implicit.is_none())
+                .find_map(|arg| arg.find_statement(byte_index))
+                .or_else(|| record.value.find_statement(byte_index)),
         }
     }
 

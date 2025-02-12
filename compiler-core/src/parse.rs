@@ -820,12 +820,12 @@ where
                         }
                     }
 
-                    Some((_, Token::Name { name: label }, end)) => {
+                    Some((label_start, Token::Name { name: label }, end)) => {
                         self.advance();
                         expr = UntypedExpr::FieldAccess {
                             location: SrcSpan { start, end },
                             label_location: SrcSpan {
-                                start: dot_start,
+                                start: label_start,
                                 end,
                             },
                             label,
@@ -833,12 +833,12 @@ where
                         }
                     }
 
-                    Some((_, Token::UpName { name: label }, end)) => {
+                    Some((label_start, Token::UpName { name: label }, end)) => {
                         self.advance();
                         expr = UntypedExpr::FieldAccess {
                             location: SrcSpan { start, end },
                             label_location: SrcSpan {
-                                start: dot_start,
+                                start: label_start,
                                 end,
                             },
                             label,
@@ -4144,7 +4144,7 @@ pub fn make_call(
                     return parse_error(ParseErrorType::TooManyArgHoles, SrcSpan { start, end });
                 }
 
-                hole_location = Some(arg_location);
+                hole_location = Some(discard_location);
                 if name != "_" {
                     return parse_error(
                         ParseErrorType::UnexpectedToken {

@@ -31,6 +31,7 @@ use super::{
     compiler::LspProjectCompiler,
     edits::{add_newlines_after_import, get_import_edit, position_of_first_definition_if_import},
     engine::{overlaps, within},
+    rename::find_variable_references,
     src_span_to_lsp_range, TextEdits,
 };
 
@@ -1257,6 +1258,7 @@ impl<'a> QualifiedToUnqualifiedImportFirstPass<'a> {
             qualified_constructor: None,
         }
     }
+
     fn get_module_import(
         &self,
         module_name: &EcoString,
@@ -1361,6 +1363,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass<'as
     fn visit_typed_expr_module_select(
         &mut self,
         location: &'ast SrcSpan,
+        field_start: &'ast u32,
         type_: &'ast Arc<Type>,
         label: &'ast EcoString,
         module_name: &'ast EcoString,
@@ -1372,9 +1375,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass<'as
         // option.Some
         //  ↑
         // This allows us to offer a code action when hovering over the module name.
-        let expanded_location =
-            SrcSpan::new(location.start - module_name.len() as u32, location.end);
-        let range = src_span_to_lsp_range(expanded_location, &self.line_numbers);
+        let range = src_span_to_lsp_range(*location, &self.line_numbers);
         if overlaps(self.params.range, range) {
             if let ModuleValueConstructor::Record {
                 name: constructor_name,
@@ -1397,6 +1398,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass<'as
         ast::visit::visit_typed_expr_module_select(
             self,
             location,
+            field_start,
             type_,
             label,
             module_name,
@@ -1453,12 +1455,6 @@ pub struct QualifiedToUnqualifiedImportSecondPass<'a> {
     qualified_constructor: QualifiedConstructor<'a>,
 }
 
-enum QualifiedConstructorType {
-    Type,
-    RecordValue,
-    PatternRecord,
-}
-
 impl<'a> QualifiedToUnqualifiedImportSecondPass<'a> {
     pub fn new(
         module: &'a Module,
@@ -1492,29 +1488,11 @@ impl<'a> QualifiedToUnqualifiedImportSecondPass<'a> {
         action
     }
 
-    fn remove_module_qualifier(
-        &mut self,
-        location: SrcSpan,
-        constructor: QualifiedConstructorType,
-    ) {
-        // Find the start and end of the module qualifier
-
-        // The src_span for Type Constructors and Pattern Record Constructors is
-        // : option.Option / option.Some but for Record Constructors is: option.Some
-        //   ↑           ↑   ↑         ↑                                       ↑   ↑
-        // start       end start      end                                    start end
-        let span = if matches!(constructor, QualifiedConstructorType::RecordValue) {
-            SrcSpan::new(
-                location.start - self.qualified_constructor.used_name.len() as u32,
-                location.start + 1,
-            )
-        } else {
-            SrcSpan::new(
-                location.start,
-                location.start + self.qualified_constructor.used_name.len() as u32 + 1, // plus .
-            )
-        };
-        self.edits.delete(span);
+    fn remove_module_qualifier(&mut self, location: SrcSpan) {
+        self.edits.delete(SrcSpan {
+            start: location.start,
+            end: location.start + self.qualified_constructor.used_name.len() as u32 + 1, // plus .
+        })
     }
 
     fn edit_import(&mut self) {
@@ -1692,7 +1670,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
             } = &self.qualified_constructor;
 
             if !layer.is_value() && used_name == module_name && name == constructor {
-                self.remove_module_qualifier(*location, QualifiedConstructorType::Type);
+                self.remove_module_qualifier(*location);
             }
         }
         ast::visit::visit_type_ast_constructor(self, location, module, name, arguments);
@@ -1701,6 +1679,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
     fn visit_typed_expr_module_select(
         &mut self,
         location: &'ast SrcSpan,
+        field_start: &'ast u32,
         type_: &'ast Arc<Type>,
         label: &'ast EcoString,
         module_name: &'ast EcoString,
@@ -1716,12 +1695,13 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
             } = &self.qualified_constructor;
 
             if layer.is_value() && used_name == module_alias && name == constructor {
-                self.remove_module_qualifier(*location, QualifiedConstructorType::RecordValue);
+                self.remove_module_qualifier(*location);
             }
         }
         ast::visit::visit_typed_expr_module_select(
             self,
             location,
+            field_start,
             type_,
             label,
             module_name,
@@ -1750,10 +1730,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
                 } = &self.qualified_constructor;
 
                 if layer.is_value() && used_name == module_alias && name == constructor {
-                    self.remove_module_qualifier(
-                        *location,
-                        QualifiedConstructorType::PatternRecord,
-                    );
+                    self.remove_module_qualifier(*location);
                 }
             }
         }
@@ -4440,5 +4417,127 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertToFunctionCall<'ast> {
                 finally_kind,
             );
         }
+    }
+}
+
+/// Builder for code action to inline a variable.
+///
+pub struct InlineVariable<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    actions: Vec<CodeAction>,
+}
+
+impl<'a> InlineVariable<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            actions: Vec::new(),
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        self.actions
+    }
+
+    fn maybe_inline(&mut self, location: SrcSpan) {
+        let variable_location =
+            match find_variable_references(&self.module.ast, location).as_slice() {
+                [only_reference] => *only_reference,
+                _ => return,
+            };
+
+        let Some(ast::Statement::Assignment(assignment)) =
+            self.module.ast.find_statement(location.start)
+        else {
+            return;
+        };
+
+        // If the assignment does not simple bind a variable, for example:
+        // ```gleam
+        // let #(first, second, third)
+        // io.println(first)
+        // //         ^ Inline here
+        // ```
+        // We can't inline it.
+        if !matches!(assignment.pattern, Pattern::Variable { .. }) {
+            return;
+        }
+
+        let value_location = assignment.value.location();
+        let value = self
+            .module
+            .code
+            .get(value_location.start as usize..value_location.end as usize)
+            .expect("Span is valid");
+
+        self.edits.replace(variable_location, value.into());
+
+        let mut location = assignment.location;
+
+        let chars = self.module.code.chars();
+        let mut chars = chars.skip(assignment.location.end as usize);
+        // Delete any whitespace after the removed statement
+        while chars.next().is_some_and(char::is_whitespace) {
+            location.end += 1;
+        }
+
+        self.edits.delete(location);
+
+        CodeActionBuilder::new("Inline variable")
+            .kind(CodeActionKind::REFACTOR_INLINE)
+            .changes(
+                self.params.text_document.uri.clone(),
+                std::mem::take(&mut self.edits.edits),
+            )
+            .preferred(false)
+            .push_to(&mut self.actions);
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for InlineVariable<'ast> {
+    fn visit_typed_expr_var(
+        &mut self,
+        location: &'ast SrcSpan,
+        constructor: &'ast ValueConstructor,
+        _name: &'ast EcoString,
+    ) {
+        let range = self.edits.src_span_to_lsp_range(*location);
+
+        if !overlaps(self.params.range, range) {
+            return;
+        }
+
+        let type_::ValueConstructorVariant::LocalVariable { location, .. } = &constructor.variant
+        else {
+            return;
+        };
+
+        self.maybe_inline(*location);
+    }
+
+    fn visit_typed_pattern_variable(
+        &mut self,
+        location: &'ast SrcSpan,
+        _name: &'ast EcoString,
+        _type: &'ast Arc<Type>,
+        _origin: &'ast VariableOrigin,
+    ) {
+        let range = self.edits.src_span_to_lsp_range(*location);
+
+        if !overlaps(self.params.range, range) {
+            return;
+        }
+
+        self.maybe_inline(*location);
     }
 }
