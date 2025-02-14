@@ -77,6 +77,7 @@ const PATTERN_MATCH_ON_VARIABLE: &str = "Pattern match on variable";
 const GENERATE_FUNCTION: &str = "Generate function";
 const CONVERT_TO_FUNCTION_CALL: &str = "Convert to function call";
 const INLINE_VARIABLE: &str = "Inline variable";
+const CONVERT_TO_PIPE: &str = "Convert to pipe";
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range:expr $(,)?) => {
@@ -5326,5 +5327,148 @@ pub fn main(result) {
         INLINE_VARIABLE,
         TestProject::for_source(src).add_module("gleam/io", "pub fn println(value) {}"),
         find_position_of("message").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_function_call_on_first_argument() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble, woo)
+}
+",
+        find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_function_call_on_second_argument() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble, woo)
+}
+",
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_function_call_on_function_name_extracts_first_argument() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble, woo)
+}
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_function_call_with_labelled_arguments_inserts_hole() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble: 1, woo: 2)
+}
+",
+        find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_function_call_with_labelled_arguments_inserts_hole_2() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble: 1, woo: 2)
+}
+",
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_function_call_with_shorthand_labelled_argument_inserts_hole() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble:, woo:)
+}
+",
+        find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_function_call_with_shorthand_labelled_argument_inserts_hole_2() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble:, woo:)
+}
+",
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_on_first_step_of_pipeline() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble, woo) |> wobble
+}
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_not_allowed_on_other_pipeline_steps() {
+    assert_no_code_actions!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble) |> wobble(woo)
+}
+",
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_function_returning_other_function() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble)(woo)
+}
+",
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_pipes_the_outermost_argument() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble(woo))
+}
+",
+        find_position_of("wobble").to_selection()
     );
 }
