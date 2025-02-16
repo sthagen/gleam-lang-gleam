@@ -146,6 +146,10 @@
   in guards on the JavaScript target.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- Fixed a bug where the "Generate function" code action would ignore the
+  provided labels.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ## v1.8.1 - 2025-02-11
 
 ### Bug fixes
