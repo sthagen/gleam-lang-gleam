@@ -1,14 +1,17 @@
 use crate::{
     analyse::TargetSupport,
     build::{
-        package_compiler, package_compiler::PackageCompiler, package_loader::StaleTracker,
-        project_compiler, telemetry::Telemetry, Mode, Module, Origin, Package, Target,
+        package_compiler::{self, PackageCompiler},
+        package_loader::StaleTracker,
+        project_compiler,
+        telemetry::Telemetry,
+        Mode, Module, Origin, Package, Target,
     },
     codegen::{self, ErlangApp},
     config::PackageConfig,
     dep_tree,
-    error::{FileIoAction, FileKind},
-    io::{BeamCompiler, CommandExecutor, FileSystemReader, FileSystemWriter, Stdio},
+    error::{FileIoAction, FileKind, ShellCommandFailureReason},
+    io::{BeamCompiler, Command, CommandExecutor, FileSystemReader, FileSystemWriter, Stdio},
     manifest::{ManifestPackage, ManifestPackageSource},
     metadata,
     paths::{self, ProjectPaths},
@@ -358,34 +361,37 @@ where
         self.io.mkdir(&package_build)?;
         self.io.copy_dir(&package, &package_build)?;
 
-        let env = [
-            ("ERL_LIBS", "../*/ebin".into()),
-            ("REBAR_BARE_COMPILER_OUTPUT_DIR", package_build.to_string()),
-            ("REBAR_PROFILE", "prod".into()),
-            ("REBAR_SKIP_PROJECT_PLUGINS", "true".into()),
-            ("TERM", "dumb".into()),
+        let env = vec![
+            ("ERL_LIBS".to_string(), "../*/ebin".to_string()),
+            (
+                "REBAR_BARE_COMPILER_OUTPUT_DIR".to_string(),
+                package_build.to_string(),
+            ),
+            ("REBAR_PROFILE".to_string(), "prod".to_string()),
+            ("REBAR_SKIP_PROJECT_PLUGINS".to_string(), "true".to_string()),
+            ("TERM".to_string(), "dumb".to_string()),
         ];
-        let args = [
+        let args = vec![
             "bare".into(),
             "compile".into(),
             "--paths".into(),
             "../*/ebin".into(),
         ];
 
-        let status = self.io.exec(
-            REBAR_EXECUTABLE,
-            &args,
-            &env,
-            Some(&package_build),
-            self.subprocess_stdio,
-        )?;
+        let status = self.io.exec(Command {
+            program: REBAR_EXECUTABLE.into(),
+            args,
+            env,
+            cwd: Some(package_build),
+            stdio: self.subprocess_stdio,
+        })?;
 
         if status == 0 {
             Ok(())
         } else {
             Err(Error::ShellCommand {
                 program: "rebar3".into(),
-                err: None,
+                reason: ShellCommandFailureReason::Unknown,
             })
         }
     }
@@ -448,29 +454,30 @@ where
             }
         }
 
-        let env = [
-            ("MIX_BUILD_PATH", mix_path(&mix_build_dir)),
-            ("MIX_ENV", mix_target.into()),
-            ("MIX_QUIET", "1".into()),
-            ("TERM", "dumb".into()),
+        let env = vec![
+            ("MIX_BUILD_PATH".to_string(), mix_path(&mix_build_dir)),
+            ("MIX_ENV".to_string(), mix_target.to_string()),
+            ("MIX_QUIET".to_string(), "1".to_string()),
+            ("TERM".to_string(), "dumb".to_string()),
         ];
-        let args = [
-            "-pa".into(),
+        let args = vec![
+            "-pa".to_string(),
             mix_path(&ebins),
-            "-S".into(),
-            "mix".into(),
-            "compile".into(),
-            "--no-deps-check".into(),
-            "--no-load-deps".into(),
-            "--no-protocol-consolidation".into(),
+            "-S".to_string(),
+            "mix".to_string(),
+            "compile".to_string(),
+            "--no-deps-check".to_string(),
+            "--no-load-deps".to_string(),
+            "--no-protocol-consolidation".to_string(),
         ];
-        let status = self.io.exec(
-            ELIXIR_EXECUTABLE,
-            &args,
-            &env,
-            Some(&project_dir),
-            self.subprocess_stdio,
-        )?;
+
+        let status = self.io.exec(Command {
+            program: ELIXIR_EXECUTABLE.into(),
+            args,
+            env,
+            cwd: Some(project_dir),
+            stdio: self.subprocess_stdio,
+        })?;
 
         if status == 0 {
             // TODO: unit test
@@ -483,7 +490,7 @@ where
         } else {
             Err(Error::ShellCommand {
                 program: "mix".into(),
-                err: None,
+                reason: ShellCommandFailureReason::Unknown,
             })
         }
     }

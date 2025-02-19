@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    process::Command,
     time::Instant,
 };
 
@@ -11,7 +12,7 @@ use gleam_core::{
     build::{Mode, Target, Telemetry},
     config::PackageConfig,
     dependency,
-    error::{FileIoAction, FileKind, StandardIoAction},
+    error::{FileIoAction, FileKind, ShellCommandFailureReason, StandardIoAction},
     hex::{self, HEXPM_PUBLIC_KEY},
     io::{HttpClient as _, TarUnpacker, WrappedReader},
     manifest::{Base16Checksum, Manifest, ManifestPackage, ManifestPackageSource},
@@ -49,13 +50,13 @@ static UTF8_SYMBOLS: Symbols = Symbols {
     right: "─",
 };
 
-pub fn list() -> Result<()> {
-    let (_, _, manifest) = get_manifest_details()?;
+pub fn list(paths: &ProjectPaths) -> Result<()> {
+    let (_, manifest) = get_manifest_details(paths)?;
     list_manifest_packages(std::io::stdout(), manifest)
 }
 
-pub fn tree(options: TreeOptions) -> Result<()> {
-    let (project, config, manifest) = get_manifest_details()?;
+pub fn tree(paths: &ProjectPaths, options: TreeOptions) -> Result<()> {
+    let (config, manifest) = get_manifest_details(paths)?;
 
     // Initialize the root package since it is not part of the manifest
     let root_package = ManifestPackage {
@@ -64,7 +65,7 @@ pub fn tree(options: TreeOptions) -> Result<()> {
         requirements: config.all_direct_dependencies()?.keys().cloned().collect(),
         version: config.version.clone(),
         source: ManifestPackageSource::Local {
-            path: project.clone(),
+            path: paths.root().to_path_buf(),
         },
         otp_app: None,
     };
@@ -76,13 +77,11 @@ pub fn tree(options: TreeOptions) -> Result<()> {
     list_package_and_dependencies_tree(std::io::stdout(), options, packages.clone(), config.name)
 }
 
-fn get_manifest_details() -> Result<(Utf8PathBuf, PackageConfig, Manifest)> {
+fn get_manifest_details(paths: &ProjectPaths) -> Result<(PackageConfig, Manifest)> {
     let runtime = tokio::runtime::Runtime::new().expect("Unable to start Tokio async runtime");
-    let project = fs::get_project_root(fs::get_current_directory()?)?;
-    let paths = ProjectPaths::new(project.clone());
-    let config = crate::config::root_config()?;
+    let config = crate::config::root_config(paths)?;
     let (_, manifest) = get_manifest(
-        &paths,
+        paths,
         runtime.handle().clone(),
         Mode::Dev,
         &config,
@@ -90,7 +89,7 @@ fn get_manifest_details() -> Result<(Utf8PathBuf, PackageConfig, Manifest)> {
         UseManifest::Yes,
         Vec::new(),
     )?;
-    Ok((project, config, manifest))
+    Ok((config, manifest))
 }
 
 fn list_manifest_packages<W: std::io::Write>(mut buffer: W, manifest: Manifest) -> Result<()> {
@@ -203,8 +202,7 @@ pub enum UseManifest {
     No,
 }
 
-pub fn update(packages: Vec<String>) -> Result<()> {
-    let paths = crate::find_project_paths()?;
+pub fn update(paths: &ProjectPaths, packages: Vec<String>) -> Result<()> {
     let use_manifest = if packages.is_empty() {
         UseManifest::No
     } else {
@@ -213,7 +211,7 @@ pub fn update(packages: Vec<String>) -> Result<()> {
 
     // Update specific packages
     _ = download(
-        &paths,
+        paths,
         cli::Reporter::new(),
         None,
         packages.into_iter().map(EcoString::from).collect(),
@@ -237,7 +235,7 @@ pub fn cleanup<Telem: Telemetry>(paths: &ProjectPaths, telemetry: Telem) -> Resu
     let _guard = lock.lock(&telemetry);
 
     // Read the project config
-    let config = crate::config::read(paths.root_config())?;
+    let config = crate::root_config(paths)?;
     let mut manifest = read_manifest_from_disc(paths)?;
 
     remove_extra_requirements(&config, &mut manifest)?;
@@ -370,7 +368,7 @@ pub fn download<Telem: Telemetry>(
     let fs = ProjectIO::boxed();
 
     // Read the project config
-    let mut config = crate::config::read(paths.root_config())?;
+    let mut config = crate::root_config(paths)?;
     let project_name = config.name.clone();
 
     // Insert the new packages to add, if it exists
@@ -434,8 +432,19 @@ async fn add_missing_packages<Telem: Telemetry>(
     let missing_packages = local.missing_local_packages(manifest, &project_name);
 
     let mut num_to_download = 0;
+
+    let missing_git_packages = missing_packages
+        .iter()
+        .copied()
+        .filter(|package| package.is_git())
+        .inspect(|_| {
+            num_to_download += 1;
+        })
+        .collect_vec();
+
     let mut missing_hex_packages = missing_packages
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|package| package.is_hex())
         .inspect(|_| {
             num_to_download += 1;
@@ -443,7 +452,7 @@ async fn add_missing_packages<Telem: Telemetry>(
         .peekable();
 
     // If we need to download at-least one package
-    if missing_hex_packages.peek().is_some() {
+    if missing_hex_packages.peek().is_some() || !missing_git_packages.is_empty() {
         let http = HttpClient::boxed();
         let downloader = hex::Downloader::new(fs.clone(), fs, http, Untar::boxed(), paths.clone());
         let start = Instant::now();
@@ -451,6 +460,12 @@ async fn add_missing_packages<Telem: Telemetry>(
         downloader
             .download_hex_packages(missing_hex_packages, &project_name)
             .await?;
+        for package in missing_git_packages {
+            let ManifestPackageSource::Git { repo, commit } = &package.source else {
+                continue;
+            };
+            let _ = download_git_package(&package.name, repo, commit, paths)?;
+        }
         telemetry.packages_downloaded(start, num_to_download);
     }
 
@@ -818,9 +833,14 @@ fn resolve_versions<Telem: Telemetry>(
                 &mut provided_packages,
                 &mut vec![],
             )?,
-            Requirement::Git { git } => {
-                provide_git_package(name.clone(), &git, project_paths, &mut provided_packages)?
-            }
+            Requirement::Git { git, ref_ } => provide_git_package(
+                name.clone(),
+                &git,
+                &ref_,
+                project_paths,
+                &mut provided_packages,
+                &mut Vec::new(),
+            )?,
         };
         let _ = root_requirements.insert(name, version);
     }
@@ -881,18 +901,104 @@ fn provide_local_package(
     )
 }
 
+fn execute_command(command: &mut Command) -> Result<std::process::Output> {
+    let output = command.output().map_err(|error| Error::ShellCommand {
+        program: "git".into(),
+        reason: ShellCommandFailureReason::IoError(error.kind()),
+    })?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        let reason = match String::from_utf8(output.stderr) {
+            Ok(stderr) => ShellCommandFailureReason::ShellCommandError(stderr),
+            Err(_) => ShellCommandFailureReason::Unknown,
+        };
+        Err(Error::ShellCommand {
+            program: "git".into(),
+            reason,
+        })
+    }
+}
+
+fn download_git_package(
+    package_name: &str,
+    repo: &str,
+    ref_: &str,
+    project_paths: &ProjectPaths,
+) -> Result<EcoString> {
+    let package_path = project_paths.build_packages_package(package_name);
+    fs::mkdir(&package_path)?;
+
+    let _ = execute_command(Command::new("git").arg("init").current_dir(&package_path))?;
+
+    // This command can fail if the directory already exists,
+    // for example if we resolve versions, then download dependencies.
+    // If that happens, we don't really care: We already have the origin,
+    // so we can safely ignore any errors here
+    let _ = Command::new("git")
+        .arg("remote")
+        .arg("add")
+        .arg("origin")
+        .arg(repo)
+        .current_dir(&package_path)
+        .output();
+
+    let _ = execute_command(
+        Command::new("git")
+            .arg("fetch")
+            .arg("origin")
+            .current_dir(&package_path),
+    )?;
+
+    let _ = execute_command(
+        Command::new("git")
+            .arg("checkout")
+            .arg(ref_)
+            .current_dir(&package_path),
+    )?;
+
+    let output = execute_command(
+        Command::new("git")
+            .arg("rev-parse")
+            .arg("HEAD")
+            .current_dir(&package_path),
+    )?;
+
+    let commit = String::from_utf8(output.stdout)
+        .expect("Output should be UTF-8")
+        .trim()
+        .into();
+
+    Ok(commit)
+}
+
 /// Provide a package from a git repository
 fn provide_git_package(
-    _package_name: EcoString,
-    _repo: &str,
-    _project_paths: &ProjectPaths,
-    _provided: &mut HashMap<EcoString, ProvidedPackage>,
+    package_name: EcoString,
+    repo: &str,
+    // A git ref, such as a branch name, commit hash or tag name
+    ref_: &str,
+    project_paths: &ProjectPaths,
+    provided: &mut HashMap<EcoString, ProvidedPackage>,
+    parents: &mut Vec<EcoString>,
 ) -> Result<hexpm::version::Range> {
-    let _git = ProvidedPackageSource::Git {
-        repo: "repo".into(),
-        commit: "commit".into(),
+    let commit = download_git_package(&package_name, repo, ref_, project_paths)?;
+
+    let package_source = ProvidedPackageSource::Git {
+        repo: repo.into(),
+        commit,
     };
-    Err(Error::GitDependencyUnsupported)
+
+    let package_path = fs::canonicalise(&project_paths.build_packages_package(&package_name))?;
+
+    provide_package(
+        package_name,
+        package_path,
+        package_source,
+        project_paths,
+        provided,
+        parents,
+    )
 }
 
 /// Adds a gleam project located at a specific path to the list of "provided packages"
@@ -960,8 +1066,8 @@ fn provide_package(
                     parents,
                 )?
             }
-            Requirement::Git { git } => {
-                provide_git_package(name.clone(), &git, project_paths, provided)?
+            Requirement::Git { git, ref_ } => {
+                provide_git_package(name.clone(), &git, &ref_, project_paths, provided, parents)?
             }
         };
         let _ = requirements.insert(name, version);

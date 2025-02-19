@@ -23,7 +23,7 @@ use lsp_types::{Position, TextDocumentIdentifier, TextDocumentPositionParams, Ur
 use crate::{
     config::PackageConfig,
     io::{
-        memory::InMemoryFileSystem, BeamCompiler, CommandExecutor, FileSystemReader,
+        memory::InMemoryFileSystem, BeamCompiler, Command, CommandExecutor, FileSystemReader,
         FileSystemWriter, ReadDir, WrappedReader,
     },
     language_server::{
@@ -209,14 +209,14 @@ impl DownloadDependencies for LanguageServerTestIO {
 }
 
 impl CommandExecutor for LanguageServerTestIO {
-    fn exec(
-        &self,
-        program: &str,
-        args: &[String],
-        env: &[(&str, String)],
-        cwd: Option<&Utf8Path>,
-        stdio: crate::io::Stdio,
-    ) -> Result<i32> {
+    fn exec(&self, command: Command) -> Result<i32> {
+        let Command {
+            program,
+            args,
+            env,
+            cwd,
+            stdio,
+        } = command;
         panic!("exec({program:?}, {args:?}, {env:?}, {cwd:?}, {stdio:?}) is not implemented")
     }
 }
@@ -305,7 +305,13 @@ fn add_package_from_manifest<B>(
                 version: Range::new("1.0.0".into()),
             },
             ManifestPackageSource::Local { ref path } => Requirement::Path { path: path.into() },
-            ManifestPackageSource::Git { ref repo, .. } => Requirement::Git { git: repo.clone() },
+            ManifestPackageSource::Git {
+                ref repo,
+                ref commit,
+            } => Requirement::Git {
+                git: repo.clone(),
+                ref_: commit.clone(),
+            },
         },
     );
     write_toml_from_manifest(engine, toml_path, package);
@@ -324,7 +330,13 @@ fn add_dev_package_from_manifest<B>(
                 version: Range::new("1.0.0".into()),
             },
             ManifestPackageSource::Local { ref path } => Requirement::Path { path: path.into() },
-            ManifestPackageSource::Git { ref repo, .. } => Requirement::Git { git: repo.clone() },
+            ManifestPackageSource::Git {
+                ref repo,
+                ref commit,
+            } => Requirement::Git {
+                git: repo.clone(),
+                ref_: commit.clone(),
+            },
         },
     );
     write_toml_from_manifest(engine, toml_path, package);

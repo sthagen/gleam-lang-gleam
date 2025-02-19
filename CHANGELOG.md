@@ -17,6 +17,21 @@
   path to a directory containing CA certificates to install Hex packages.
   ([winstxnhdw](https://github.com/winstxnhdw))
 
+- On the JavaScript target, bit array expressions and patterns no longer need to
+  be byte aligned, and the `bits` segment type is now supported in patterns.
+  ([Richard Viney](https://github.com/richard-viney))
+
+### Build tool
+
+- The build tool now supports Git dependencies. For example:
+
+  ```
+  [dependencies]
+  gleam_stdlib = { git = "https://github.com/gleam-lang/stdlib.git", ref = "957b83b" }
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Language server
 
 - The language server now has the ability to jump to the type definition of any
@@ -141,6 +156,44 @@
   ```
 
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The code action to generate a dynamic decoder for a custom type can now
+  generate decoders for types with multiple variants. For example this code:
+
+  ```gleam
+  pub type Person {
+    Adult(age: Int, job: String)
+    Child(age: Int, height: Float)
+  }
+  ```
+
+  Becomes:
+
+  ```gleam
+  import gleam/dynamic/decode
+
+  pub type Person {
+    Adult(age: Int, job: String)
+    Child(age: Int, height: Float)
+  }
+
+  fn person_decoder() -> decode.Decoder(Person) {
+    use variant <- decode.field("type", decode.string)
+    case variant {
+      "adult" -> {
+        use age <- decode.field("age", decode.int)
+        use job <- decode.field("job", decode.string)
+        decode.success(Adult(age:, job:))
+      }
+      "child" -> {
+        use age <- decode.field("age", decode.int)
+        use height <- decode.field("height", decode.float)
+        decode.success(Child(age:, height:))
+      }
+      _ -> decode.failure(todo as "Zero value for Person", "Person")
+    }
+  }
+  ```
 
 ### Formatter
 

@@ -18,9 +18,8 @@ use std::{io::Write, path::PathBuf, time::Instant};
 
 use crate::{build, cli, docs, fs, http::HttpClient};
 
-pub fn command(replace: bool, i_am_sure: bool) -> Result<()> {
-    let paths = crate::find_project_paths()?;
-    let mut config = crate::config::root_config()?;
+pub fn command(paths: &ProjectPaths, replace: bool, i_am_sure: bool) -> Result<()> {
+    let mut config = crate::config::root_config(paths)?;
 
     let should_publish = check_for_gleam_prefix(&config)?
         && check_for_version_zero(&config)?
@@ -36,13 +35,14 @@ pub fn command(replace: bool, i_am_sure: bool) -> Result<()> {
         data: package_tarball,
         src_files_added,
         generated_files_added,
-    } = do_build_hex_tarball(&paths, &mut config)?;
+    } = do_build_hex_tarball(paths, &mut config)?;
 
     check_for_name_squatting(&compile_result)?;
     check_for_multiple_top_level_modules(&compile_result, i_am_sure)?;
 
     // Build HTML documentation
     let docs_tarball = fs::create_tar_archive(docs::build_documentation(
+        paths,
         &config,
         &mut compile_result,
         DocContext::HexPublish,
@@ -275,6 +275,7 @@ fn do_build_hex_tarball(paths: &ProjectPaths, config: &mut PackageConfig) -> Res
 
     // Build the project to check that it is valid
     let built = build::main(
+        paths,
         Options {
             root_target_support: TargetSupport::Enforced,
             warnings_as_errors: false,
@@ -284,7 +285,7 @@ fn do_build_hex_tarball(paths: &ProjectPaths, config: &mut PackageConfig) -> Res
             compile: Compile::All,
             no_print_progress: false,
         },
-        build::download_dependencies(cli::Reporter::new())?,
+        build::download_dependencies(paths, cli::Reporter::new())?,
     )?;
 
     let minimum_required_version = built.minimum_required_version();
@@ -737,7 +738,7 @@ fn prevent_publish_git_dependency() {
     let config = PackageConfig {
         dependencies: [(
             "provided".into(),
-            Requirement::git("https://github.com/gleam-lang/gleam.git"),
+            Requirement::git("https://github.com/gleam-lang/gleam.git", "da6e917"),
         )]
         .into(),
         ..Default::default()

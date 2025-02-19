@@ -4414,13 +4414,28 @@ pub type LinkedList {
 }
 
 #[test]
-fn no_code_action_to_generate_dynamic_decoder_for_multi_variant_type() {
-    assert_no_code_actions!(
+fn generate_dynamic_decoder_for_multi_variant_type() {
+    assert_code_action!(
         GENERATE_DYNAMIC_DECODER,
         "
 pub type Wibble {
-  Wibble(wibble: Int)
-  Wobble(wobble: Float)
+  Wibble(wibble: Int, next: Wibble)
+  Wobble(wobble: Float, text: String, values: List(Bool))
+}
+",
+        find_position_of("type").to_selection()
+    );
+}
+
+#[test]
+fn generate_dynamic_decoder_for_multi_variant_type_multi_word_name() {
+    assert_code_action!(
+        GENERATE_DYNAMIC_DECODER,
+        "
+pub type Wibble {
+  OneTwo(wibble: Int, next: Wibble)
+  ThreeFour(wobble: Float, text: String, values: List(Bool))
+  FiveSixSeven(one_two: Int)
 }
 ",
         find_position_of("type").to_selection()
@@ -5116,13 +5131,28 @@ pub type Wibble {
 }
 
 #[test]
-fn no_code_action_to_generate_json_encoder_for_multi_variant_type() {
-    assert_no_code_actions!(
+fn generate_json_encoder_for_multi_variant_type() {
+    assert_code_action!(
         GENERATE_JSON_ENCODER,
         "
 pub type Wibble {
-  Wibble(wibble: Int)
-  Wobble(wobble: Float)
+  Wibble(wibble: Int, next: Wibble)
+  Wobble(wobble: Float, text: String, values: List(Bool))
+}
+",
+        find_position_of("type").to_selection()
+    );
+}
+
+#[test]
+fn generate_json_encoder_for_multi_variant_type_multi_word_name() {
+    assert_code_action!(
+        GENERATE_JSON_ENCODER,
+        "
+pub type Wibble {
+  OneTwoThree(wibble: Int, next: Wibble)
+  FourFive(wobble: Float, text: String, values: List(Bool))
+  SixSevenEight(one_two: Float)
 }
 ",
         find_position_of("type").to_selection()

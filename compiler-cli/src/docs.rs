@@ -11,6 +11,7 @@ use gleam_core::{
     error::Error,
     hex,
     io::HttpClient as _,
+    paths::ProjectPaths,
     Result,
 };
 
@@ -39,15 +40,15 @@ pub struct BuildOptions {
     pub target: Option<Target>,
 }
 
-pub fn build(options: BuildOptions) -> Result<()> {
-    let paths = crate::find_project_paths()?;
-    let config = crate::config::root_config()?;
+pub fn build(paths: &ProjectPaths, options: BuildOptions) -> Result<()> {
+    let config = crate::config::root_config(paths)?;
 
     // Reset the build directory so we know the state of the project
     crate::fs::delete_directory(&paths.build_directory_for_target(Mode::Prod, config.target))?;
 
     let out = paths.build_documentation_directory(&config.name);
     let mut built = crate::build::main(
+        paths,
         Options {
             mode: Mode::Prod,
             target: options.target,
@@ -57,9 +58,9 @@ pub fn build(options: BuildOptions) -> Result<()> {
             root_target_support: TargetSupport::Enforced,
             no_print_progress: false,
         },
-        crate::build::download_dependencies(cli::Reporter::new())?,
+        crate::build::download_dependencies(paths, cli::Reporter::new())?,
     )?;
-    let outputs = build_documentation(&config, &mut built.root_package, DocContext::Build)?;
+    let outputs = build_documentation(paths, &config, &mut built.root_package, DocContext::Build)?;
 
     // Write
     crate::fs::delete_directory(&out)?;
@@ -95,13 +96,13 @@ fn open_docs(path: &Utf8Path) -> Result<()> {
 }
 
 pub(crate) fn build_documentation(
+    paths: &ProjectPaths,
     config: &PackageConfig,
     compiled: &mut Package,
     is_hex_publish: DocContext,
 ) -> Result<Vec<gleam_core::io::OutputFile>, Error> {
     compiled.attach_doc_and_module_comments();
     cli::print_generating_documentation();
-    let paths = crate::find_project_paths()?;
     let mut pages = vec![DocsPage {
         title: "README".into(),
         path: "index.html".into(),
@@ -109,7 +110,7 @@ pub(crate) fn build_documentation(
     }];
     pages.extend(config.documentation.pages.iter().cloned());
     let mut outputs = gleam_core::docs::generate_html(
-        &paths,
+        paths,
         config,
         compiled.modules.as_slice(),
         &pages,
@@ -125,9 +126,8 @@ pub(crate) fn build_documentation(
     Ok(outputs)
 }
 
-pub fn publish() -> Result<()> {
-    let paths = crate::find_project_paths()?;
-    let config = crate::config::root_config()?;
+pub fn publish(paths: &ProjectPaths) -> Result<()> {
+    let config = crate::config::root_config(paths)?;
 
     let runtime = tokio::runtime::Runtime::new().expect("Unable to start Tokio async runtime");
     let hex_config = hexpm::Config::new();
@@ -138,6 +138,7 @@ pub fn publish() -> Result<()> {
     crate::fs::delete_directory(&paths.build_directory_for_target(Mode::Prod, config.target))?;
 
     let mut built = crate::build::main(
+        paths,
         Options {
             root_target_support: TargetSupport::Enforced,
             warnings_as_errors: false,
@@ -147,9 +148,14 @@ pub fn publish() -> Result<()> {
             target: None,
             no_print_progress: false,
         },
-        crate::build::download_dependencies(cli::Reporter::new())?,
+        crate::build::download_dependencies(paths, cli::Reporter::new())?,
     )?;
-    let outputs = build_documentation(&config, &mut built.root_package, DocContext::HexPublish)?;
+    let outputs = build_documentation(
+        paths,
+        &config,
+        &mut built.root_package,
+        DocContext::HexPublish,
+    )?;
     let archive = crate::fs::create_tar_archive(outputs)?;
 
     let start = Instant::now();

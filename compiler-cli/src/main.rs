@@ -477,103 +477,7 @@ fn main() {
     initialise_logger();
     panic::add_handler();
     let stderr = cli::stderr_buffer_writer();
-
-    let result = match Command::parse() {
-        Command::Build {
-            target,
-            warnings_as_errors,
-            no_print_progress,
-        } => command_build(target, warnings_as_errors, no_print_progress),
-
-        Command::Check { target } => command_check(target),
-
-        Command::Docs(Docs::Build { open, target }) => {
-            docs::build(docs::BuildOptions { open, target })
-        }
-
-        Command::Docs(Docs::Publish) => docs::publish(),
-
-        Command::Docs(Docs::Remove { package, version }) => docs::remove(package, version),
-
-        Command::Format {
-            stdin,
-            files,
-            check,
-        } => format::run(stdin, check, files),
-
-        Command::Fix => fix::run(),
-
-        Command::Deps(Dependencies::List) => dependencies::list(),
-
-        Command::Deps(Dependencies::Download) => download_dependencies(),
-
-        Command::Deps(Dependencies::Update(options)) => dependencies::update(options.packages),
-
-        Command::Deps(Dependencies::Tree(options)) => dependencies::tree(options),
-
-        Command::Hex(Hex::Authenticate) => hex::authenticate(),
-
-        Command::New(options) => new::create(options, COMPILER_VERSION),
-
-        Command::Shell => shell::command(),
-
-        Command::Run {
-            target,
-            arguments,
-            runtime,
-            module,
-            no_print_progress,
-        } => run::command(
-            arguments,
-            target,
-            runtime,
-            module,
-            run::Which::Src,
-            no_print_progress,
-        ),
-
-        Command::Test {
-            target,
-            arguments,
-            runtime,
-        } => run::command(arguments, target, runtime, None, run::Which::Test, false),
-
-        Command::CompilePackage(opts) => compile_package::command(opts),
-
-        Command::Publish { replace, yes } => publish::command(replace, yes),
-
-        Command::PrintConfig => print_config(),
-
-        Command::Hex(Hex::Retire {
-            package,
-            version,
-            reason,
-            message,
-        }) => hex::retire(package, version, reason, message),
-
-        Command::Hex(Hex::Unretire { package, version }) => hex::unretire(package, version),
-
-        Command::Hex(Hex::Revert { package, version }) => hex::revert(package, version),
-
-        Command::Add { packages, dev } => add::command(packages, dev),
-
-        Command::Remove { packages } => remove::command(packages),
-
-        Command::Update(options) => dependencies::update(options.packages),
-
-        Command::Clean => clean(),
-
-        Command::LanguageServer => lsp::main(),
-
-        Command::Export(ExportTarget::ErlangShipment) => export::erlang_shipment(),
-        Command::Export(ExportTarget::HexTarball) => export::hex_tarball(),
-        Command::Export(ExportTarget::JavascriptPrelude) => export::javascript_prelude(),
-        Command::Export(ExportTarget::TypescriptPrelude) => export::typescript_prelude(),
-        Command::Export(ExportTarget::PackageInterface { output }) => {
-            export::package_interface(output)
-        }
-    };
-
+    let result = parse_and_run_command();
     match result {
         Ok(_) => {
             tracing::info!("Successfully completed");
@@ -588,8 +492,178 @@ fn main() {
     }
 }
 
-fn command_check(target: Option<Target>) -> Result<()> {
+fn parse_and_run_command() -> Result<(), Error> {
+    match Command::parse() {
+        Command::Build {
+            target,
+            warnings_as_errors,
+            no_print_progress,
+        } => {
+            let paths = find_project_paths()?;
+            command_build(&paths, target, warnings_as_errors, no_print_progress)
+        }
+
+        Command::Check { target } => {
+            let paths = find_project_paths()?;
+            command_check(&paths, target)
+        }
+
+        Command::Docs(Docs::Build { open, target }) => {
+            let paths = find_project_paths()?;
+            docs::build(&paths, docs::BuildOptions { open, target })
+        }
+
+        Command::Docs(Docs::Publish) => {
+            let paths = find_project_paths()?;
+            docs::publish(&paths)
+        }
+
+        Command::Docs(Docs::Remove { package, version }) => docs::remove(package, version),
+
+        Command::Format {
+            stdin,
+            files,
+            check,
+        } => format::run(stdin, check, files),
+
+        Command::Fix => {
+            let paths = find_project_paths()?;
+            fix::run(&paths)
+        }
+
+        Command::Deps(Dependencies::List) => {
+            let paths = find_project_paths()?;
+            dependencies::list(&paths)
+        }
+
+        Command::Deps(Dependencies::Download) => {
+            let paths = find_project_paths()?;
+            download_dependencies(&paths)
+        }
+
+        Command::Deps(Dependencies::Update(options)) => {
+            let paths = find_project_paths()?;
+            dependencies::update(&paths, options.packages)
+        }
+
+        Command::Deps(Dependencies::Tree(options)) => {
+            let paths = find_project_paths()?;
+            dependencies::tree(&paths, options)
+        }
+
+        Command::Hex(Hex::Authenticate) => hex::authenticate(),
+
+        Command::New(options) => new::create(options, COMPILER_VERSION),
+
+        Command::Shell => {
+            let paths = find_project_paths()?;
+            shell::command(&paths)
+        }
+
+        Command::Run {
+            target,
+            arguments,
+            runtime,
+            module,
+            no_print_progress,
+        } => {
+            let paths = find_project_paths()?;
+            run::command(
+                &paths,
+                arguments,
+                target,
+                runtime,
+                module,
+                run::Which::Src,
+                no_print_progress,
+            )
+        }
+
+        Command::Test {
+            target,
+            arguments,
+            runtime,
+        } => {
+            let paths = find_project_paths()?;
+            run::command(
+                &paths,
+                arguments,
+                target,
+                runtime,
+                None,
+                run::Which::Test,
+                false,
+            )
+        }
+
+        Command::CompilePackage(opts) => compile_package::command(opts),
+
+        Command::Publish { replace, yes } => {
+            let paths = find_project_paths()?;
+            publish::command(&paths, replace, yes)
+        }
+
+        Command::PrintConfig => {
+            let paths = find_project_paths()?;
+            print_config(&paths)
+        }
+
+        Command::Hex(Hex::Retire {
+            package,
+            version,
+            reason,
+            message,
+        }) => hex::retire(package, version, reason, message),
+
+        Command::Hex(Hex::Unretire { package, version }) => hex::unretire(package, version),
+
+        Command::Hex(Hex::Revert { package, version }) => {
+            let paths = find_project_paths()?;
+            hex::revert(&paths, package, version)
+        }
+
+        Command::Add { packages, dev } => {
+            let paths = find_project_paths()?;
+            add::command(&paths, packages, dev)
+        }
+
+        Command::Remove { packages } => {
+            let paths = find_project_paths()?;
+            remove::command(&paths, packages)
+        }
+
+        Command::Update(options) => {
+            let paths = find_project_paths()?;
+            dependencies::update(&paths, options.packages)
+        }
+
+        Command::Clean => {
+            let paths = find_project_paths()?;
+            clean(&paths)
+        }
+
+        Command::LanguageServer => lsp::main(),
+
+        Command::Export(ExportTarget::ErlangShipment) => {
+            let paths = find_project_paths()?;
+            export::erlang_shipment(&paths)
+        }
+        Command::Export(ExportTarget::HexTarball) => {
+            let paths = find_project_paths()?;
+            export::hex_tarball(&paths)
+        }
+        Command::Export(ExportTarget::JavascriptPrelude) => export::javascript_prelude(),
+        Command::Export(ExportTarget::TypescriptPrelude) => export::typescript_prelude(),
+        Command::Export(ExportTarget::PackageInterface { output }) => {
+            let paths = find_project_paths()?;
+            export::package_interface(&paths, output)
+        }
+    }
+}
+
+fn command_check(paths: &ProjectPaths, target: Option<Target>) -> Result<()> {
     let _ = build::main(
+        paths,
         Options {
             root_target_support: TargetSupport::Enforced,
             warnings_as_errors: false,
@@ -599,22 +673,24 @@ fn command_check(target: Option<Target>) -> Result<()> {
             target,
             no_print_progress: false,
         },
-        build::download_dependencies(cli::Reporter::new())?,
+        build::download_dependencies(paths, cli::Reporter::new())?,
     )?;
     Ok(())
 }
 
 fn command_build(
+    paths: &ProjectPaths,
     target: Option<Target>,
     warnings_as_errors: bool,
     no_print_progress: bool,
 ) -> Result<()> {
     let manifest = if no_print_progress {
-        build::download_dependencies(NullTelemetry)?
+        build::download_dependencies(paths, NullTelemetry)?
     } else {
-        build::download_dependencies(cli::Reporter::new())?
+        build::download_dependencies(paths, cli::Reporter::new())?
     };
     let _ = build::main(
+        paths,
         Options {
             root_target_support: TargetSupport::Enforced,
             warnings_as_errors,
@@ -629,14 +705,13 @@ fn command_build(
     Ok(())
 }
 
-fn print_config() -> Result<()> {
-    let config = root_config()?;
+fn print_config(paths: &ProjectPaths) -> Result<()> {
+    let config = root_config(paths)?;
     println!("{config:#?}");
     Ok(())
 }
 
-fn clean() -> Result<()> {
-    let paths = find_project_paths()?;
+fn clean(paths: &ProjectPaths) -> Result<()> {
     fs::delete_directory(&paths.build_directory())
 }
 
@@ -662,10 +737,9 @@ fn project_paths_at_current_directory_without_toml() -> ProjectPaths {
     ProjectPaths::new(current_dir)
 }
 
-fn download_dependencies() -> Result<()> {
-    let paths = find_project_paths()?;
+fn download_dependencies(paths: &ProjectPaths) -> Result<()> {
     _ = dependencies::download(
-        &paths,
+        paths,
         cli::Reporter::new(),
         None,
         Vec::new(),
