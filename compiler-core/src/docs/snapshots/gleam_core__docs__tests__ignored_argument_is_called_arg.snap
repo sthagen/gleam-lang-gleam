@@ -225,13 +225,6 @@ expression: "compile(config, modules)"
 
         
 
-<h2>Types</h2>
-<ul>
-  
-  <li><a href="#Wibble">Wibble</a></li>
-  
-</ul>
-
 
 
 
@@ -239,7 +232,7 @@ expression: "compile(config, modules)"
 <h2>Functions</h2>
 <ul>
   
-  <li><a href="#main">main</a></li>
+  <li><a href="#one">one</a></li>
   
 </ul>
 
@@ -255,70 +248,6 @@ expression: "compile(config, modules)"
 
 
 
-<section class="module-members">
-  <h1 id="module-types" class="module-member-kind">
-    <a href="#module-types">Types</a>
-    <svg class="icon icon-gleam-chasse-2"><use xlink:href="#icon-gleam-chasse-2"></use></svg>
-  </h1>
-
-  
-  <div class="member">
-    <div class="member-name">
-      <h2 id="Wibble">
-        <a href="#Wibble">
-          Wibble
-        </a>
-      </h2>
-      
-    </div>
-    
-    <div class="custom-type-constructors">
-      <div class="rendered-markdown"></div>
-      <pre><code class="hljs gleam">pub type Wibble {
-  Wobble(wabble: Int)
-}</code></pre>
-      
-      <h3>
-        Constructors
-      </h3>
-      <ul class="constructor-list">
-        
-        <li class="constructor-item">
-          <div class="constructor-row">
-            <svg class="icon icon-star"><use xlink:href="#icon-star"></use></svg>
-            <pre class="constructor-name"><code class="hljs gleam">Wobble(wabble: Int)</code></pre>
-          </div>
-
-          <div class="constructor-item-docs">
-            
-
-            
-            <h4>
-              Arguments
-            </h4>
-
-            <dl class="constructor-argument-list">
-            
-              <dt class="constructor-argument-label">
-                wabble
-              </dt>
-              <dd class="constructor-argument-doc">
-                <p>Documentation!!</p>
-
-              </dd>
-            
-            </dl>
-            
-          </div>
-        </li>
-        
-      </ul>
-      
-    </div>
-  </div>
-  
-</section>
-
 
 
 
@@ -331,15 +260,15 @@ expression: "compile(config, modules)"
   
   <div class="member">
     <div class="member-name">
-      <h2 id="main">
-        <a href="#main">
-          main
+      <h2 id="one">
+        <a href="#one">
+          one
         </a>
       </h2>
       
     </div>
 
-    <pre><code class="hljs gleam">pub fn main() -&gt; a</code></pre>
+    <pre><code class="hljs gleam">pub fn one(arg: a) -&gt; Int</code></pre>
     
     <div class="rendered-markdown"></div>
   </div>

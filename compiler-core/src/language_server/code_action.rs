@@ -4728,6 +4728,10 @@ pub struct ConvertToPipe<'a> {
     params: &'a CodeActionParams,
     edits: TextEdits<'a>,
     argument_to_pipe: Option<ConvertToPipeArg<'a>>,
+    /// this will be true if we're visiting the call on the right hand side of a
+    /// use expression. So we can skip it and not try to turn it into a
+    /// function.
+    visiting_use_call: bool,
 }
 
 /// Holds all the data needed by the "convert to pipe" code action to properly
@@ -4768,6 +4772,7 @@ impl<'a> ConvertToPipe<'a> {
             module,
             params,
             edits: TextEdits::new(line_numbers),
+            visiting_use_call: false,
             argument_to_pipe: None,
         }
     }
@@ -4846,6 +4851,16 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertToPipe<'ast> {
         fun: &'ast TypedExpr,
         args: &'ast [TypedCallArg],
     ) {
+        // If we're visiting the typed function produced by typing a use, we
+        // skip the thing itself and only visit its arguments and called
+        // function, that is the body of the use.
+        if self.visiting_use_call {
+            self.visiting_use_call = false;
+            ast::visit::visit_typed_expr(self, fun);
+            args.iter().for_each(|arg| visit_typed_call_arg(self, arg));
+            return;
+        }
+
         // We only visit a call if the cursor is somewhere within its location,
         // otherwise we skip it entirely.
         let call_range = self.edits.src_span_to_lsp_range(*location);
@@ -4904,5 +4919,191 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertToPipe<'ast> {
         // We can only apply the action on the first step of a pipeline, so we
         // visit just that one and skip all the others.
         ast::visit::visit_typed_pipeline_assignment(self, first_value);
+    }
+
+    fn visit_typed_use(&mut self, use_: &'ast TypedUse) {
+        self.visiting_use_call = true;
+        ast::visit::visit_typed_use(self, use_);
+    }
+}
+
+/// Code action to interpolate a string. If the cursor is inside the string
+/// (not selecting anything) the language server will offer to split it:
+///
+/// ```gleam
+/// "wibble | wobble"
+/// //      ^ [Split string]
+/// // Will produce the following
+/// "wibble " <> todo <> " wobble"
+/// ```
+///
+/// If the cursor is selecting an entire valid gleam name, then the language
+/// server will offer to interpolate it as a variable:
+///
+/// ```gleam
+/// "wibble wobble woo"
+/// //      ^^^^^^ [Interpolate variable]
+/// // Will produce the following
+/// "wibble " <> wobble <> " woo"
+/// ```
+///
+/// > Note: the cursor won't end up right after the inserted variable/todo.
+/// > that's a bit annoying, but in a future LSP version we will be able to
+/// > isnert tab stops to allow one to jump to the newly added variable/todo.
+///
+pub struct InterpolateString<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    string_interpolation: Option<(SrcSpan, StringInterpolation)>,
+    string_literal_position: StringLiteralPosition,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum StringLiteralPosition {
+    FirstPipelineStep,
+    Other,
+}
+
+#[derive(Clone, Copy)]
+enum StringInterpolation {
+    InterpolateValue { value_location: SrcSpan },
+    SplitString { split_at: u32 },
+}
+
+impl<'a> InterpolateString<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            string_interpolation: None,
+            string_literal_position: StringLiteralPosition::Other,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let Some((string_location, interpolation)) = self.string_interpolation else {
+            return vec![];
+        };
+
+        if self.string_literal_position == StringLiteralPosition::FirstPipelineStep {
+            self.edits.insert(string_location.start, "{ ".into());
+        }
+
+        match interpolation {
+            StringInterpolation::InterpolateValue { value_location } => {
+                let name = self
+                    .module
+                    .code
+                    .get(value_location.start as usize..value_location.end as usize)
+                    .expect("invalid value range");
+
+                if is_valid_lowercase_name(name) {
+                    self.edits
+                        .insert(value_location.start, format!("\" <> {name} <> \""));
+                    self.edits.delete(value_location);
+                } else if self.can_split_string_at(value_location.end) {
+                    // If the string is not a valid name we just try and split
+                    // the string at the end of the selection.
+                    self.edits
+                        .insert(value_location.end, "\" <> todo <> \"".into());
+                } else {
+                    // Otherwise there's no meaningful action we can do.
+                    return vec![];
+                }
+            }
+
+            StringInterpolation::SplitString { split_at } if self.can_split_string_at(split_at) => {
+                self.edits.insert(split_at, "\" <> todo <> \"".into());
+            }
+
+            StringInterpolation::SplitString { .. } => return vec![],
+        };
+
+        if self.string_literal_position == StringLiteralPosition::FirstPipelineStep {
+            self.edits.insert(string_location.end, " }".into());
+        }
+
+        let mut action = Vec::with_capacity(1);
+        CodeActionBuilder::new("Interpolate string")
+            .kind(CodeActionKind::REFACTOR_REWRITE)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
+            .preferred(false)
+            .push_to(&mut action);
+        action
+    }
+
+    fn can_split_string_at(&self, at: u32) -> bool {
+        self.string_interpolation
+            .is_some_and(|(string_location, _)| {
+                !(at <= string_location.start + 1 || at >= string_location.end - 1)
+            })
+    }
+
+    fn visit_literal_string(
+        &mut self,
+        string_location: SrcSpan,
+        string_position: StringLiteralPosition,
+    ) {
+        // We can only interpolate/split a string if the cursor is somewhere
+        // within its location, otherwise we skip it.
+        let string_range = self.edits.src_span_to_lsp_range(string_location);
+        if !within(self.params.range, string_range) {
+            return;
+        }
+
+        let selection @ SrcSpan { start, end } =
+            self.edits.lsp_range_to_src_span(self.params.range);
+
+        let interpolation = if start == end {
+            StringInterpolation::SplitString { split_at: start }
+        } else {
+            StringInterpolation::InterpolateValue {
+                value_location: selection,
+            }
+        };
+        self.string_interpolation = Some((string_location, interpolation));
+        self.string_literal_position = string_position;
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for InterpolateString<'ast> {
+    fn visit_typed_expr_string(
+        &mut self,
+        location: &'ast SrcSpan,
+        _type_: &'ast Arc<Type>,
+        _value: &'ast EcoString,
+    ) {
+        self.visit_literal_string(*location, StringLiteralPosition::Other);
+    }
+
+    fn visit_typed_expr_pipeline(
+        &mut self,
+        _location: &'ast SrcSpan,
+        first_value: &'ast TypedPipelineAssignment,
+        assignments: &'ast [(TypedPipelineAssignment, PipelineAssignmentKind)],
+        finally: &'ast TypedExpr,
+        _finally_kind: &'ast PipelineAssignmentKind,
+    ) {
+        if first_value.value.is_literal_string() {
+            self.visit_literal_string(
+                first_value.location,
+                StringLiteralPosition::FirstPipelineStep,
+            );
+        } else {
+            ast::visit::visit_typed_pipeline_assignment(self, first_value);
+        }
+
+        assignments
+            .iter()
+            .for_each(|(a, _)| ast::visit::visit_typed_pipeline_assignment(self, a));
+        self.visit_typed_expr(finally);
     }
 }

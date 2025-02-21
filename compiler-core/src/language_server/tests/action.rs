@@ -78,6 +78,7 @@ const GENERATE_FUNCTION: &str = "Generate function";
 const CONVERT_TO_FUNCTION_CALL: &str = "Convert to function call";
 const INLINE_VARIABLE: &str = "Inline variable";
 const CONVERT_TO_PIPE: &str = "Convert to pipe";
+const INTERPOLATE_STRING: &str = "Interpolate string";
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range:expr $(,)?) => {
@@ -112,6 +113,105 @@ macro_rules! assert_no_code_actions {
         let result = actions_with_title(all_titles, $project, range);
         assert_eq!(expected, result);
     };
+}
+
+#[test]
+fn split_string() {
+    assert_code_action!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble wobble woo"
+}"#,
+        find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn no_split_string_right_at_the_start() {
+    assert_no_code_actions!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble wobble woo"
+}"#,
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn no_split_string_right_at_the_end() {
+    assert_no_code_actions!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble wobble woo"
+}"#,
+        find_position_of("\"").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn no_split_string_before_the_start() {
+    assert_no_code_actions!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble wobble woo"
+}"#,
+        find_position_of("\"").to_selection()
+    );
+}
+
+#[test]
+fn no_split_string_after_the_end() {
+    assert_no_code_actions!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble wobble woo"//we need this comment so we can put the cursor _after_ the closing quote
+}"#,
+        find_position_of("\"/").under_last_char().to_selection()
+    );
+}
+
+#[test]
+fn interpolate_string_inside_string() {
+    assert_code_action!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble wobble woo"
+}"#,
+        find_position_of("wobble").select_until(find_position_of("wobble ").under_last_char()),
+    );
+}
+
+#[test]
+fn fallback_to_split_string_when_selecting_invalid_name() {
+    assert_code_action!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble wobble woo woo"
+}"#,
+        find_position_of("wobble").select_until(find_position_of("woo ").under_last_char()),
+    );
+}
+
+#[test]
+fn splitting_string_as_first_pipeline_step_inserts_brackets() {
+    assert_code_action!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble  wobble" |> io.println
+}"#,
+        find_position_of(" wobble").to_selection(),
+    );
+}
+
+#[test]
+fn interpolating_string_as_first_pipeline_step_inserts_brackets() {
+    assert_code_action!(
+        INTERPOLATE_STRING,
+        r#"pub fn main() {
+  "wibble wobble woo" |> io.println
+}"#,
+        find_position_of("wobble ").select_until(find_position_of("wobble ").under_last_char()),
+    );
 }
 
 #[test]
@@ -5558,6 +5658,48 @@ fn convert_to_pipe_with_function_returning_other_function() {
         "
 pub fn main() {
   wibble(wobble)(woo)
+}
+",
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_does_not_work_on_function_on_the_right_hand_side_of_use() {
+    assert_no_code_actions!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  use <- wibble(wobble)
+  todo
+}
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_does_not_work_on_function_on_the_right_hand_side_of_use_2() {
+    assert_no_code_actions!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  use <- wibble(wobble)
+  todo
+}
+",
+        find_position_of("todo").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_works_inside_body_of_use() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  use <- wibble(wobble)
+  woo(123)
 }
 ",
         find_position_of("woo").to_selection()

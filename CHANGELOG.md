@@ -13,6 +13,9 @@
   making Gleam packages discoverable through global search of HexDocs.
   ([Diemo Gebhardt](https://github.com/diemogebhardt))
 
+- Improved the styling of constructor argument descriptions in the generated
+  documentation. ([Nicd](https://git.ahlcode.fi/nicd))
+
 - Allow users to set the `GLEAM_CACERTS_PATH` environment variable to specify a
   path to a directory containing CA certificates to install Hex packages.
   ([winstxnhdw](https://github.com/winstxnhdw))
@@ -20,6 +23,11 @@
 - On the JavaScript target, bit array expressions and patterns no longer need to
   be byte aligned, and the `bits` segment type is now supported in patterns.
   ([Richard Viney](https://github.com/richard-viney))
+
+- The code generated for list pattern matching on the JavaScript target is now
+  more efficient. Gleam code that relies heavily on list pattern matching can
+  now be up to twice as fast.
+  ([yoshi~](https://github.com/yoshi-monster))
 
 ### Build tool
 
@@ -194,6 +202,31 @@
     }
   }
   ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The language server now suggests a code action to easily interpolate a value
+  into a string. If the cursor is inside a literal string the language server
+  will offer to split it:
+
+  ```gleam
+  "wibble | wobble"
+  //      ^ Triggering the action with the cursor
+  //        here will produce this:
+  "wibble " <> todo <> " wobble"
+  ```
+
+  And if the cursor is selecting a valid gleam name, the language server will
+  offer to interpolate it as a variable:
+
+  ```gleam
+  "wibble wobble woo"
+  //      ^^^^^^ Triggering the code action if you're
+  //             selecting an entire name, will produce this:
+  "wibble " <> wobble <> " woo"
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Formatter
 
