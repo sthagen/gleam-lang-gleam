@@ -5,6 +5,7 @@ use ecow::EcoString;
 use itertools::Itertools;
 
 use crate::{
+    Result,
     ast::{
         BitArrayOption, BitArraySegment, CallArg, Constant, Publicity, SrcSpan, TypedConstant,
         TypedConstantBitArraySegment, TypedConstantBitArraySegmentOption,
@@ -13,12 +14,11 @@ use crate::{
     line_numbers::LineNumbers,
     schema_capnp::{self as schema, *},
     type_::{
-        self, expression::Implementations, AccessorsMap, Deprecation, FieldMap, ModuleInterface,
-        RecordAccessor, Type, TypeConstructor, TypeValueConstructor, TypeValueConstructorField,
-        TypeVariantConstructors, ValueConstructor, ValueConstructorVariant,
+        self, AccessorsMap, Deprecation, FieldMap, ModuleInterface, RecordAccessor, Type,
+        TypeConstructor, TypeValueConstructor, TypeValueConstructorField, TypeVariantConstructors,
+        ValueConstructor, ValueConstructorVariant, expression::Implementations,
     },
     uid::UniqueIdGenerator,
-    Result,
 };
 use std::{collections::HashMap, io::BufRead, sync::Arc};
 
