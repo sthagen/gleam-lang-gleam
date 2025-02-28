@@ -886,12 +886,20 @@ pub struct ModuleInterface {
     pub warnings: Vec<Warning>,
     /// The minimum Gleam version needed to use this module.
     pub minimum_required_version: Version,
+    pub type_aliases: HashMap<EcoString, TypeAliasConstructor>,
+    pub documentation: Vec<EcoString>,
 }
 
 impl ModuleInterface {
     pub fn contains_todo(&self) -> bool {
         self.warnings.iter().any(|warning| warning.is_todo())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opaque {
+    Opaque,
+    NotOpaque,
 }
 
 /// Information on the constructors of a custom type.
@@ -911,6 +919,7 @@ pub struct TypeVariantConstructors {
     /// and `a` is a Generic type variable with id 1, then this field will be `[1]`.
     ///
     pub type_parameters_ids: Vec<u64>,
+    pub opaque: Opaque,
     pub variants: Vec<TypeValueConstructor>,
 }
 
@@ -918,6 +927,7 @@ impl TypeVariantConstructors {
     pub(crate) fn new(
         variants: Vec<TypeValueConstructor>,
         type_parameters: &[&EcoString],
+        opaque: Opaque,
         hydrator: Hydrator,
     ) -> TypeVariantConstructors {
         let named_types = hydrator.named_type_variables();
@@ -940,6 +950,7 @@ impl TypeVariantConstructors {
         Self {
             type_parameters_ids: type_parameters,
             variants,
+            opaque,
         }
     }
 }
@@ -948,12 +959,14 @@ impl TypeVariantConstructors {
 pub struct TypeValueConstructor {
     pub name: EcoString,
     pub parameters: Vec<TypeValueConstructorField>,
+    pub documentation: Option<EcoString>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeValueConstructorField {
     /// This type of this parameter
     pub type_: Arc<Type>,
+    pub label: Option<EcoString>,
 }
 
 impl ModuleInterface {
@@ -1302,8 +1315,11 @@ impl ValueConstructor {
 pub struct TypeAliasConstructor {
     pub publicity: Publicity,
     pub module: EcoString,
-    pub type_: Type,
+    pub type_: Arc<Type>,
     pub arity: usize,
+    pub deprecation: Deprecation,
+    pub documentation: Option<EcoString>,
+    pub origin: SrcSpan,
 }
 
 impl ValueConstructor {
