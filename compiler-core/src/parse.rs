@@ -400,8 +400,15 @@ where
         let mut estack = vec![];
         let mut last_op_start = 0;
         let mut last_op_end = 0;
+
+        // This is used to keep track if we've just ran into a `|>` operator in
+        // order to properly parse an echo based on its position: if it is in a
+        // pipeline then it isn't expected to be followed by an expression.
+        // Otherwise, it's expected to be followed by an expression.
+        let mut expression_unit_context = ExpressionUnitContext::Other;
+
         loop {
-            match self.parse_expression_unit()? {
+            match self.parse_expression_unit(expression_unit_context)? {
                 Some(unit) => {
                     self.post_process_expression_unit(&unit, is_let_binding)?;
                     estack.push(unit)
@@ -418,32 +425,31 @@ where
                 }
             }
 
-            match self.tok0.take() {
-                Some((op_s, t, op_e)) => {
-                    match precedence(&t) {
-                        Some(p) => {
-                            // Is Op
-                            self.advance();
-                            last_op_start = op_s;
-                            last_op_end = op_e;
-                            let _ = handle_op(
-                                Some(((op_s, t, op_e), p)),
-                                &mut opstack,
-                                &mut estack,
-                                &do_reduce_expression,
-                            );
-                        }
-                        _ => {
-                            // Is not Op
-                            self.tok0 = Some((op_s, t, op_e));
-                            break;
-                        }
-                    }
-                }
-                _ => {
-                    break;
-                }
-            }
+            let Some((op_s, t, op_e)) = self.tok0.take() else {
+                break;
+            };
+
+            let Some(p) = precedence(&t) else {
+                self.tok0 = Some((op_s, t, op_e));
+                break;
+            };
+
+            expression_unit_context = if t == Token::Pipe {
+                ExpressionUnitContext::FollowingPipe
+            } else {
+                ExpressionUnitContext::Other
+            };
+
+            // Is Op
+            self.advance();
+            last_op_start = op_s;
+            last_op_end = op_e;
+            let _ = handle_op(
+                Some(((op_s, t, op_e), p)),
+                &mut opstack,
+                &mut estack,
+                &do_reduce_expression,
+            );
         }
 
         Ok(handle_op(
@@ -471,15 +477,6 @@ where
         Ok(())
     }
 
-    fn parse_expression_unit_collapsing_single_value_blocks(
-        &mut self,
-    ) -> Result<Option<UntypedExpr>, ParseError> {
-        match self.parse_expression_unit()? {
-            Some(expression) => Ok(Some(expression)),
-            None => Ok(None),
-        }
-    }
-
     // examples:
     //   1
     //   "one"
@@ -488,7 +485,10 @@ where
     //   unit().unit().unit()
     //   A(a.., label: tuple(1))
     //   { expression_sequence }
-    fn parse_expression_unit(&mut self) -> Result<Option<UntypedExpr>, ParseError> {
+    fn parse_expression_unit(
+        &mut self,
+        context: ExpressionUnitContext,
+    ) -> Result<Option<UntypedExpr>, ParseError> {
         let mut expr = match self.tok0.take() {
             Some((start, Token::String { value }, end)) => {
                 self.advance();
@@ -527,7 +527,7 @@ where
                 self.advance();
                 let mut message = None;
                 if self.maybe_one(&Token::As).is_some() {
-                    let msg_expr = self.expect_expression_unit()?;
+                    let msg_expr = self.expect_expression_unit(ExpressionUnitContext::Other)?;
                     end = msg_expr.location().end;
                     message = Some(Box::new(msg_expr));
                 }
@@ -542,13 +542,38 @@ where
                 self.advance();
                 let mut label = None;
                 if self.maybe_one(&Token::As).is_some() {
-                    let msg_expr = self.expect_expression_unit()?;
+                    let msg_expr = self.expect_expression_unit(ExpressionUnitContext::Other)?;
                     end = msg_expr.location().end;
                     label = Some(Box::new(msg_expr));
                 }
                 UntypedExpr::Panic {
                     location: SrcSpan { start, end },
                     message: label,
+                }
+            }
+
+            Some((start, Token::Echo, end)) => {
+                self.advance();
+                if context == ExpressionUnitContext::FollowingPipe {
+                    // If an echo is used as a step in a pipeline (`|> echo`)
+                    // then it cannot be followed by an expression.
+                    UntypedExpr::Echo {
+                        location: SrcSpan { start, end },
+                        expression: None,
+                    }
+                } else {
+                    // Otherwise it must be followed by an expression.
+                    // However, you might have noticed we're not erroring if the
+                    // expression is not there. Instead we move this error to
+                    // the analysis phase so that a wrong usage of echo won't
+                    // stop analysis from happening everywhere and be fault
+                    // tolerant like everything else.
+                    let expression = self.parse_expression()?;
+                    let end = expression.as_ref().map_or(end, |e| e.location().end);
+                    UntypedExpr::Echo {
+                        location: SrcSpan { start, end },
+                        expression: expression.map(Box::new),
+                    }
                 }
             }
 
@@ -653,7 +678,7 @@ where
                     &|s| {
                         Parser::parse_bit_array_segment(
                             s,
-                            &Parser::parse_expression_unit_collapsing_single_value_blocks,
+                            &(|this| this.parse_expression_unit(ExpressionUnitContext::Other)),
                             &Parser::expect_expression,
                             &bit_array_expr_int,
                         )
@@ -750,7 +775,7 @@ where
             // Boolean negation
             Some((start, Token::Bang, _end)) => {
                 self.advance();
-                match self.parse_expression_unit()? {
+                match self.parse_expression_unit(ExpressionUnitContext::Other)? {
                     Some(value) => UntypedExpr::NegateBool {
                         location: SrcSpan {
                             start,
@@ -770,7 +795,7 @@ where
             // Int negation
             Some((start, Token::Minus, _end)) => {
                 self.advance();
-                match self.parse_expression_unit()? {
+                match self.parse_expression_unit(ExpressionUnitContext::Other)? {
                     Some(value) => UntypedExpr::NegateInt {
                         location: SrcSpan {
                             start,
@@ -1025,7 +1050,8 @@ where
             AssignmentKind::Let | AssignmentKind::Generated => {}
             AssignmentKind::Assert { message, .. } => {
                 if self.maybe_one(&Token::As).is_some() {
-                    let message_expression = self.expect_expression_unit()?;
+                    let message_expression =
+                        self.expect_expression_unit(ExpressionUnitContext::Other)?;
                     end = message_expression.location().end;
                     *message = Some(Box::new(message_expression));
                 }
@@ -3288,10 +3314,14 @@ where
         }
     }
 
-    fn expect_expression_unit(&mut self) -> Result<UntypedExpr, ParseError> {
-        match self.parse_expression_unit()? {
-            Some(e) => Ok(e),
-            _ => self.next_tok_unexpected(vec!["An expression".into()]),
+    fn expect_expression_unit(
+        &mut self,
+        context: ExpressionUnitContext,
+    ) -> Result<UntypedExpr, ParseError> {
+        if let Some(e) = self.parse_expression_unit(context)? {
+            Ok(e)
+        } else {
+            self.next_tok_unexpected(vec!["An expression".into()])
         }
     }
 
@@ -4291,4 +4321,10 @@ pub fn parse_int_value(value: &str) -> Option<BigInt> {
     let value = value.trim_start_matches('_');
 
     BigInt::parse_bytes(value.as_bytes(), radix)
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum ExpressionUnitContext {
+    FollowingPipe,
+    Other,
 }

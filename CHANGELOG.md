@@ -1,8 +1,47 @@
 # Changelog
 
-## Unreleased
+## v1.9.0-rc1 - 2025-03-04
 
 ### Compiler
+
+- You can now use the `echo` keyword to debug print any value: `echo` can be
+  followed by any expression and it will print it to stderr alongside the module
+  it comes from and its line number. This:
+
+  ```gleam
+  pub fn main() {
+    echo [1, 2, 3]
+  }
+  ```
+
+  Will output to stderr:
+
+  ```txt
+  /src/module.gleam:2
+  [1, 2, 3]
+  ```
+
+  `echo` can also be used in the middle of a pipeline. This:
+
+  ```gleam
+  pub fn main() {
+    [1, 2, 3]
+    |> echo
+    |> list.map(fn(x) { x * 2 })
+    |> echo
+  }
+  ```
+
+  Will output to stderr:
+
+  ```txt
+  /src/module.gleam:3
+  [1, 2, 3]
+  /src/module.gleam:5
+  [2, 4, 6]
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Generated Erlang `.app` files now include external modules written in Elixir
   and Erlang.
@@ -14,7 +53,8 @@
   ([Diemo Gebhardt](https://github.com/diemogebhardt))
 
 - Improved the styling of constructor argument descriptions in the generated
-  documentation. ([Nicd](https://git.ahlcode.fi/nicd))
+  documentation.
+  ([Nicd](https://git.ahlcode.fi/nicd))
 
 - Allow users to set the `GLEAM_CACERTS_PATH` environment variable to specify a
   path to a directory containing CA certificates to install Hex packages.
@@ -29,6 +69,10 @@
   now be up to twice as fast.
   ([yoshi~](https://github.com/yoshi-monster))
 
+- On the JavaScript target, bit array patterns can now match segments of dynamic
+  size.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Build tool
 
 - The build tool now supports Git dependencies. For example:
@@ -39,6 +83,10 @@
   ```
 
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The build tool now refuses to publish any incomplete package that has any
+  `echo` debug printing left.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Language server
 
@@ -113,7 +161,7 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The Language Server now suggests a code action to generate a function to
+- The language server now suggests a code action to generate a function to
   encode a custom type as JSON using the `gleam_json` package. For example:
 
   ```gleam
@@ -141,7 +189,7 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- The Language Server now suggests a code action to inline a variable
+- The language server now suggests a code action to inline a variable
   which is only used once. For example, this code:
 
   ```gleam
@@ -228,7 +276,7 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The Language Server now shows module documentation when hovering over a module
+- The language server now shows module documentation when hovering over a module
   name.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
@@ -266,12 +314,17 @@
 
 - Fixed a bug where `gleam export package-interface` would not properly generate
   the package interface file if some modules were cached.
+  ([Pedro Francisco](https://github.com/mine-tech-oficial)) and
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 - Fixed a bug where pattern matching using a UTF-8 string constant would not
   work correctly on the JavaScript target when the string contained escape
   characters.
   ([Richard Viney](https://github.com/richard-viney))
+
+- Fixed a bug where `gleam publish` wouldn't include gitignored or nested native
+  files.
+  ([PgBiel](https://github.com/PgBiel))
 
 ## v1.8.1 - 2025-02-11
 
