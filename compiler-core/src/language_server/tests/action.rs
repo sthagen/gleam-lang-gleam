@@ -4543,6 +4543,48 @@ pub type Wibble {
 }
 
 #[test]
+fn generate_dynamic_decoder_for_variant_with_no_fields() {
+    assert_code_action!(
+        GENERATE_DYNAMIC_DECODER,
+        "
+pub type Wibble {
+  Wibble
+}
+",
+        find_position_of("type").to_selection()
+    );
+}
+
+#[test]
+fn generate_dynamic_decoder_for_variants_with_no_fields() {
+    assert_code_action!(
+        GENERATE_DYNAMIC_DECODER,
+        "
+pub type Wibble {
+  Wibble
+  Wobble
+  Woo
+}
+",
+        find_position_of("type").to_selection()
+    );
+}
+
+#[test]
+fn generate_dynamic_decoder_for_variants_with_mixed_fields() {
+    assert_code_action!(
+        GENERATE_DYNAMIC_DECODER,
+        "
+pub type Wibble {
+  Wibble
+  Wobble(field: String, field2: Int)
+}
+",
+        find_position_of("type").to_selection()
+    );
+}
+
+#[test]
 fn no_code_action_to_generate_dynamic_decoder_for_type_without_labels() {
     assert_no_code_actions!(
         GENERATE_DYNAMIC_DECODER,
@@ -5196,6 +5238,48 @@ fn generate_json_encoder_tuple() {
         "
 pub type Wibble {
   Wibble(tuple: #(Int, Float, #(String, Bool)))
+}
+",
+        find_position_of("type W").to_selection()
+    );
+}
+
+#[test]
+fn generate_json_encoder_for_variant_with_no_fields() {
+    assert_code_action!(
+        GENERATE_JSON_ENCODER,
+        "
+pub type Wibble {
+  Wibble
+}
+",
+        find_position_of("type W").to_selection()
+    );
+}
+
+#[test]
+fn generate_json_encoder_for_type_with_multiple_variants_with_no_fields() {
+    assert_code_action!(
+        GENERATE_JSON_ENCODER,
+        "
+pub type Wibble {
+  Wibble
+  Wobble
+  Woo
+}
+",
+        find_position_of("type W").to_selection()
+    );
+}
+
+#[test]
+fn generate_json_encoder_for_variants_with_mixed_fields() {
+    assert_code_action!(
+        GENERATE_JSON_ENCODER,
+        "
+pub type Wibble {
+  Wibble
+  Wobble(field: String, field1: Int)
 }
 ",
         find_position_of("type W").to_selection()
