@@ -71,7 +71,7 @@ fn run_and_capture_output(
         .envs(env.iter().map(|pair| (&pair.0, &pair.1)))
         .current_dir(paths.root())
         .spawn()
-        .expect("spawn run process");
+        .unwrap_or_else(|e| panic!("Failed to spawn process '{}': {}", &program, &e));
 
     let mut stderr = process.stderr.take().expect("take stderr");
     let mut output = String::new();
@@ -184,4 +184,9 @@ fn echo_string() {
 #[test]
 fn echo_tuple() {
     assert_echo!("echo_tuple");
+}
+
+#[test]
+fn echo_non_record_atom_tag() {
+    assert_echo!(Target::Erlang, "echo_non_record_atom_tag");
 }

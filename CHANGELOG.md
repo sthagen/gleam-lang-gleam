@@ -10,6 +10,15 @@
 
 ### Formatter
 
+### Bug fixes
+
+- Fixed a bug where tuples with atoms in the first position could be
+  incorrectly formatted by `echo`.
+
+## v1.9.1 - 2025-03-10
+
+### Formatter
+
 - Improved the formatting of pipelines printed with `echo`.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
