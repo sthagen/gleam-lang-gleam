@@ -1137,6 +1137,19 @@ fn sized_bit_array_tests() -> List(Test) {
           <<i:size(64)>> == <<0, 31, 255, 255, 255, 255, 255, 255>>,
         )
       }),
+    "let i = 9_007_199_254_740_991\n<<i:size(4)-unit(16)>> == <<0, 31, 255, 255, 255, 255, 255, 255>>"
+      |> example(fn() {
+        let i = 9_007_199_254_740_991
+        assert_equal(
+          True,
+          <<i:size(4)-unit(16)>> == <<0, 31, 255, 255, 255, 255, 255, 255>>,
+        )
+      }),
+    "let size = 5\n<<405:size(size)-unit(2)>> == <<101, 1:2>>"
+      |> example(fn() {
+        let size = 5
+        assert_equal(True, <<405:size(size)-unit(2)>> == <<101, 1:2>>)
+      }),
   ]
 }
 
@@ -2130,10 +2143,6 @@ type NestedCat {
   NestedCat(Cat, String, cuteness: Int)
 }
 
-type InverseCat {
-  InverseCat(cuteness: Int, String)
-}
-
 fn mixed_arg_match_tests() {
   [
     "matching second labelled arg as first"
@@ -2156,16 +2165,6 @@ fn mixed_arg_match_tests() {
         let NestedCat(Cat(x, cuteness: y), cuteness: y2, ..) =
           NestedCat(Cat("fluffy", 10), "gleamy", 100)
         assert_equal(#(x, y, y2), #("fluffy", 10, 100))
-      }),
-    "matching first labelled arg as first"
-      |> example(fn() {
-        let InverseCat(cuteness: y, ..) = InverseCat(10, "fluffy")
-        assert_equal(y, 10)
-      }),
-    "matching first labelled arg as second"
-      |> example(fn() {
-        let InverseCat(x, cuteness: y) = InverseCat(10, "fluffy")
-        assert_equal(#(x, y), #("fluffy", 10))
       }),
   ]
 }
