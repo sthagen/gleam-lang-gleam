@@ -20,10 +20,11 @@ use crate::{
     dep_tree,
     line_numbers::LineNumbers,
     parse::SpannedString,
+    reference::ReferenceKind,
     type_::{
         self, AccessorsMap, Deprecation, ModuleInterface, Opaque, PatternConstructor,
-        RecordAccessor, Type, TypeAliasConstructor, TypeConstructor, TypeValueConstructor,
-        TypeValueConstructorField, TypeVariantConstructors, ValueConstructor,
+        RecordAccessor, References, Type, TypeAliasConstructor, TypeConstructor,
+        TypeValueConstructor, TypeValueConstructorField, TypeVariantConstructors, ValueConstructor,
         ValueConstructorVariant, Warning,
         environment::*,
         error::{Error, FeatureKind, MissingAnnotation, Named, Problems, convert_unify_error},
@@ -340,6 +341,14 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 type_aliases,
                 documentation,
                 contains_echo: echo_found,
+                references: References {
+                    imported_modules: env
+                        .imported_modules
+                        .values()
+                        .map(|(_location, module)| module.name.clone())
+                        .collect(),
+                    value_references: env.references.into_locations(),
+                },
             },
             names: type_names,
         };
@@ -407,6 +416,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 location,
                 literal: typed_expr.clone(),
                 module: self.module_name.clone(),
+                name: name.clone(),
                 implementations,
             },
             type_: type_.clone(),
@@ -420,6 +430,13 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             Deprecation::NotDeprecated,
         );
         environment.insert_module_value(name.clone(), variant);
+
+        environment.references.register_reference(
+            environment.current_module.clone(),
+            name.clone(),
+            name_location,
+            ReferenceKind::Definition,
+        );
 
         if publicity.is_private() {
             environment.init_usage(
@@ -515,6 +532,10 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             .zip(&prereg_args_types)
             .map(|(a, t)| a.set_type(t.clone()))
             .collect_vec();
+
+        environment
+            .references
+            .enter_function(environment.current_module.clone(), name.clone());
 
         // Infer the type using the preregistered args + return types as a starting point
         let result = environment.in_new_scope(&mut self.problems, |environment, problems| {
@@ -632,6 +653,13 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
             preregistered_type.clone(),
             publicity,
             deprecation.clone(),
+        );
+
+        environment.references.register_reference(
+            environment.current_module.clone(),
+            name.clone(),
+            name_location,
+            ReferenceKind::Definition,
         );
 
         Definition::Function(Function {
@@ -1081,6 +1109,13 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                     type_: type_.clone(),
                     variant: constructor_info.clone(),
                 },
+            );
+
+            environment.references.register_reference(
+                environment.current_module.clone(),
+                constructor.name.clone(),
+                constructor.name_location,
+                ReferenceKind::Definition,
             );
 
             if value_constructor_publicity.is_private() {
@@ -1628,6 +1663,7 @@ fn generalise_module_constant(
         literal: *value.clone(),
         module: module_name.clone(),
         implementations,
+        name: name.clone(),
     };
     environment.insert_variable(
         name.clone(),

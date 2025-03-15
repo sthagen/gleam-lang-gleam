@@ -31,6 +31,7 @@ use crate::{
     bit_array,
     build::{Origin, Target},
     line_numbers::LineNumbers,
+    reference::ReferenceMap,
     type_::expression::Implementations,
 };
 use error::*;
@@ -227,6 +228,17 @@ impl Type {
                 }
             }
             _ => None,
+        }
+    }
+
+    pub fn list(inner_type: Arc<Self>) -> Self {
+        Type::Named {
+            publicity: Publicity::Public,
+            package: PRELUDE_PACKAGE_NAME.into(),
+            module: PRELUDE_MODULE_NAME.into(),
+            name: LIST.into(),
+            args: vec![inner_type],
+            inferred_variant: None,
         }
     }
 
@@ -630,6 +642,7 @@ pub enum ValueConstructorVariant {
         documentation: Option<EcoString>,
         location: SrcSpan,
         module: EcoString,
+        name: EcoString,
         literal: Constant<Arc<Type>, EcoString>,
         implementations: Implementations,
     },
@@ -890,12 +903,19 @@ pub struct ModuleInterface {
     pub documentation: Vec<EcoString>,
     /// Wether there's any echo in the module.
     pub contains_echo: bool,
+    pub references: References,
 }
 
 impl ModuleInterface {
     pub fn contains_todo(&self) -> bool {
         self.warnings.iter().any(|warning| warning.is_todo())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct References {
+    pub imported_modules: HashSet<EcoString>,
+    pub value_references: ReferenceMap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

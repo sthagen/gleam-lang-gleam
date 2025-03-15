@@ -13,9 +13,9 @@ use crate::{
     },
     build::Target,
     exhaustiveness::{self, Reachability},
+    reference::ReferenceKind,
 };
 use hexpm::version::Version;
-use id_arena::Arena;
 use im::hashmap;
 use itertools::Itertools;
 use num_bigint::BigInt;
@@ -304,7 +304,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 expression,
             } => self.infer_echo(location, expression),
 
-            UntypedExpr::Var { location, name, .. } => self.infer_var(name, location),
+            UntypedExpr::Var { location, name, .. } => {
+                self.infer_var(name, location, ReferenceRegistration::RegisterReferences)
+            }
 
             UntypedExpr::Int {
                 location,
@@ -949,8 +951,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
-    fn infer_var(&mut self, name: EcoString, location: SrcSpan) -> Result<TypedExpr, Error> {
-        let constructor = self.infer_value_constructor(&None, &name, &location)?;
+    fn infer_var(
+        &mut self,
+        name: EcoString,
+        location: SrcSpan,
+        register_reference: ReferenceRegistration,
+    ) -> Result<TypedExpr, Error> {
+        let constructor =
+            self.do_infer_value_constructor(&None, &name, &location, register_reference)?;
         self.narrow_implementations(location, &constructor.variant)?;
         Ok(TypedExpr::Var {
             constructor,
@@ -1032,7 +1040,17 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             }
             _ => None,
         };
-        let record = self.infer(container);
+        let record = match container {
+            // If the left-hand-side of the record access is a variable, this might actually be
+            // module access. In that case, we only want to register a reference to the variable
+            // if we actually referencing it in the record access.
+            UntypedExpr::Var { location, name } => self.infer_var(
+                name,
+                location,
+                ReferenceRegistration::DoNotRegisterReferences,
+            ),
+            _ => self.infer(container),
+        };
         // TODO: is this clone avoidable? we need to box the record for inference in both
         // the success case and in the valid record but invalid label case
         let record_access = match record.clone() {
@@ -1046,9 +1064,61 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         };
         match (record_access, module_access) {
             // Record access is valid
-            (Ok(record_access), _) => record_access,
+            (Ok(record_access), _) => {
+                // If this is actually record access and not module access, and we didn't register
+                // the reference earlier, we register it now.
+                if let TypedExpr::RecordAccess { record, .. } = &record_access {
+                    if let TypedExpr::Var {
+                        location,
+                        constructor,
+                        name,
+                    } = record.as_ref()
+                    {
+                        self.register_value_constructor_reference(
+                            name,
+                            &constructor.variant,
+                            *location,
+                            ReferenceKind::Unqualified,
+                        )
+                    }
+                }
+                record_access
+            }
             // Record access is invalid but module access is valid
-            (_, Some((Ok(module_access), _))) => module_access,
+            (
+                _,
+                Some((
+                    Ok(TypedExpr::ModuleSelect {
+                        location,
+                        field_start,
+                        type_,
+                        label,
+                        module_name,
+                        module_alias,
+                        constructor,
+                    }),
+                    _,
+                )),
+            ) => {
+                // We only register the reference here, if we know that this is a module access.
+                // Otherwise we would register module access even if we are actually accessing
+                // the field on a record
+                self.environment.references.register_reference(
+                    module_name.clone(),
+                    label.clone(),
+                    SrcSpan::new(field_start, location.end),
+                    ReferenceKind::Qualified,
+                );
+                TypedExpr::ModuleSelect {
+                    location,
+                    field_start,
+                    type_,
+                    label,
+                    module_name,
+                    module_alias,
+                    constructor,
+                }
+            }
             // Module access was attempted but failed and it does not shadow an existing variable
             (_, Some((Err(module_access_err), false))) => {
                 self.problems.error(module_access_err);
@@ -2263,6 +2333,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     constructor,
                 } => match constructor {
                     ModuleValueConstructor::Constant { literal, .. } => {
+                        self.environment.references.register_reference(
+                            module_name.clone(),
+                            label.clone(),
+                            location,
+                            ReferenceKind::Qualified,
+                        );
+
                         Ok(ClauseGuard::ModuleSelect {
                             location,
                             type_,
@@ -2337,7 +2414,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             let _ = self.environment.unused_modules.remove(module_alias);
             let _ = self.environment.unused_module_aliases.remove(module_alias);
 
-            (module.name.clone(), constructor.clone())
+            let constructor = constructor.clone();
+            let module_name = module.name.clone();
+
+            (module_name, constructor)
         };
 
         let type_ = self.instantiate(constructor.type_, &mut hashmap![]);
@@ -2852,6 +2932,21 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         name: &EcoString,
         location: &SrcSpan,
     ) -> Result<ValueConstructor, Error> {
+        self.do_infer_value_constructor(
+            module,
+            name,
+            location,
+            ReferenceRegistration::RegisterReferences,
+        )
+    }
+
+    fn do_infer_value_constructor(
+        &mut self,
+        module: &Option<(EcoString, SrcSpan)>,
+        name: &EcoString,
+        location: &SrcSpan,
+        register_reference: ReferenceRegistration,
+    ) -> Result<ValueConstructor, Error> {
         let constructor = match module {
             // Look in the current scope for a binding with this name
             None => {
@@ -2913,6 +3008,22 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         self.narrow_implementations(*location, &variant)?;
 
+        if matches!(
+            register_reference,
+            ReferenceRegistration::RegisterReferences
+        ) {
+            self.register_value_constructor_reference(
+                name,
+                &variant,
+                *location,
+                if module.is_some() {
+                    ReferenceKind::Qualified
+                } else {
+                    ReferenceKind::Unqualified
+                },
+            );
+        }
+
         // Instantiate generic variables into unbound variables for this usage
         let type_ = self.instantiate(type_, &mut hashmap![]);
         Ok(ValueConstructor {
@@ -2921,6 +3032,37 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             variant,
             type_,
         })
+    }
+
+    fn register_value_constructor_reference(
+        &mut self,
+        referenced_name: &EcoString,
+        variant: &ValueConstructorVariant,
+        location: SrcSpan,
+        kind: ReferenceKind,
+    ) {
+        match variant {
+            // If the referenced name is different to the name of the original
+            // value, that means we are referencing it via an alias and don't
+            // want to track this reference.
+            ValueConstructorVariant::ModuleFn {
+                name: value_name, ..
+            }
+            | ValueConstructorVariant::Record {
+                name: value_name, ..
+            }
+            | ValueConstructorVariant::ModuleConstant {
+                name: value_name, ..
+            } if value_name != referenced_name => {}
+            ValueConstructorVariant::ModuleFn { name, module, .. }
+            | ValueConstructorVariant::Record { name, module, .. }
+            | ValueConstructorVariant::ModuleConstant { name, module, .. } => self
+                .environment
+                .references
+                .register_reference(module.clone(), name.clone(), location, kind),
+            ValueConstructorVariant::LocalVariable { .. }
+            | ValueConstructorVariant::LocalConstant { .. } => {}
+        }
     }
 
     fn report_name_error(&mut self, name: &EcoString, location: &SrcSpan) -> Error {
@@ -3852,25 +3994,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         subject: Arc<Type>,
         pattern: &TypedPattern,
     ) -> Result<(), Error> {
-        use exhaustiveness::{Body, Column, Compiler, PatternArena, Row};
-
-        let mut compiler = Compiler::new(self.environment, Arena::new());
-        let mut arena = PatternArena::new();
-
-        let subject_variable = compiler.subject_variable(subject.clone());
-
-        let mut rows = Vec::with_capacity(1);
-
-        let pattern = arena.register(pattern);
-        let column = Column::new(subject_variable.clone(), pattern);
-        let guard = None;
-        let body = Body::new(0);
-        let row = Row::new(vec![column], guard, body);
-        rows.push(row);
-
-        // Perform exhaustiveness checking, building a decision tree
-        compiler.set_pattern_arena(arena.into_inner());
-        let output = compiler.compile(rows);
+        let mut case = exhaustiveness::CaseToCompile::new(&[subject]);
+        case.add_pattern(pattern);
+        let output = case.compile(self.environment);
 
         // Error for missing clauses that would cause a crash
         if output.diagnostics.missing {
@@ -3889,43 +4015,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         subject_types: &[Arc<Type>],
         clauses: &[TypedClause],
     ) -> Result<(), Error> {
-        use exhaustiveness::{Body, Column, Compiler, PatternArena, Row};
-
-        let mut compiler = Compiler::new(self.environment, Arena::new());
-        let mut arena = PatternArena::new();
-
-        let subject_variables = subject_types
-            .iter()
-            .map(|t| compiler.subject_variable(t.clone()))
-            .collect_vec();
-
-        let mut rows = Vec::with_capacity(clauses.iter().map(Clause::pattern_count).sum::<usize>());
-
-        for (clause_index, clause) in clauses.iter().enumerate() {
-            let mut add = |multi_pattern: &[TypedPattern]| {
-                let mut columns = Vec::with_capacity(multi_pattern.len());
-                for (subject_index, pattern) in multi_pattern.iter().enumerate() {
-                    let pattern = arena.register(pattern);
-                    let var = subject_variables
-                        .get(subject_index)
-                        .expect("Subject variable")
-                        .clone();
-                    columns.push(Column::new(var, pattern));
-                }
-                let guard = clause.guard.as_ref().map(|_| clause_index);
-                let body = Body::new(clause_index as u16);
-                rows.push(Row::new(columns, guard, body));
-            };
-
-            add(&clause.pattern);
-            for multi_pattern in &clause.alternative_patterns {
-                add(multi_pattern);
-            }
-        }
-
-        // Perform exhaustiveness checking, building a decision tree
-        compiler.set_pattern_arena(arena.into_inner());
-        let output = compiler.compile(rows);
+        let mut case = exhaustiveness::CaseToCompile::new(subject_types);
+        clauses.iter().for_each(|clause| case.add_clause(clause));
+        let output = case.compile(self.environment);
 
         // Error for missing clauses that would cause a crash
         if output.diagnostics.missing {
@@ -3978,6 +4070,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             self.minimum_required_version = minimum_required_version;
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReferenceRegistration {
+    RegisterReferences,
+    DoNotRegisterReferences,
 }
 
 fn extract_typed_use_call_assignments(

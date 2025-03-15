@@ -1405,6 +1405,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass<'as
     fn visit_typed_pattern_constructor(
         &mut self,
         location: &'ast SrcSpan,
+        name_location: &'ast SrcSpan,
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
@@ -1433,6 +1434,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass<'as
         ast::visit::visit_typed_pattern_constructor(
             self,
             location,
+            name_location,
             name,
             arguments,
             module,
@@ -1708,6 +1710,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
     fn visit_typed_pattern_constructor(
         &mut self,
         location: &'ast SrcSpan,
+        name_location: &'ast SrcSpan,
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
@@ -1732,6 +1735,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
         ast::visit::visit_typed_pattern_constructor(
             self,
             location,
+            name_location,
             name,
             arguments,
             module,
@@ -1916,6 +1920,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
     fn visit_typed_pattern_constructor(
         &mut self,
         location: &'ast SrcSpan,
+        name_location: &'ast SrcSpan,
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
@@ -1937,6 +1942,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
         ast::visit::visit_typed_pattern_constructor(
             self,
             location,
+            name_location,
             name,
             arguments,
             module,
@@ -2110,6 +2116,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportSecondPass<'a
     fn visit_typed_pattern_constructor(
         &mut self,
         location: &'ast SrcSpan,
+        name_location: &'ast SrcSpan,
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
@@ -2130,6 +2137,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportSecondPass<'a
         ast::visit::visit_typed_pattern_constructor(
             self,
             location,
+            name_location,
             name,
             arguments,
             module,
@@ -4933,6 +4941,10 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertToPipe<'ast> {
         fun: &'ast TypedExpr,
         args: &'ast [TypedCallArg],
     ) {
+        if args.iter().any(|arg| arg.is_capture_hole()) {
+            return;
+        }
+
         // If we're visiting the typed function produced by typing a use, we
         // skip the thing itself and only visit its arguments and called
         // function, that is the body of the use.
