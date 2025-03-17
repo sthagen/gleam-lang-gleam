@@ -51,8 +51,8 @@
 
 ### Language server
 
-- The language server now allows renaming of functions and constants across
-  modules. For example:
+- The language server now allows renaming of functions, constants,
+  custom type variants and custom types across modules. For example:
 
   ```gleam
   // wibble.gleam
@@ -150,9 +150,50 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- The language server now supports finding references to values, both within
-  a module and across multiple modules.
+- The language server now supports finding references to values and types,
+  both within a module and across multiple modules.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The language server now offers a code action to remove all `echo`s in a
+  module. For example:
+
+  ```gleam
+  pub fn main() {
+    [1, 2, 3]
+    |> echo
+    // ^^^^ If you put your cursor over here
+    |> list.filter(int.is_even)
+    |> echo
+  }
+  ```
+
+  Triggering the code action would remove all the `echo` pipeline steps:
+
+  ```gleam
+  pub fn main() {
+    [1, 2, 3]
+    |> list.filter(int.is_even)
+  }
+  ```
+
+  This also works with all the `echo`s used before an expression:
+
+  ```gleam
+  pub fn main() {
+    echo 1 + 2
+  //^^^^^^^^^^ If hovering anywhere over here
+  }
+  ```
+
+  Triggering the code action would remove the `echo`:
+
+  ```gleam
+  pub fn main() {
+    1 + 2
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Formatter
 
@@ -173,6 +214,13 @@
 - Fixed a bug where using the "Convert to pipe" code action on a function or
   record capture produces invalid code.
   ([Matias Carlander](https://github.com/matiascr))
+
+- Fixed a bug where the "Inline variable" code action would not work properly
+  if used inside a record update.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where variant inference wouldn't work on `let assert` assignments.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ## v1.9.1 - 2025-03-10
 

@@ -270,6 +270,7 @@ impl<T: PartialEq> RecordConstructorArg<T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeAstConstructor {
     pub location: SrcSpan,
+    pub name_location: SrcSpan,
     pub module: Option<(EcoString, SrcSpan)>,
     pub name: EcoString,
     pub arguments: Vec<TypeAst>,
@@ -327,12 +328,14 @@ impl TypeAst {
                 name,
                 arguments,
                 location: _,
+                name_location: _,
             }) => match other {
                 TypeAst::Constructor(TypeAstConstructor {
                     module: o_module,
                     name: o_name,
                     arguments: o_arguments,
                     location: _,
+                    name_location: _,
                 }) => {
                     let module_name =
                         |m: &Option<(EcoString, _)>| m.as_ref().map(|(m, _)| m.clone());
@@ -422,7 +425,7 @@ impl TypeAst {
 
                     None
                 })
-                .or(Some(Located::Annotation(self.location(), type_))),
+                .or(Some(Located::Annotation { ast: self, type_ })),
             TypeAst::Constructor(TypeAstConstructor {
                 arguments, module, ..
             }) => type_
@@ -449,7 +452,7 @@ impl TypeAst {
                         None
                     }
                 }))
-                .or(Some(Located::Annotation(self.location(), type_))),
+                .or(Some(Located::Annotation { ast: self, type_ })),
             TypeAst::Tuple(TypeAstTuple { elements, .. }) => type_
                 .tuple_types()
                 .and_then(|elem_types| {
@@ -463,8 +466,8 @@ impl TypeAst {
 
                     None
                 })
-                .or(Some(Located::Annotation(self.location(), type_))),
-            TypeAst::Var(_) | TypeAst::Hole(_) => Some(Located::Annotation(self.location(), type_)),
+                .or(Some(Located::Annotation { ast: self, type_ })),
+            TypeAst::Var(_) | TypeAst::Hole(_) => Some(Located::Annotation { ast: self, type_ }),
         }
     }
 
@@ -547,6 +550,7 @@ fn type_ast_print_constructor() {
         name: "SomeType".into(),
         module: Some(("some_module".into(), SrcSpan { start: 1, end: 1 })),
         location: SrcSpan { start: 1, end: 1 },
+        name_location: SrcSpan { start: 1, end: 1 },
         arguments: vec![
             TypeAst::Var(TypeAstVar {
                 location: SrcSpan { start: 1, end: 1 },
@@ -572,6 +576,7 @@ fn type_ast_print_tuple() {
                 name: "SomeType".into(),
                 module: Some(("some_module".into(), SrcSpan { start: 1, end: 1 })),
                 location: SrcSpan { start: 1, end: 1 },
+                name_location: SrcSpan { start: 1, end: 1 },
                 arguments: vec![
                     TypeAst::Var(TypeAstVar {
                         location: SrcSpan { start: 1, end: 1 },

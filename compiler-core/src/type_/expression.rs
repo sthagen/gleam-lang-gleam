@@ -1106,7 +1106,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 // We only register the reference here, if we know that this is a module access.
                 // Otherwise we would register module access even if we are actually accessing
                 // the field on a record
-                self.environment.references.register_reference(
+                self.environment.references.register_value_reference(
                     module_name.clone(),
                     label.clone(),
                     SrcSpan::new(field_start, location.end),
@@ -1472,8 +1472,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             }
         };
 
-        let value_typ = value.type_();
-
+        let type_ = value.type_();
         let kind = self.infer_assignment_kind(kind.clone());
 
         // Ensure the pattern matches the type of the value
@@ -1485,7 +1484,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             &self.hydrator,
             self.problems,
         );
-        let unify_result = pattern_typer.unify(pattern, value_typ.clone(), None);
+
+        let value_variable_name = match value {
+            TypedExpr::Var { ref name, .. } => Some(name.clone()),
+            _ => None,
+        };
+        let unify_result = pattern_typer.unify(pattern, type_.clone(), value_variable_name);
 
         let minimum_required_version = pattern_typer.minimum_required_version;
         if minimum_required_version > self.minimum_required_version {
@@ -1495,7 +1499,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let pattern = match unify_result {
             Ok(pattern) => pattern,
             Err(error) => {
-                self.error_pattern_with_rigid_names(pattern_location, error, value_typ.clone())
+                self.error_pattern_with_rigid_names(pattern_location, error, type_.clone())
             }
         };
 
@@ -1505,8 +1509,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 .type_from_ast(annotation)
                 .map(|type_| self.instantiate(type_, &mut hashmap![]))
             {
-                Ok(ann_typ) => {
-                    if let Err(error) = unify(ann_typ, value_typ.clone())
+                Ok(annotated_type) => {
+                    if let Err(error) = unify(annotated_type, type_.clone())
                         .map_err(|e| convert_unify_error(e, value.type_defining_location()))
                     {
                         self.problems.error(error);
@@ -1521,16 +1525,26 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // Do not perform exhaustiveness checking if user explicitly used `let assert ... = ...`.
         let exhaustiveness_check = self.check_let_exhaustiveness(location, value.type_(), &pattern);
         match (&kind, exhaustiveness_check) {
+            // The pattern is exhaustive in a let assignment, there's no problem here.
             (AssignmentKind::Let | AssignmentKind::Generated, Ok(_)) => {}
+
+            // If the pattern is not exhaustive and we're not asserting we want to
+            // report the error!
             (AssignmentKind::Let | AssignmentKind::Generated, Err(e)) => {
                 self.problems.error(e);
             }
+
+            // If we're asserting but the pattern already covers all cases then the
+            // `assert` is redundant and can be safely removed.
             (AssignmentKind::Assert { location, .. }, Ok(_)) => {
                 self.problems.warning(Warning::RedundantAssertAssignment {
                     location: *location,
                 })
             }
-            (AssignmentKind::Assert { .. }, _) => {}
+
+            // Otherwise we just don't care, asserting will ignore the any missing
+            // pattern error.
+            (AssignmentKind::Assert { .. }, Err(_)) => {}
         }
 
         Assignment {
@@ -2336,7 +2350,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     constructor,
                 } => match constructor {
                     ModuleValueConstructor::Constant { literal, .. } => {
-                        self.environment.references.register_reference(
+                        self.environment.references.register_value_reference(
                             module_name.clone(),
                             label.clone(),
                             location,
@@ -3059,18 +3073,20 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 module,
                 name: value_name,
                 ..
-            } if value_name != referenced_name => self.environment.references.register_reference(
-                module.clone(),
-                value_name.clone(),
-                location,
-                ReferenceKind::Alias,
-            ),
+            } if value_name != referenced_name => {
+                self.environment.references.register_value_reference(
+                    module.clone(),
+                    value_name.clone(),
+                    location,
+                    ReferenceKind::Alias,
+                )
+            }
             ValueConstructorVariant::ModuleFn { name, module, .. }
             | ValueConstructorVariant::Record { name, module, .. }
             | ValueConstructorVariant::ModuleConstant { name, module, .. } => self
                 .environment
                 .references
-                .register_reference(module.clone(), name.clone(), location, kind),
+                .register_value_reference(module.clone(), name.clone(), location, kind),
             ValueConstructorVariant::LocalVariable { .. }
             | ValueConstructorVariant::LocalConstant { .. } => {}
         }
@@ -3999,6 +4015,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
+    /// Returns `Ok(())` if the let is exhaustive, returns an `InexhaustiveLetAssignment`
+    /// error if the given pattern doesn't cover all possible cases.
+    ///
     fn check_let_exhaustiveness(
         &self,
         location: SrcSpan,
@@ -4011,13 +4030,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         // Error for missing clauses that would cause a crash
         if output.diagnostics.missing {
-            return Err(Error::InexhaustiveLetAssignment {
+            Err(Error::InexhaustiveLetAssignment {
                 location,
                 missing: output.missing_patterns(self.environment),
-            });
+            })
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 
     fn check_case_exhaustiveness(

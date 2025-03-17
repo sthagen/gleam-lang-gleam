@@ -102,8 +102,8 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                     // This variable was defined in the Initial multi-pattern
                     Some(initial) if self.initial_pattern_vars.contains(name) => {
                         assigned.push(name.into());
-                        let initial_typ = initial.type_.clone();
-                        unify(initial_typ, type_.clone())?;
+                        let initial_type = initial.type_.clone();
+                        unify(initial_type, type_.clone())?;
                         unify_constructor_variants(Arc::make_mut(&mut initial.type_), &type_);
                         Ok(())
                     }
@@ -660,7 +660,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 // Register the value as seen for detection of unused values
                 self.environment.increment_usage(&name);
 
-                let cons = self
+                let constructor = self
                     .environment
                     .get_value_constructor(module.as_ref().map(|(module, _)| module), &name)
                     .map_err(|e| {
@@ -671,7 +671,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                         )
                     })?;
 
-                match cons.field_map() {
+                match constructor.field_map() {
                     // The fun has a field map so labelled arguments may be present and need to be reordered.
                     Some(field_map) => {
                         if let Some(spread_location) = spread {
@@ -692,7 +692,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                             // Potential future optimisation.
                             let index_of_first_labelled_arg = pattern_args
                                 .iter()
-                                .position(|a| a.label.is_some())
+                                .position(|argument| argument.label.is_some())
                                 .unwrap_or(pattern_args.len());
 
                             // In Gleam we can pass in positional unlabelled args to a constructor
@@ -720,7 +720,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                             let supplied_unlabelled_args = index_of_first_labelled_arg;
                             let supplied_labelled_args = pattern_args
                                 .iter()
-                                .filter_map(|l| l.label.clone())
+                                .filter_map(|argument| argument.label.clone())
                                 .collect::<HashSet<_>>();
                             let constructor_unlabelled_args =
                                 field_map.arity - field_map.fields.len() as u32;
@@ -732,7 +732,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                                 .fields
                                 .iter()
                                 // We take the labels in order of definition in the constructor...
-                                .sorted_by_key(|(_, pos)| *pos)
+                                .sorted_by_key(|(_, position)| *position)
                                 .map(|(label, _)| label.clone())
                                 // ...and then remove the ones that were supplied as unlabelled
                                 // positional arguments...
@@ -765,7 +765,9 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                         assert_no_labelled_arguments(&pattern_args)?;
 
                         if let Some(spread_location) = spread {
-                            if let ValueConstructorVariant::Record { arity, .. } = &cons.variant {
+                            if let ValueConstructorVariant::Record { arity, .. } =
+                                &constructor.variant
+                            {
                                 while pattern_args.len() < usize::from(*arity) {
                                     pattern_args.push(CallArg {
                                         value: Pattern::Discard {
@@ -783,8 +785,9 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                     }
                 }
 
-                let constructor_typ = cons.type_.clone();
-                let constructor = match &cons.variant {
+                let constructor_type = constructor.type_.clone();
+                let constructor_deprecation = constructor.deprecation.clone();
+                let pattern_constructor = match &constructor.variant {
                     ValueConstructorVariant::Record {
                         name,
                         documentation,
@@ -792,14 +795,26 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                         location,
                         variant_index: constructor_index,
                         ..
-                    } => PatternConstructor {
-                        documentation: documentation.clone(),
-                        name: name.clone(),
-                        field_map: cons.field_map().cloned(),
-                        module: module.clone(),
-                        location: *location,
-                        constructor_index: *constructor_index,
-                    },
+                    } => {
+                        let constructor_index = *constructor_index;
+                        let constructor = PatternConstructor {
+                            documentation: documentation.clone(),
+                            name: name.clone(),
+                            field_map: constructor.field_map().cloned(),
+                            module: module.clone(),
+                            location: *location,
+                            constructor_index,
+                        };
+
+                        if let Some(ref variable_name) = subject_variable {
+                            self.set_subject_variable_variant(
+                                variable_name.clone(),
+                                constructor_index,
+                            );
+                        }
+
+                        constructor
+                    }
                     ValueConstructorVariant::LocalVariable { .. }
                     | ValueConstructorVariant::LocalConstant { .. }
                     | ValueConstructorVariant::ModuleConstant { .. }
@@ -808,7 +823,6 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                     }
                 };
 
-                let constructor_deprecation = cons.deprecation.clone();
                 match constructor_deprecation {
                     Deprecation::NotDeprecated => {}
                     Deprecation::Deprecated { message } => {
@@ -820,9 +834,9 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                     }
                 }
 
-                self.environment.references.register_reference(
-                    constructor.module.clone(),
-                    constructor.name.clone(),
+                self.environment.references.register_value_reference(
+                    pattern_constructor.module.clone(),
+                    pattern_constructor.name.clone(),
                     name_location,
                     if module.is_some() {
                         ReferenceKind::Qualified
@@ -833,7 +847,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
 
                 let instantiated_constructor_type =
                     self.environment
-                        .instantiate(constructor_typ, &mut hashmap![], self.hydrator);
+                        .instantiate(constructor_type, &mut hashmap![], self.hydrator);
                 match instantiated_constructor_type.deref() {
                     Type::Fn { args, return_ } => {
                         if args.len() == pattern_args.len() {
@@ -881,7 +895,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                                 module,
                                 name,
                                 arguments: pattern_args,
-                                constructor: Inferred::Known(constructor),
+                                constructor: Inferred::Known(pattern_constructor),
                                 spread,
                                 type_: return_.clone(),
                             })
@@ -917,7 +931,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                                 module,
                                 name,
                                 arguments: vec![],
-                                constructor: Inferred::Known(constructor),
+                                constructor: Inferred::Known(pattern_constructor),
                                 spread,
                                 type_: instantiated_constructor_type,
                             })

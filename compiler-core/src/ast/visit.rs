@@ -541,11 +541,12 @@ pub trait Visit<'ast> {
     fn visit_type_ast_constructor(
         &mut self,
         location: &'ast SrcSpan,
+        name_location: &'ast SrcSpan,
         module: &'ast Option<(EcoString, SrcSpan)>,
         name: &'ast EcoString,
         arguments: &'ast Vec<TypeAst>,
     ) {
-        visit_type_ast_constructor(self, location, module, name, arguments);
+        visit_type_ast_constructor(self, location, name_location, module, name, arguments);
     }
 
     fn visit_type_ast_fn(
@@ -607,11 +608,12 @@ where
     match node {
         TypeAst::Constructor(super::TypeAstConstructor {
             location,
+            name_location,
             arguments,
             module,
             name,
         }) => {
-            v.visit_type_ast_constructor(location, module, name, arguments);
+            v.visit_type_ast_constructor(location, name_location, module, name, arguments);
         }
         TypeAst::Fn(super::TypeAstFn {
             location,
@@ -635,6 +637,7 @@ where
 pub fn visit_type_ast_constructor<'a, V>(
     v: &mut V,
     _location: &'a SrcSpan,
+    _name_location: &'a SrcSpan,
     _module: &'a Option<(EcoString, SrcSpan)>,
     _name: &'a EcoString,
     arguments: &'a Vec<TypeAst>,
@@ -1013,7 +1016,7 @@ pub fn visit_typed_expr_module_select<'a, V>(
     _v: &mut V,
     _location: &'a SrcSpan,
     _field_start: &'a u32,
-    _typ: &'a Arc<Type>,
+    _type_: &'a Arc<Type>,
     _label: &'a EcoString,
     _module_name: &'a EcoString,
     _module_alias: &'a EcoString,
@@ -1063,7 +1066,7 @@ pub fn visit_typed_expr_todo<'a, V>(
     }
 }
 
-fn visit_typed_expr_echo<'a, V>(
+pub fn visit_typed_expr_echo<'a, V>(
     v: &mut V,
     _location: &'a SrcSpan,
     _type_: &'a Arc<Type>,

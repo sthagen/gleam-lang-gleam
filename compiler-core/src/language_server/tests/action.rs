@@ -80,6 +80,7 @@ const INLINE_VARIABLE: &str = "Inline variable";
 const CONVERT_TO_PIPE: &str = "Convert to pipe";
 const INTERPOLATE_STRING: &str = "Interpolate string";
 const FILL_UNUSED_FIELDS: &str = "Fill unused fields";
+const REMOVE_ALL_ECHOS_FROM_THIS_MODULE: &str = "Remove all `echo`s from this module";
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range:expr $(,)?) => {
@@ -197,6 +198,134 @@ pub fn main() {
   let Wibble(..) = todo
 }"#,
         find_position_of("..").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  echo 1 + 2
+}",
+        find_position_of("echo").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_selecting_expression() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  echo 1 + 2
+}",
+        find_position_of("1").select_until(find_position_of("2"))
+    );
+}
+
+#[test]
+fn remove_echo_as_function_arg() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  wibble([], echo 1 + 2)
+}",
+        find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_in_pipeline_step() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  [1, 2, 3]
+  |> echo
+  |> wibble
+}",
+        find_position_of("echo").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_in_single_line_pipeline_step() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  [1, 2, 3] |> echo |> wibble
+}",
+        find_position_of("echo").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_last_in_long_pipeline_step() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  [1, 2, 3]
+  |> wibble
+  |> echo
+}",
+        find_position_of("echo").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_last_in_short_pipeline_step() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  [1, 2, 3]
+  |> echo
+}",
+        find_position_of("echo").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_before_pipeline() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  echo [1, 2, 3] |> wibble
+}",
+        find_position_of("echo").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_before_pipeline_selecting_step() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  echo [1, 2, 3] |> wibble
+}",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_removes_all_echos() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  echo wibble(echo 1, 2)
+}",
+        find_position_of("echo").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn remove_echo_removes_all_echos_1() {
+    assert_code_action!(
+        REMOVE_ALL_ECHOS_FROM_THIS_MODULE,
+        "pub fn main() {
+  echo 1 |> echo |> echo |> wibble |> echo
+  echo wibble(echo 1, echo 2)
+  echo 1
+}",
+        find_position_of("echo").nth_occurrence(2).to_selection()
     );
 }
 
@@ -5938,5 +6067,24 @@ pub fn main() {
 }
 ",
         find_position_of("wibble").to_selection()
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/4342
+#[test]
+fn inline_variable_in_record_update() {
+    assert_code_action!(
+        INLINE_VARIABLE,
+        "
+type Couple {
+  Couple(l: Int, r: Int)
+}
+
+pub fn main() {
+  let c1 = Couple(l: 1, r: 1)
+  let c2 = Couple(..c1, r: 1)
+}
+",
+        find_position_of("c1,").to_selection()
     );
 }
