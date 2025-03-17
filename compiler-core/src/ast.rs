@@ -34,6 +34,7 @@ pub const RECORD_UPDATE_VARIABLE: &str = "_record";
 pub const ASSERT_FAIL_VARIABLE: &str = "_assert_fail";
 pub const ASSERT_SUBJECT_VARIABLE: &str = "_assert_subject";
 pub const CAPTURE_VARIABLE: &str = "_capture";
+pub const BLOCK_VARIABLE: &str = "_block";
 
 pub trait HasLocation {
     fn location(&self) -> SrcSpan;
@@ -290,7 +291,7 @@ pub struct TypeAstVar {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeAstTuple {
     pub location: SrcSpan,
-    pub elems: Vec<TypeAst>,
+    pub elements: Vec<TypeAst>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,15 +372,18 @@ impl TypeAst {
                 }) => name == o_name,
                 _ => false,
             },
-            TypeAst::Tuple(TypeAstTuple { elems, location: _ }) => match other {
+            TypeAst::Tuple(TypeAstTuple {
+                elements,
+                location: _,
+            }) => match other {
                 TypeAst::Tuple(TypeAstTuple {
-                    elems: o_elems,
+                    elements: other_elements,
                     location: _,
                 }) => {
-                    elems.len() == o_elems.len()
-                        && elems
+                    elements.len() == other_elements.len()
+                        && elements
                             .iter()
-                            .zip(o_elems)
+                            .zip(other_elements)
                             .all(|a| a.0.is_logically_equal(a.1))
                 }
                 _ => false,
@@ -446,10 +450,10 @@ impl TypeAst {
                     }
                 }))
                 .or(Some(Located::Annotation(self.location(), type_))),
-            TypeAst::Tuple(TypeAstTuple { elems, .. }) => type_
+            TypeAst::Tuple(TypeAstTuple { elements, .. }) => type_
                 .tuple_types()
                 .and_then(|elem_types| {
-                    if let Some(e) = elems
+                    if let Some(e) = elements
                         .iter()
                         .zip(elem_types)
                         .find_map(|(e, e_type)| e.find_node(byte_index, e_type.clone()))
@@ -471,9 +475,9 @@ impl TypeAst {
             TypeAst::Hole(hole) => buffer.push_str(&hole.name),
             TypeAst::Tuple(tuple) => {
                 buffer.push_str("#(");
-                for (i, elem) in tuple.elems.iter().enumerate() {
-                    elem.print(buffer);
-                    if i < tuple.elems.len() - 1 {
+                for (i, element) in tuple.elements.iter().enumerate() {
+                    element.print(buffer);
+                    if i < tuple.elements.len() - 1 {
                         buffer.push_str(", ");
                     }
                 }
@@ -563,7 +567,7 @@ fn type_ast_print_tuple() {
     let mut buffer = EcoString::new();
     let ast = TypeAst::Tuple(TypeAstTuple {
         location: SrcSpan { start: 1, end: 1 },
-        elems: vec![
+        elements: vec![
             TypeAst::Constructor(TypeAstConstructor {
                 name: "SomeType".into(),
                 module: Some(("some_module".into(), SrcSpan { start: 1, end: 1 })),
@@ -1844,7 +1848,7 @@ pub enum Pattern<Type> {
 
     Tuple {
         location: SrcSpan,
-        elems: Vec<Self>,
+        elements: Vec<Self>,
     },
 
     BitArray {
@@ -2000,7 +2004,9 @@ impl TypedPattern {
 
             Pattern::Discard { type_, .. } => type_.clone(),
 
-            Pattern::Tuple { elems, .. } => type_::tuple(elems.iter().map(|p| p.type_()).collect()),
+            Pattern::Tuple { elements, .. } => {
+                type_::tuple(elements.iter().map(|p| p.type_()).collect())
+            }
         }
     }
 
@@ -2033,7 +2039,7 @@ impl TypedPattern {
                 Some(spread_location) if spread_location.contains(byte_index) => {
                     Some(Located::PatternSpread {
                         spread_location: *spread_location,
-                        arguments,
+                        pattern: self,
                     })
                 }
 
@@ -2044,7 +2050,9 @@ impl TypedPattern {
                 .find_map(|p| p.find_node(byte_index))
                 .or_else(|| tail.as_ref().and_then(|p| p.find_node(byte_index))),
 
-            Pattern::Tuple { elems, .. } => elems.iter().find_map(|p| p.find_node(byte_index)),
+            Pattern::Tuple { elements, .. } => {
+                elements.iter().find_map(|p| p.find_node(byte_index))
+            }
 
             Pattern::BitArray { segments, .. } => segments
                 .iter()
@@ -2053,7 +2061,49 @@ impl TypedPattern {
         }
         .or(Some(Located::Pattern(self)))
     }
+
+    /// If the pattern is a `Constructor` with a spread, it returns a tuple with
+    /// all the ignored fields. Split in unlabelled and labelled ones.
+    ///
+    pub(crate) fn unused_arguments(&self) -> Option<PatternUnusedArguments> {
+        let TypedPattern::Constructor {
+            arguments,
+            spread: Some(_),
+            ..
+        } = self
+        else {
+            return None;
+        };
+
+        let mut positional = vec![];
+        let mut labelled = vec![];
+        for argument in arguments {
+            // We only want to display the arguments that were ignored using `..`.
+            // Any argument ignored that way is marked as implicit, so if it is
+            // not implicit we just ignore it.
+            if !argument.is_implicit() {
+                continue;
+            }
+            let type_ = argument.value.type_();
+            match &argument.label {
+                Some(label) => labelled.push((label.clone(), type_)),
+                None => positional.push(type_),
+            }
+        }
+
+        Some(PatternUnusedArguments {
+            positional,
+            labelled,
+        })
+    }
 }
+
+#[derive(Debug, Default)]
+pub struct PatternUnusedArguments {
+    pub positional: Vec<Arc<Type>>,
+    pub labelled: Vec<(EcoString, Arc<Type>)>,
+}
+
 impl<A> HasLocation for Pattern<A> {
     fn location(&self) -> SrcSpan {
         self.location()

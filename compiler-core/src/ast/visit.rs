@@ -248,9 +248,9 @@ pub trait Visit<'ast> {
         &mut self,
         location: &'ast SrcSpan,
         type_: &'ast Arc<Type>,
-        elems: &'ast [TypedExpr],
+        elements: &'ast [TypedExpr],
     ) {
-        visit_typed_expr_tuple(self, location, type_, elems);
+        visit_typed_expr_tuple(self, location, type_, elements);
     }
 
     fn visit_typed_expr_tuple_index(
@@ -497,9 +497,9 @@ pub trait Visit<'ast> {
     fn visit_typed_pattern_tuple(
         &mut self,
         location: &'ast SrcSpan,
-        elems: &'ast Vec<TypedPattern>,
+        elements: &'ast Vec<TypedPattern>,
     ) {
-        visit_typed_pattern_tuple(self, location, elems);
+        visit_typed_pattern_tuple(self, location, elements);
     }
 
     fn visit_typed_pattern_bit_array(
@@ -561,8 +561,8 @@ pub trait Visit<'ast> {
         visit_type_ast_var(self, location, name);
     }
 
-    fn visit_type_ast_tuple(&mut self, location: &'ast SrcSpan, elems: &'ast Vec<TypeAst>) {
-        visit_type_ast_tuple(self, location, elems);
+    fn visit_type_ast_tuple(&mut self, location: &'ast SrcSpan, elements: &'ast Vec<TypeAst>) {
+        visit_type_ast_tuple(self, location, elements);
     }
 
     fn visit_type_ast_hole(&mut self, location: &'ast SrcSpan, name: &'ast EcoString) {
@@ -623,8 +623,8 @@ where
         TypeAst::Var(super::TypeAstVar { location, name }) => {
             v.visit_type_ast_var(location, name);
         }
-        TypeAst::Tuple(super::TypeAstTuple { location, elems }) => {
-            v.visit_type_ast_tuple(location, elems);
+        TypeAst::Tuple(super::TypeAstTuple { location, elements }) => {
+            v.visit_type_ast_tuple(location, elements);
         }
         TypeAst::Hole(super::TypeAstHole { location, name }) => {
             v.visit_type_ast_hole(location, name);
@@ -667,12 +667,12 @@ where
     // No further traversal needed for variables
 }
 
-pub fn visit_type_ast_tuple<'a, V>(v: &mut V, _location: &'a SrcSpan, elems: &'a Vec<TypeAst>)
+pub fn visit_type_ast_tuple<'a, V>(v: &mut V, _location: &'a SrcSpan, elements: &'a Vec<TypeAst>)
 where
     V: Visit<'a> + ?Sized,
 {
-    for elem in elems {
-        v.visit_type_ast(elem);
+    for element in elements {
+        v.visit_type_ast(element);
     }
 }
 
@@ -792,8 +792,8 @@ where
         TypedExpr::Tuple {
             location,
             type_,
-            elems,
-        } => v.visit_typed_expr_tuple(location, type_, elems),
+            elements,
+        } => v.visit_typed_expr_tuple(location, type_, elements),
         TypedExpr::TupleIndex {
             location,
             type_,
@@ -1028,12 +1028,12 @@ pub fn visit_typed_expr_tuple<'a, V>(
     v: &mut V,
     _location: &'a SrcSpan,
     _type_: &'a Arc<Type>,
-    elems: &'a [TypedExpr],
+    elements: &'a [TypedExpr],
 ) where
     V: Visit<'a> + ?Sized,
 {
-    for elem in elems {
-        v.visit_typed_expr(elem);
+    for element in elements {
+        v.visit_typed_expr(element);
     }
 }
 
@@ -1492,7 +1492,7 @@ where
             spread,
             type_,
         ),
-        Pattern::Tuple { location, elems } => v.visit_typed_pattern_tuple(location, elems),
+        Pattern::Tuple { location, elements } => v.visit_typed_pattern_tuple(location, elements),
         Pattern::BitArray { location, segments } => {
             v.visit_typed_pattern_bit_array(location, segments)
         }
@@ -1622,12 +1622,12 @@ where
 pub fn visit_typed_pattern_tuple<'a, V>(
     v: &mut V,
     _location: &'a SrcSpan,
-    elems: &'a Vec<TypedPattern>,
+    elements: &'a Vec<TypedPattern>,
 ) where
     V: Visit<'a> + ?Sized,
 {
-    for elem in elems {
-        v.visit_typed_pattern(elem);
+    for element in elements {
+        v.visit_typed_pattern(element);
     }
 }
 

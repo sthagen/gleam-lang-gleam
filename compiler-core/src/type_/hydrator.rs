@@ -190,24 +190,24 @@ impl Hydrator {
                 Ok(return_type)
             }
 
-            TypeAst::Tuple(TypeAstTuple { elems, .. }) => Ok(tuple(
-                elems
+            TypeAst::Tuple(TypeAstTuple { elements, .. }) => Ok(tuple(
+                elements
                     .iter()
-                    .map(|t| self.type_from_ast(t, environment, problems))
+                    .map(|type_| self.type_from_ast(type_, environment, problems))
                     .try_collect()?,
             )),
 
             TypeAst::Fn(TypeAstFn {
                 arguments: args,
-                return_: retrn,
+                return_,
                 ..
             }) => {
                 let args = args
                     .iter()
-                    .map(|t| self.type_from_ast(t, environment, problems))
+                    .map(|type_| self.type_from_ast(type_, environment, problems))
                     .try_collect()?;
-                let retrn = self.type_from_ast(retrn, environment, problems)?;
-                Ok(fn_(args, retrn))
+                let return_ = self.type_from_ast(return_, environment, problems)?;
+                Ok(fn_(args, return_))
             }
 
             TypeAst::Var(TypeAstVar { name, location }) => {

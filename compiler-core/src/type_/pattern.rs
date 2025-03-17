@@ -594,46 +594,48 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 }),
             },
 
-            Pattern::Tuple { elems, location } => match collapse_links(type_.clone()).deref() {
-                Type::Tuple { elems: type_elems } => {
-                    if elems.len() != type_elems.len() {
+            Pattern::Tuple { elements, location } => match collapse_links(type_.clone()).deref() {
+                Type::Tuple {
+                    elements: type_elements,
+                } => {
+                    if elements.len() != type_elements.len() {
                         return Err(Error::IncorrectArity {
                             labels: vec![],
                             location,
-                            expected: type_elems.len(),
-                            given: elems.len(),
+                            expected: type_elements.len(),
+                            given: elements.len(),
                         });
                     }
 
-                    let elems = elems
+                    let elements = elements
                         .into_iter()
-                        .zip(type_elems)
+                        .zip(type_elements)
                         .map(|(pattern, type_)| self.unify(pattern, type_.clone(), None))
                         .try_collect()?;
-                    Ok(Pattern::Tuple { elems, location })
+                    Ok(Pattern::Tuple { elements, location })
                 }
 
                 Type::Var { .. } => {
-                    let elems_types: Vec<_> = (0..(elems.len()))
+                    let elements_types: Vec<_> = (0..(elements.len()))
                         .map(|_| self.environment.new_unbound_var())
                         .collect();
-                    unify(tuple(elems_types.clone()), type_)
+                    unify(tuple(elements_types.clone()), type_)
                         .map_err(|e| convert_unify_error(e, location))?;
-                    let elems = elems
+                    let elements = elements
                         .into_iter()
-                        .zip(elems_types)
+                        .zip(elements_types)
                         .map(|(pattern, type_)| self.unify(pattern, type_, None))
                         .try_collect()?;
-                    Ok(Pattern::Tuple { elems, location })
+                    Ok(Pattern::Tuple { elements, location })
                 }
 
                 _ => {
-                    let elems_types = (0..(elems.len()))
+                    let elements_types = (0..(elements.len()))
                         .map(|_| self.environment.new_unbound_var())
                         .collect();
 
                     Err(Error::CouldNotUnify {
-                        given: tuple(elems_types),
+                        given: tuple(elements_types),
                         expected: type_,
                         situation: None,
                         location,
@@ -833,7 +835,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                     self.environment
                         .instantiate(constructor_typ, &mut hashmap![], self.hydrator);
                 match instantiated_constructor_type.deref() {
-                    Type::Fn { args, retrn } => {
+                    Type::Fn { args, return_ } => {
                         if args.len() == pattern_args.len() {
                             let pattern_args = pattern_args
                                 .into_iter()
@@ -861,11 +863,11 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                                     })
                                 })
                                 .try_collect()?;
-                            unify(type_.clone(), retrn.clone())
+                            unify(type_.clone(), return_.clone())
                                 .map_err(|e| convert_unify_error(e, location))?;
 
                             if let Some((variable_to_infer, inferred_variant)) =
-                                subject_variable.zip(retrn.custom_type_inferred_variant())
+                                subject_variable.zip(return_.custom_type_inferred_variant())
                             {
                                 self.set_subject_variable_variant(
                                     variable_to_infer,
@@ -881,7 +883,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                                 arguments: pattern_args,
                                 constructor: Inferred::Known(constructor),
                                 spread,
-                                type_: retrn.clone(),
+                                type_: return_.clone(),
                             })
                         } else {
                             Err(Error::IncorrectArity {

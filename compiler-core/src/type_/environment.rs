@@ -558,7 +558,7 @@ impl Environment<'_> {
             } => {
                 let args = args
                     .iter()
-                    .map(|t| self.instantiate(t.clone(), ids, hydrator))
+                    .map(|type_| self.instantiate(type_.clone(), ids, hydrator))
                     .collect();
                 Arc::new(Type::Named {
                     publicity: *publicity,
@@ -599,17 +599,17 @@ impl Environment<'_> {
                 })
             }
 
-            Type::Fn { args, retrn, .. } => fn_(
+            Type::Fn { args, return_, .. } => fn_(
                 args.iter()
-                    .map(|t| self.instantiate(t.clone(), ids, hydrator))
+                    .map(|type_| self.instantiate(type_.clone(), ids, hydrator))
                     .collect(),
-                self.instantiate(retrn.clone(), ids, hydrator),
+                self.instantiate(return_.clone(), ids, hydrator),
             ),
 
-            Type::Tuple { elems } => tuple(
-                elems
+            Type::Tuple { elements } => tuple(
+                elements
                     .iter()
-                    .map(|t| self.instantiate(t.clone(), ids, hydrator))
+                    .map(|type_| self.instantiate(type_.clone(), ids, hydrator))
                     .collect(),
             ),
         }
@@ -912,10 +912,17 @@ pub fn unify(t1: Arc<Type>, t2: Arc<Type>) -> Result<(), UnifyError> {
             Ok(())
         }
 
-        (Type::Tuple { elems: elems1, .. }, Type::Tuple { elems: elems2, .. })
-            if elems1.len() == elems2.len() =>
-        {
-            for (a, b) in elems1.iter().zip(elems2) {
+        (
+            Type::Tuple {
+                elements: elements1,
+                ..
+            },
+            Type::Tuple {
+                elements: elements2,
+                ..
+            },
+        ) if elements1.len() == elements2.len() => {
+            for (a, b) in elements1.iter().zip(elements2) {
                 unify_enclosed_type(t1.clone(), t2.clone(), unify(a.clone(), b.clone()))?;
             }
             Ok(())
@@ -924,12 +931,12 @@ pub fn unify(t1: Arc<Type>, t2: Arc<Type>) -> Result<(), UnifyError> {
         (
             Type::Fn {
                 args: args1,
-                retrn: retrn1,
+                return_: return1,
                 ..
             },
             Type::Fn {
                 args: args2,
-                retrn: retrn2,
+                return_: return2,
                 ..
             },
         ) => {
@@ -942,8 +949,8 @@ pub fn unify(t1: Arc<Type>, t2: Arc<Type>) -> Result<(), UnifyError> {
                     .map_err(|_| unify_wrong_arguments(&t1, a, &t2, b, i))?;
             }
 
-            unify(retrn1.clone(), retrn2.clone())
-                .map_err(|_| unify_wrong_returns(&t1, retrn1, &t2, retrn2))
+            unify(return1.clone(), return2.clone())
+                .map_err(|_| unify_wrong_returns(&t1, return1, &t2, return2))
         }
 
         _ => Err(UnifyError::CouldNotUnify {

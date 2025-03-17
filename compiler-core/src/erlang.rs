@@ -643,14 +643,14 @@ where
 fn fun_spec<'a>(
     name: &'a str,
     args: impl IntoIterator<Item = Document<'a>>,
-    retrn: Document<'a>,
+    return_: Document<'a>,
 ) -> Document<'a> {
     "-spec "
         .to_doc()
         .append(atom(name))
         .append(wrap_args(args))
         .append(" -> ")
-        .append(retrn)
+        .append(return_)
         .append(".")
         .append(line())
         .group()
@@ -723,17 +723,17 @@ fn string_length_utf8_bytes(str: &EcoString) -> usize {
     convert_string_escape_chars(str).len()
 }
 
-fn tuple<'a>(elems: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {
-    join(elems, break_(",", ", "))
+fn tuple<'a>(elements: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {
+    join(elements, break_(",", ", "))
         .nest(INDENT)
         .surround("{", "}")
         .group()
 }
 
 fn const_string_concatenate_bit_array<'a>(
-    elems: impl IntoIterator<Item = Document<'a>>,
+    elements: impl IntoIterator<Item = Document<'a>>,
 ) -> Document<'a> {
-    join(elems, break_(",", ", "))
+    join(elements, break_(",", ", "))
         .nest(INDENT)
         .surround("<<", ">>")
         .group()
@@ -834,8 +834,8 @@ fn string_concatenate_argument<'a>(value: &'a TypedExpr, env: &mut Env<'a>) -> D
     }
 }
 
-fn bit_array<'a>(elems: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {
-    join(elems, break_(",", ", "))
+fn bit_array<'a>(elements: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {
+    join(elements, break_(",", ", "))
         .nest(INDENT)
         .surround("<<", ">>")
         .group()
@@ -1245,22 +1245,27 @@ fn expr_list<'a>(
     env: &mut Env<'a>,
 ) -> Document<'a> {
     let elements = join(
-        elements.iter().map(|e| maybe_block_expr(e, env)),
+        elements
+            .iter()
+            .map(|element| maybe_block_expr(element, env)),
         break_(",", ", "),
     );
-    list(elements, tail.as_ref().map(|e| maybe_block_expr(e, env)))
+    list(
+        elements,
+        tail.as_ref().map(|element| maybe_block_expr(element, env)),
+    )
 }
 
-fn list<'a>(elems: Document<'a>, tail: Option<Document<'a>>) -> Document<'a> {
-    let elems = match tail {
-        Some(tail) if elems.is_empty() => return tail.to_doc(),
+fn list<'a>(elements: Document<'a>, tail: Option<Document<'a>>) -> Document<'a> {
+    let elements = match tail {
+        Some(tail) if elements.is_empty() => return tail.to_doc(),
 
-        Some(tail) => elems.append(break_(" |", " | ")).append(tail),
+        Some(tail) => elements.append(break_(" |", " | ")).append(tail),
 
-        None => elems,
+        None => elements,
     };
 
-    elems.to_doc().nest(INDENT).surround("[", "]").group()
+    elements.to_doc().nest(INDENT).surround("[", "]").group()
 }
 
 fn var<'a>(name: &'a str, constructor: &'a ValueConstructor, env: &mut Env<'a>) -> Document<'a> {
@@ -1340,10 +1345,12 @@ fn const_inline<'a>(literal: &'a TypedConstant, env: &mut Env<'a>) -> Document<'
         Constant::Int { value, .. } => int(value),
         Constant::Float { value, .. } => float(value),
         Constant::String { value, .. } => string(value),
-        Constant::Tuple { elements, .. } => tuple(elements.iter().map(|e| const_inline(e, env))),
+        Constant::Tuple { elements, .. } => {
+            tuple(elements.iter().map(|element| const_inline(element, env)))
+        }
 
         Constant::List { elements, .. } => join(
-            elements.iter().map(|e| const_inline(e, env)),
+            elements.iter().map(|element| const_inline(element, env)),
             break_(",", ", "),
         )
         .nest(INDENT)
@@ -1656,7 +1663,11 @@ fn case<'a>(subjects: &'a [TypedExpr], cs: &'a [TypedClause], env: &mut Env<'a>)
             .expect("erl case printing of single subject");
         maybe_block_expr(subject, env).group()
     } else {
-        tuple(subjects.iter().map(|e| maybe_block_expr(e, env)))
+        tuple(
+            subjects
+                .iter()
+                .map(|element| maybe_block_expr(element, env)),
+        )
     };
     "case "
         .to_doc()
@@ -2063,7 +2074,11 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
             name, left, right, ..
         } => bin_op(name, left, right, env),
 
-        TypedExpr::Tuple { elems, .. } => tuple(elems.iter().map(|e| maybe_block_expr(e, env))),
+        TypedExpr::Tuple { elements, .. } => tuple(
+            elements
+                .iter()
+                .map(|element| maybe_block_expr(element, env)),
+        ),
 
         TypedExpr::BitArray { segments, .. } => bit_array(
             segments
@@ -2406,15 +2421,15 @@ fn type_var_ids(type_: &Type, ids: &mut HashMap<u64, u64>) {
                 }
             }
         },
-        Type::Fn { args, retrn } => {
+        Type::Fn { args, return_ } => {
             for arg in args {
                 type_var_ids(arg, ids)
             }
-            type_var_ids(retrn, ids);
+            type_var_ids(return_, ids);
         }
-        Type::Tuple { elems } => {
-            for elem in elems {
-                type_var_ids(elem, ids)
+        Type::Tuple { elements } => {
+            for element in elements {
+                type_var_ids(element, ids)
             }
         }
     }
@@ -2502,9 +2517,9 @@ impl<'a> TypePrinter<'a> {
                 name, module, args, ..
             } => self.print_type_app(module, name, args),
 
-            Type::Fn { args, retrn } => self.print_fn(args, retrn),
+            Type::Fn { args, return_ } => self.print_fn(args, return_),
 
-            Type::Tuple { elems } => tuple(elems.iter().map(|e| self.print(e))),
+            Type::Tuple { elements } => tuple(elements.iter().map(|element| self.print(element))),
         }
     }
 
@@ -2561,14 +2576,14 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    fn print_fn(&self, args: &[Arc<Type>], retrn: &Type) -> Document<'static> {
+    fn print_fn(&self, args: &[Arc<Type>], return_: &Type) -> Document<'static> {
         let args = join(args.iter().map(|a| self.print(a)), ", ".to_doc());
-        let retrn = self.print(retrn);
+        let return_ = self.print(return_);
         "fun(("
             .to_doc()
             .append(args)
             .append(") -> ")
-            .append(retrn)
+            .append(return_)
             .append(")")
     }
 

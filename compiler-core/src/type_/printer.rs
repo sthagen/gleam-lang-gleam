@@ -361,11 +361,11 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            Type::Fn { args, retrn } => {
+            Type::Fn { args, return_ } => {
                 buffer.push_str("fn(");
                 self.print_arguments(args, buffer, print_mode);
                 buffer.push_str(") -> ");
-                self.print(retrn, buffer, print_mode);
+                self.print(return_, buffer, print_mode);
             }
 
             Type::Var { type_, .. } => match *type_.borrow() {
@@ -375,9 +375,9 @@ impl<'a> Printer<'a> {
                 }
             },
 
-            Type::Tuple { elems, .. } => {
+            Type::Tuple { elements, .. } => {
                 buffer.push_str("#(");
-                self.print_arguments(elems, buffer, print_mode);
+                self.print_arguments(elements, buffer, print_mode);
                 buffer.push(')');
             }
         }
@@ -401,13 +401,13 @@ impl<'a> Printer<'a> {
     fn print_arguments(
         &mut self,
         args: &[Arc<Type>],
-        typ_str: &mut EcoString,
+        type_str: &mut EcoString,
         print_mode: PrintMode,
     ) {
         for (i, arg) in args.iter().enumerate() {
-            self.print(arg, typ_str, print_mode);
+            self.print(arg, type_str, print_mode);
             if i < args.len() - 1 {
-                typ_str.push_str(", ");
+                type_str.push_str(", ");
             }
         }
     }
@@ -548,7 +548,7 @@ fn test_tuple_type() {
     let mut printer = Printer::new(&names);
 
     let type_ = Type::Tuple {
-        elems: vec![
+        elements: vec![
             Arc::new(Type::Named {
                 name: "Int".into(),
                 args: vec![],
@@ -597,7 +597,7 @@ fn test_fn_type() {
                 inferred_variant: None,
             }),
         ],
-        retrn: Arc::new(Type::Named {
+        return_: Arc::new(Type::Named {
             name: "Bool".into(),
             args: vec![],
             module: "gleam".into(),

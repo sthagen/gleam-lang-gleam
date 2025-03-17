@@ -33,7 +33,7 @@ enum Index<'a> {
 
 #[derive(Debug)]
 pub(crate) struct Generator<'module_ctx, 'expression_gen, 'a> {
-    pub expression_generator: &'expression_gen mut expression::Generator<'module_ctx>,
+    pub expression_generator: &'expression_gen mut expression::Generator<'module_ctx, 'a>,
     path: Vec<Index<'a>>,
     checks: Vec<Check<'a>>,
     assignments: Vec<Assignment<'a>>,
@@ -176,7 +176,7 @@ struct SizedBitArraySegmentDetails {
 
 impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, 'a> {
     pub fn new(
-        expression_generator: &'expression_gen mut expression::Generator<'module_ctx>,
+        expression_generator: &'expression_gen mut expression::Generator<'module_ctx, 'a>,
     ) -> Self {
         Self {
             path: vec![],
@@ -583,10 +583,10 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
                 Ok(())
             }
 
-            Pattern::Tuple { elems, .. } => {
+            Pattern::Tuple { elements, .. } => {
                 // We don't check the length because type system ensures it's a
                 // tuple of the correct size
-                for (index, pattern) in elems.iter().enumerate() {
+                for (index, pattern) in elements.iter().enumerate() {
                     self.push_int(index);
                     self.traverse_pattern(subject, pattern)?;
                     self.pop();
@@ -989,14 +989,6 @@ impl<'module_ctx, 'expression_gen, 'a> Generator<'module_ctx, 'expression_gen, '
             }
         }?;
 
-        // 16-bit floats are not supported
-        if segment.type_ == crate::type_::float() && size.is_constant_value(16) {
-            return Err(Error::Unsupported {
-                feature: "Float width of 16 bits in patterns".into(),
-                location: segment.location,
-            });
-        }
-
         let is_signed = segment
             .options
             .iter()
@@ -1260,7 +1252,7 @@ impl<'a> Check<'a> {
 }
 
 pub(crate) fn assign_subject<'a>(
-    expression_generator: &mut expression::Generator<'_>,
+    expression_generator: &mut expression::Generator<'_, 'a>,
     subject: &'a TypedExpr,
 ) -> (Document<'a>, Option<Document<'a>>) {
     static ASSIGNMENT_VAR_ECO_STR: OnceLock<EcoString> = OnceLock::new();
@@ -1286,7 +1278,7 @@ pub(crate) fn assign_subject<'a>(
 }
 
 pub(crate) fn assign_subjects<'a>(
-    expression_generator: &mut expression::Generator<'_>,
+    expression_generator: &mut expression::Generator<'_, 'a>,
     subjects: &'a [TypedExpr],
 ) -> Vec<(Document<'a>, Option<Document<'a>>)> {
     let mut out = Vec::with_capacity(subjects.len());

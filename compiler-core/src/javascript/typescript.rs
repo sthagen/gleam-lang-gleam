@@ -104,15 +104,15 @@ fn generic_ids(type_: &Type, ids: &mut HashMap<u64, u64>) {
                 generic_ids(arg, ids)
             }
         }
-        Type::Fn { args, retrn } => {
+        Type::Fn { args, return_ } => {
             for arg in args {
                 generic_ids(arg, ids)
             }
-            generic_ids(retrn, ids);
+            generic_ids(return_, ids);
         }
-        Type::Tuple { elems } => {
-            for elem in elems {
-                generic_ids(elem, ids)
+        Type::Tuple { elements } => {
+            for element in elements {
+                generic_ids(element, ids)
             }
         }
     }
@@ -120,9 +120,9 @@ fn generic_ids(type_: &Type, ids: &mut HashMap<u64, u64>) {
 
 /// Prints a Gleam tuple in the TypeScript equivalent syntax
 ///
-fn tuple<'a>(elems: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {
+fn tuple<'a>(elements: impl IntoIterator<Item = Document<'a>>) -> Document<'a> {
     break_("", "")
-        .append(join(elems, break_(",", ", ")))
+        .append(join(elements, break_(",", ", ")))
         .nest(INDENT)
         .append(break_("", ""))
         .surround("[", "]")
@@ -303,15 +303,15 @@ impl<'a> TypeScriptGenerator<'a> {
                     self.collect_imports_for_type(arg, imports);
                 }
             }
-            Type::Fn { args, retrn } => {
+            Type::Fn { args, return_ } => {
                 for arg in args {
                     self.collect_imports_for_type(arg, imports);
                 }
-                self.collect_imports_for_type(retrn, imports);
+                self.collect_imports_for_type(return_, imports);
             }
-            Type::Tuple { elems } => {
-                for elem in elems {
-                    self.collect_imports_for_type(elem, imports);
+            Type::Tuple { elements } => {
+                for element in elements {
+                    self.collect_imports_for_type(element, imports);
                 }
             }
             Type::Var { type_ } => {
@@ -648,9 +648,13 @@ impl<'a> TypeScriptGenerator<'a> {
                 name, args, module, ..
             } => self.print_type_app(name, args, module, generic_usages),
 
-            Type::Fn { args, retrn } => self.print_fn(args, retrn, generic_usages),
+            Type::Fn { args, return_ } => self.print_fn(args, return_, generic_usages),
 
-            Type::Tuple { elems } => tuple(elems.iter().map(|e| self.do_print(e, generic_usages))),
+            Type::Tuple { elements } => tuple(
+                elements
+                    .iter()
+                    .map(|element| self.do_print(element, generic_usages)),
+            ),
         }
     }
 
@@ -666,9 +670,11 @@ impl<'a> TypeScriptGenerator<'a> {
                 name, args, module, ..
             } => self.print_type_app(name, args, module, None),
 
-            Type::Fn { args, retrn } => self.print_fn(args, retrn, None),
+            Type::Fn { args, return_ } => self.print_fn(args, return_, None),
 
-            Type::Tuple { elems } => tuple(elems.iter().map(|e| self.do_print(e, None))),
+            Type::Tuple { elements } => {
+                tuple(elements.iter().map(|element| self.do_print(element, None)))
+            }
         }
     }
 
@@ -776,7 +782,7 @@ impl<'a> TypeScriptGenerator<'a> {
     fn print_fn(
         &mut self,
         args: &[Arc<Type>],
-        retrn: &Type,
+        return_: &Type,
         generic_usages: Option<&HashMap<u64, u64>>,
     ) -> Document<'static> {
         docvec![
@@ -787,7 +793,7 @@ impl<'a> TypeScriptGenerator<'a> {
                 self.do_print(a, generic_usages)
             ])),
             " => ",
-            self.do_print(retrn, generic_usages)
+            self.do_print(return_, generic_usages)
         ]
     }
 

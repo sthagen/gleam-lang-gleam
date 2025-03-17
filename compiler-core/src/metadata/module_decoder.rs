@@ -153,6 +153,7 @@ impl ModuleDecoder {
             Which::Unqualified(_) => ReferenceKind::Unqualified,
             Which::Import(_) => ReferenceKind::Import,
             Which::Definition(_) => ReferenceKind::Definition,
+            Which::Alias(_) => ReferenceKind::Alias,
         })
     }
 
@@ -232,14 +233,14 @@ impl ModuleDecoder {
     }
 
     fn type_fn(&mut self, reader: &schema::type_::fn_::Reader<'_>) -> Result<Arc<Type>> {
-        let retrn = self.type_(&reader.get_return()?)?;
+        let return_ = self.type_(&reader.get_return()?)?;
         let args = read_vec!(&reader.get_arguments()?, self, type_);
-        Ok(Arc::new(Type::Fn { args, retrn }))
+        Ok(Arc::new(Type::Fn { args, return_ }))
     }
 
     fn type_tuple(&mut self, reader: &schema::type_::tuple::Reader<'_>) -> Result<Arc<Type>> {
-        let elems = read_vec!(&reader.get_elements()?, self, type_);
-        Ok(Arc::new(Type::Tuple { elems }))
+        let elements = read_vec!(&reader.get_elements()?, self, type_);
+        Ok(Arc::new(Type::Tuple { elements }))
     }
 
     fn type_var(&mut self, reader: &schema::type_::var::Reader<'_>) -> Result<Arc<Type>> {

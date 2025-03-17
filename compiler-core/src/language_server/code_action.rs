@@ -4,9 +4,10 @@ use crate::{
     Error, STDLIB_PACKAGE_NAME,
     ast::{
         self, AssignName, AssignmentKind, CallArg, CustomType, FunctionLiteralKind,
-        ImplicitCallArgOrigin, Pattern, PipelineAssignmentKind, RecordConstructor, SrcSpan,
-        TodoKind, TypedArg, TypedAssignment, TypedExpr, TypedModuleConstant, TypedPattern,
-        TypedPipelineAssignment, TypedRecordConstructor, TypedStatement, TypedUse,
+        ImplicitCallArgOrigin, Pattern, PatternUnusedArguments, PipelineAssignmentKind,
+        RecordConstructor, SrcSpan, TodoKind, TypedArg, TypedAssignment, TypedExpr,
+        TypedModuleConstant, TypedPattern, TypedPipelineAssignment, TypedRecordConstructor,
+        TypedStatement, TypedUse,
         visit::{Visit as _, visit_typed_call_arg, visit_typed_pattern_call_arg},
     },
     build::{Located, Module},
@@ -31,7 +32,7 @@ use super::{
     compiler::LspProjectCompiler,
     edits::{add_newlines_after_import, get_import_edit, position_of_first_definition_if_import},
     engine::{overlaps, within},
-    rename::find_variable_references,
+    reference::find_variable_references,
     src_span_to_lsp_range,
 };
 
@@ -134,14 +135,14 @@ impl<'ast> ast::visit::Visit<'ast> for RedundantTupleInCaseSubject<'_> {
     ) {
         for (subject_idx, subject) in subjects.iter().enumerate() {
             let TypedExpr::Tuple {
-                location, elems, ..
+                location, elements, ..
             } = subject
             else {
                 continue;
             };
 
             // Ignore empty tuple
-            if elems.is_empty() {
+            if elements.is_empty() {
                 continue;
             }
 
@@ -161,14 +162,16 @@ impl<'ast> ast::visit::Visit<'ast> for RedundantTupleInCaseSubject<'_> {
                 continue;
             }
 
-            self.delete_tuple_tokens(*location, elems.last().map(|elem| elem.location()));
+            self.delete_tuple_tokens(*location, elements.last().map(|element| element.location()));
 
             for clause in clauses {
                 match clause.pattern.get(subject_idx) {
-                    Some(Pattern::Tuple { location, elems }) => self
-                        .delete_tuple_tokens(*location, elems.last().map(|elem| elem.location())),
+                    Some(Pattern::Tuple { location, elements }) => self.delete_tuple_tokens(
+                        *location,
+                        elements.last().map(|element| element.location()),
+                    ),
                     Some(Pattern::Discard { location, .. }) => {
-                        self.discard_tuple_items(*location, elems.len())
+                        self.discard_tuple_items(*location, elements.len())
                     }
                     _ => panic!("safe: we've just checked all patterns must be discards/tuples"),
                 }
@@ -3969,10 +3972,10 @@ where
             }
             // We don't want to suggest this action for empty tuple as it
             // doesn't make a lot of sense to match on those.
-            Type::Tuple { elems } if elems.is_empty() => None,
-            Type::Tuple { elems } => Some(vec1![eco_format!(
+            Type::Tuple { elements } if elements.is_empty() => None,
+            Type::Tuple { elements } => Some(vec1![eco_format!(
                 "#({})",
-                (0..elems.len() as u32)
+                (0..elements.len() as u32)
                     .map(|i| format!("value_{i}"))
                     .join(", ")
             )]),
@@ -5213,5 +5216,191 @@ impl<'ast> ast::visit::Visit<'ast> for InterpolateString<'ast> {
             .iter()
             .for_each(|(a, _)| ast::visit::visit_typed_pipeline_assignment(self, a));
         self.visit_typed_expr(finally);
+    }
+}
+
+/// Code action to replace a `..` in a pattern with all the missing fields that
+/// have not been explicitly provided; labelled ones are introduced with the
+/// shorthand syntax.
+///
+/// ```gleam
+/// pub type Pokemon {
+///   Pokemon(Int, name: String, moves: List(String))
+/// }
+///
+/// pub fn main() {
+///   let Pokemon(..) = todo
+/// //            ^^ Cursor over the spread
+/// }
+/// ```
+/// Would become
+/// ```gleam
+/// pub fn main() {
+///   let Pokemon(int, name:, moves:) = todo
+/// }
+///
+pub struct FillUnusedFields<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    data: Option<FillUnusedFieldsData>,
+}
+
+pub struct FillUnusedFieldsData {
+    /// All the missing positional and labelled fields.
+    positional: Vec<Arc<Type>>,
+    labelled: Vec<(EcoString, Arc<Type>)>,
+    /// We need this in order to tell where the missing positional arguments
+    /// should be inserted.
+    first_labelled_argument_start: Option<u32>,
+    /// The end of the final argument before the spread, if there's any.
+    /// We'll use this to delete everything that comes after the final argument,
+    /// after adding all the ignored fields.
+    last_argument_end: Option<u32>,
+    spread_location: SrcSpan,
+}
+
+impl<'a> FillUnusedFields<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            data: None,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let Some(FillUnusedFieldsData {
+            positional,
+            labelled,
+            first_labelled_argument_start,
+            last_argument_end,
+            spread_location,
+        }) = self.data
+        else {
+            return vec![];
+        };
+
+        // Do not suggest this code action if there's no ignored fields at all.
+        if positional.is_empty() && labelled.is_empty() {
+            return vec![];
+        };
+
+        // We add all the missing positional arguments before the first
+        // labelled one (and so after all the already existing positional ones).
+        if !positional.is_empty() {
+            // We want to make sure that all positional args will have a name
+            // that's different from any label. So we add those as already used
+            // names.
+            let mut names = NameGenerator::new();
+            for (label, _) in labelled.iter() {
+                names.add_used_name(label.clone());
+            }
+
+            let positional_args = positional
+                .iter()
+                .map(|type_| names.generate_name_from_type(type_))
+                .join(", ");
+            let insert_at = first_labelled_argument_start.unwrap_or(spread_location.start);
+
+            // The positional arguments are going to be followed by some other
+            // arguments if there's some already existing labelled args
+            // (`last_argument_end.is_some`), of if we're adding those labelled args
+            // ourselves (`!labelled.is_empty()`). So we need to put a comma after the
+            // final positional argument we're adding to separate it from the ones that
+            // are going to come after.
+            let has_arguments_after = last_argument_end.is_some() || !labelled.is_empty();
+            let positional_args = if has_arguments_after {
+                format!("{positional_args}, ")
+            } else {
+                positional_args
+            };
+
+            self.edits.insert(insert_at, positional_args);
+        }
+
+        if !labelled.is_empty() {
+            // If there's labelled arguments to add, we replace the existing spread
+            // with the arguments to be added. This way commas and all should already
+            // be correct.
+            let labelled_args = labelled
+                .iter()
+                .map(|(label, _)| format!("{label}:"))
+                .join(", ");
+            self.edits.replace(spread_location, labelled_args);
+        } else if let Some(delete_start) = last_argument_end {
+            // However, if there's no labelled arguments to insert we still need
+            // to delete the entire spread: we start deleting from the end of the
+            // final argument, if there's one.
+            // This way we also get rid of any comma separating the last argument
+            // and the spread to be removed.
+            self.edits
+                .delete(SrcSpan::new(delete_start, spread_location.end))
+        } else {
+            // Otherwise we just delete the spread.
+            self.edits.delete(spread_location)
+        }
+
+        let mut action = Vec::with_capacity(1);
+        CodeActionBuilder::new("Fill unused fields")
+            .kind(CodeActionKind::REFACTOR_REWRITE)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
+            .preferred(false)
+            .push_to(&mut action);
+        action
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for FillUnusedFields<'ast> {
+    fn visit_typed_pattern(&mut self, pattern: &'ast TypedPattern) {
+        // We can only interpolate/split a string if the cursor is somewhere
+        // within its location, otherwise we skip it.
+        let pattern_range = self.edits.src_span_to_lsp_range(pattern.location());
+        if !within(self.params.range, pattern_range) {
+            return;
+        }
+
+        if let TypedPattern::Constructor {
+            arguments,
+            spread: Some(spread_location),
+            ..
+        } = pattern
+        {
+            if let Some(PatternUnusedArguments {
+                positional,
+                labelled,
+            }) = pattern.unused_arguments()
+            {
+                // If there's any unused argument that's being ignored we want to
+                // suggest the code action.
+                let first_labelled_argument_start = arguments
+                    .iter()
+                    .find(|arg| !arg.is_implicit() && arg.label.is_some())
+                    .map(|arg| arg.location.start);
+
+                let last_argument_end = arguments
+                    .iter()
+                    .filter(|arg| !arg.is_implicit())
+                    .last()
+                    .map(|arg| arg.location.end);
+
+                self.data = Some(FillUnusedFieldsData {
+                    positional,
+                    labelled,
+                    first_labelled_argument_start,
+                    last_argument_end,
+                    spread_location: *spread_location,
+                });
+            };
+        }
+
+        ast::visit::visit_typed_pattern(self, pattern);
     }
 }

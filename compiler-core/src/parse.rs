@@ -580,13 +580,13 @@ where
             Some((start, Token::Hash, _)) => {
                 self.advance();
                 let _ = self.expect_one(&Token::LeftParen)?;
-                let elems =
+                let elements =
                     Parser::series_of(self, &Parser::parse_expression, Some(&Token::Comma))?;
                 let (_, end) =
                     self.expect_one_following_series(&Token::RightParen, "an expression")?;
                 UntypedExpr::Tuple {
                     location: SrcSpan { start, end },
-                    elems,
+                    elements,
                 }
             }
 
@@ -1304,11 +1304,12 @@ where
             Some((start, Token::Hash, _)) => {
                 self.advance();
                 let _ = self.expect_one(&Token::LeftParen)?;
-                let elems = Parser::series_of(self, &Parser::parse_pattern, Some(&Token::Comma))?;
+                let elements =
+                    Parser::series_of(self, &Parser::parse_pattern, Some(&Token::Comma))?;
                 let (_, end) = self.expect_one_following_series(&Token::RightParen, "a pattern")?;
                 Pattern::Tuple {
                     location: SrcSpan { start, end },
-                    elems,
+                    elements,
                 }
             }
             // BitArray
@@ -2520,11 +2521,11 @@ where
             Some((start, Token::Hash, _)) => {
                 self.advance();
                 let _ = self.expect_one(&Token::LeftParen)?;
-                let elems = self.parse_types()?;
+                let elements = self.parse_types()?;
                 let (_, end) = self.expect_one(&Token::RightParen)?;
                 Ok(Some(TypeAst::Tuple(TypeAstTuple {
                     location: SrcSpan { start, end },
-                    elems,
+                    elements,
                 })))
             }
 
@@ -2536,14 +2537,14 @@ where
                     Parser::series_of(self, &|x| Parser::parse_type(x), Some(&Token::Comma))?;
                 let _ = self.expect_one_following_series(&Token::RightParen, "a type")?;
                 let (arr_s, arr_e) = self.expect_one(&Token::RArrow)?;
-                let retrn = self.parse_type()?;
-                match retrn {
-                    Some(retrn) => Ok(Some(TypeAst::Fn(TypeAstFn {
+                let return_ = self.parse_type()?;
+                match return_ {
+                    Some(return_) => Ok(Some(TypeAst::Fn(TypeAstFn {
                         location: SrcSpan {
                             start,
-                            end: retrn.location().end,
+                            end: return_.location().end,
                         },
-                        return_: Box::new(retrn),
+                        return_: Box::new(return_),
                         arguments: args,
                     }))),
                     _ => parse_error(
@@ -2624,8 +2625,8 @@ where
 
     // For parsing a comma separated "list" of types, for tuple, constructor, and function
     fn parse_types(&mut self) -> Result<Vec<TypeAst>, ParseError> {
-        let elems = Parser::series_of(self, &|p| Parser::parse_type(p), Some(&Token::Comma))?;
-        Ok(elems)
+        let elements = Parser::series_of(self, &|p| Parser::parse_type(p), Some(&Token::Comma))?;
+        Ok(elements)
     }
 
     //

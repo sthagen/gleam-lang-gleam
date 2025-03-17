@@ -329,8 +329,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             } => self.infer_block(statements, location),
 
             UntypedExpr::Tuple {
-                location, elems, ..
-            } => self.infer_tuple(elems, location),
+                location, elements, ..
+            } => self.infer_tuple(elements, location),
 
             UntypedExpr::Float {
                 location, value, ..
@@ -681,7 +681,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // it consumes everything that comes below it and returns a single value.
         let last_statement_location = statements
             .iter()
-            .find_or_last(|e| e.is_use())
+            .find_or_last(|statement| statement.is_use())
             .expect("safe: iter from non empty vec")
             .location();
 
@@ -835,7 +835,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         } = arg;
         let type_ = annotation
             .clone()
-            .map(|t| self.type_from_ast(&t))
+            .map(|type_| self.type_from_ast(&type_))
             .unwrap_or_else(|| Ok(self.new_unbound_var()))?;
 
         // If we know the expected type of the argument from its contextual
@@ -939,14 +939,17 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     fn infer_tuple(
         &mut self,
-        elems: Vec<UntypedExpr>,
+        elements: Vec<UntypedExpr>,
         location: SrcSpan,
     ) -> Result<TypedExpr, Error> {
-        let elems: Vec<_> = elems.into_iter().map(|e| self.infer(e)).try_collect()?;
-        let type_ = tuple(elems.iter().map(HasType::type_).collect());
+        let elements: Vec<_> = elements
+            .into_iter()
+            .map(|element| self.infer(element))
+            .try_collect()?;
+        let type_ = tuple(elements.iter().map(HasType::type_).collect());
         Ok(TypedExpr::Tuple {
             location,
-            elems,
+            elements,
             type_,
         })
     }
@@ -1162,8 +1165,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         let tuple = self.infer(tuple)?;
         match collapse_links(tuple.type_()).as_ref() {
-            Type::Tuple { elems } => {
-                let type_ = elems
+            Type::Tuple { elements } => {
+                let type_ = elements
                     .get(index as usize)
                     .ok_or_else(|| Error::OutOfBoundsTupleIndex {
                         location: SrcSpan {
@@ -1171,7 +1174,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             end: location.end,
                         },
                         index,
-                        size: elems.len(),
+                        size: elements.len(),
                     })?
                     .clone();
                 Ok(TypedExpr::TupleIndex {
@@ -1500,7 +1503,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         if let Some(annotation) = &annotation {
             match self
                 .type_from_ast(annotation)
-                .map(|t| self.instantiate(t, &mut hashmap![]))
+                .map(|type_| self.instantiate(type_, &mut hashmap![]))
             {
                 Ok(ann_typ) => {
                     if let Err(error) = unify(ann_typ, value_typ.clone())
@@ -1829,13 +1832,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             } => {
                 let tuple = self.infer_clause_guard(*tuple)?;
                 match tuple.type_().as_ref() {
-                    Type::Tuple { elems } => {
-                        let type_ = elems
+                    Type::Tuple { elements } => {
+                        let type_ = elements
                             .get(index as usize)
                             .ok_or(Error::OutOfBoundsTupleIndex {
                                 location,
                                 index,
-                                size: elems.len(),
+                                size: elements.len(),
                             })?
                             .clone();
                         Ok(ClauseGuard::TupleIndex {
@@ -2782,7 +2785,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let record_type = record.type_();
         // The record constructor needs to be a function.
         let (args_types, return_type) = match constructor.type_().as_ref() {
-            Type::Fn { args, retrn } => (args.clone(), retrn.clone()),
+            Type::Fn { args, return_ } => (args.clone(), return_.clone()),
             _ => {
                 return Err(Error::RecordUpdateInvalidConstructor {
                     location: constructor.location(),
@@ -2810,7 +2813,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // not some unrelated other type. This should not affect our returned type, so we
         // instantiate a new copy of the generic return type for our value constructor.
         let return_type_copy = match value_constructor.type_.as_ref() {
-            Type::Fn { retrn, .. } => self.instantiate(retrn.clone(), &mut hashmap![]),
+            Type::Fn { return_, .. } => self.instantiate(return_.clone(), &mut hashmap![]),
             _ => {
                 return Err(Error::RecordUpdateInvalidConstructor {
                     location: constructor.location(),
@@ -3042,18 +3045,26 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         kind: ReferenceKind,
     ) {
         match variant {
-            // If the referenced name is different to the name of the original
-            // value, that means we are referencing it via an alias and don't
-            // want to track this reference.
             ValueConstructorVariant::ModuleFn {
-                name: value_name, ..
+                module,
+                name: value_name,
+                ..
             }
             | ValueConstructorVariant::Record {
-                name: value_name, ..
+                module,
+                name: value_name,
+                ..
             }
             | ValueConstructorVariant::ModuleConstant {
-                name: value_name, ..
-            } if value_name != referenced_name => {}
+                module,
+                name: value_name,
+                ..
+            } if value_name != referenced_name => self.environment.references.register_reference(
+                module.clone(),
+                value_name.clone(),
+                location,
+                ReferenceKind::Alias,
+            ),
             ValueConstructorVariant::ModuleFn { name, module, .. }
             | ValueConstructorVariant::Record { name, module, .. }
             | ValueConstructorVariant::ModuleConstant { name, module, .. } => self
@@ -4119,7 +4130,7 @@ fn check_subject_for_redundant_match(
     case_used_like_if: bool,
 ) -> Option<Warning> {
     match subject {
-        TypedExpr::Tuple { elems, .. } if !elems.is_empty() => {
+        TypedExpr::Tuple { elements, .. } if !elements.is_empty() => {
             Some(Warning::CaseMatchOnLiteralCollection {
                 kind: LiteralCollectionKind::Tuple,
                 location: subject.location(),

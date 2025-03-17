@@ -232,6 +232,7 @@ impl<'a> ModuleEncoder<'a> {
             ReferenceKind::Unqualified => kind.set_unqualified(()),
             ReferenceKind::Import => kind.set_import(()),
             ReferenceKind::Definition => kind.set_definition(()),
+            ReferenceKind::Alias => kind.set_alias(()),
         }
         self.build_src_span(builder.init_location(), reference.location);
     }
@@ -599,10 +600,10 @@ impl<'a> ModuleEncoder<'a> {
 
     fn build_type(&mut self, builder: schema::type_::Builder<'_>, type_: &Type) {
         match type_ {
-            Type::Fn { args, retrn } => {
+            Type::Fn { args, return_ } => {
                 let mut fun = builder.init_fn();
                 self.build_types(fun.reborrow().init_arguments(args.len() as u32), args);
-                self.build_type(fun.init_return(), retrn)
+                self.build_type(fun.init_return(), return_)
             }
 
             Type::Named {
@@ -625,9 +626,9 @@ impl<'a> ModuleEncoder<'a> {
                 self.build_types(app.reborrow().init_parameters(args.len() as u32), args);
             }
 
-            Type::Tuple { elems } => self.build_types(
-                builder.init_tuple().init_elements(elems.len() as u32),
-                elems,
+            Type::Tuple { elements } => self.build_types(
+                builder.init_tuple().init_elements(elements.len() as u32),
+                elements,
             ),
 
             Type::Var { type_ } => match type_.borrow().deref() {

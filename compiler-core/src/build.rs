@@ -334,7 +334,7 @@ pub enum Located<'a> {
     Pattern(&'a TypedPattern),
     PatternSpread {
         spread_location: SrcSpan,
-        arguments: &'a Vec<CallArg<TypedPattern>>,
+        pattern: &'a TypedPattern,
     },
     Statement(&'a TypedStatement),
     Expression(&'a TypedExpr),
@@ -490,11 +490,11 @@ fn type_to_definition_locations<'a>(
         // For fn types we just get the locations of their arguments and return
         // type.
         //
-        Type::Fn { args, retrn } => args
+        Type::Fn { args, return_ } => args
             .iter()
             .flat_map(|arg| type_to_definition_locations(arg.clone(), importable_modules))
             .chain(type_to_definition_locations(
-                retrn.clone(),
+                return_.clone(),
                 importable_modules,
             ))
             .collect_vec(),
@@ -511,9 +511,9 @@ fn type_to_definition_locations<'a>(
 
         // In case of tuples we get the locations of the wrapped types.
         //
-        Type::Tuple { elems } => elems
+        Type::Tuple { elements } => elements
             .iter()
-            .flat_map(|elem| type_to_definition_locations(elem.clone(), importable_modules))
+            .flat_map(|element| type_to_definition_locations(element.clone(), importable_modules))
             .collect_vec(),
     }
 }
