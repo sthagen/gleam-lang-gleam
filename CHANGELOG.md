@@ -62,6 +62,10 @@
   - `entrypoint.ps1` for PowerShell
   ([Greg Burri](https://github.com/ummon))
 
+- `gleam export` now takes a `package-information` option to export the
+  project's `gleam.toml` as a JSON file.
+  ([Rodrigo Álvarez](https://github.com/Papipo))
+
 ### Language server
 
 - The language server now allows renaming of functions, constants,
@@ -259,6 +263,14 @@
 
 - Fixed a bug where variant inference wouldn't work on `let assert` assignments.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the build tool could fail to lock the build directory but
+  not report an error.
+  ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where the language server would be too eager to recompile modules
+  when it could use the cache from previous compilations.
+  ([Louis Pilfold](https://github.com/lpil))
 
 ## v1.9.1 - 2025-03-10
 

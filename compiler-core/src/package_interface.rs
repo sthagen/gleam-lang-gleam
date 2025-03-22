@@ -370,7 +370,7 @@ impl PackageInterface {
                 .config
                 .gleam_version
                 .clone()
-                .map(|version| EcoString::from(version.to_string())),
+                .map(|version| EcoString::from(version.hex().to_string())),
             modules: package
                 .modules
                 .iter()

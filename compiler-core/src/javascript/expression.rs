@@ -7,7 +7,6 @@ use super::{
 };
 use crate::{
     ast::*,
-    javascript::endianness::Endianness,
     line_numbers::LineNumbers,
     pretty::*,
     type_::{
@@ -332,9 +331,9 @@ impl<'module, 'a> Generator<'module, 'a> {
     }
 
     fn bit_array(&mut self, segments: &'a [TypedExprBitArraySegment]) -> Output<'a> {
-        self.tracker.bit_array_literal_used = true;
-
         use BitArrayOption as Opt;
+
+        self.tracker.bit_array_literal_used = true;
 
         // Collect all the values used in segments.
         let segments_array = array(segments.iter().map(|segment| {
@@ -342,10 +341,17 @@ impl<'module, 'a> Generator<'module, 'a> {
                 this.wrap_expression(&segment.value)
             })?;
 
-            if segment.type_ == crate::type_::int() || segment.type_ == crate::type_::float() {
-                let details = self.sized_bit_array_segment_details(segment)?;
+            if segment.has_native_option() {
+                return Err(Error::Unsupported {
+                    feature: "This bit array segment option".into(),
+                    location: segment.location,
+                });
+            }
 
-                if segment.type_ == crate::type_::int() {
+            match segment.options.as_slice() {
+                // Int segment
+                _ if segment.type_.is_int() => {
+                    let details = self.sized_bit_array_segment_details(segment)?;
                     match (details.size_value, segment.value.as_ref()) {
                         (Some(size_value), TypedExpr::Int { int_value, .. })
                             if size_value <= SAFE_INT_SEGMENT_MAX_SIZE.into()
@@ -354,7 +360,7 @@ impl<'module, 'a> Generator<'module, 'a> {
                             let bytes = bit_array_segment_int_value_to_bytes(
                                 int_value.clone(),
                                 size_value,
-                                details.endianness,
+                                segment.endianness(),
                             )?;
 
                             Ok(u8_slice(&bytes))
@@ -366,73 +372,63 @@ impl<'module, 'a> Generator<'module, 'a> {
 
                         _ => {
                             self.tracker.sized_integer_segment_used = true;
-                            Ok(docvec![
-                                "sizedInt(",
-                                value,
-                                ", ",
-                                details.size,
-                                ", ",
-                                bool(details.endianness.is_big()),
-                                ")"
-                            ])
+                            let size = details.size;
+                            let is_big = bool(segment.endianness().is_big());
+                            Ok(docvec!["sizedInt(", value, ", ", size, ", ", is_big, ")"])
                         }
                     }
-                } else {
-                    self.tracker.float_bit_array_segment_used = true;
-                    Ok(docvec![
-                        "sizedFloat(",
-                        value,
-                        ", ",
-                        details.size,
-                        ", ",
-                        bool(details.endianness.is_big()),
-                        ")"
-                    ])
                 }
-            } else {
-                match segment.options.as_slice() {
-                    // UTF8 strings
-                    [Opt::Utf8 { .. }] => {
-                        self.tracker.string_bit_array_segment_used = true;
-                        Ok(docvec!["stringBits(", value, ")"])
+
+                // Float segment
+                _ if segment.type_.is_float() => {
+                    self.tracker.float_bit_array_segment_used = true;
+                    let details = self.sized_bit_array_segment_details(segment)?;
+                    let size = details.size;
+                    let is_big = bool(segment.endianness().is_big());
+                    Ok(docvec!["sizedFloat(", value, ", ", size, ", ", is_big, ")"])
+                }
+
+                // UTF8 strings
+                [Opt::Utf8 { .. }] => {
+                    self.tracker.string_bit_array_segment_used = true;
+                    Ok(docvec!["stringBits(", value, ")"])
+                }
+
+                // UTF8 codepoints
+                [Opt::Utf8Codepoint { .. }] => {
+                    self.tracker.codepoint_bit_array_segment_used = true;
+                    Ok(docvec!["codepointBits(", value, ")"])
+                }
+
+                // Bit arrays
+                [Opt::Bits { .. }] => Ok(value),
+
+                // Bit arrays with explicit size. The explicit size slices the bit array to the
+                // specified size. A runtime exception is thrown if the size exceeds the number
+                // of bits in the bit array.
+                [Opt::Bits { .. }, Opt::Size { value: size, .. }]
+                | [Opt::Size { value: size, .. }, Opt::Bits { .. }] => match &**size {
+                    TypedExpr::Int { value: size, .. } => {
+                        self.tracker.bit_array_slice_used = true;
+                        Ok(docvec!["bitArraySlice(", value, ", 0, ", size, ")"])
                     }
 
-                    // UTF8 codepoints
-                    [Opt::Utf8Codepoint { .. }] => {
-                        self.tracker.codepoint_bit_array_segment_used = true;
-                        Ok(docvec!["codepointBits(", value, ")"])
+                    TypedExpr::Var { name, .. } => {
+                        self.tracker.bit_array_slice_used = true;
+                        Ok(docvec!["bitArraySlice(", value, ", 0, ", name, ")"])
                     }
 
-                    // Bit arrays
-                    [Opt::Bits { .. }] => Ok(value),
-
-                    // Bit arrays with explicit size. The explicit size slices the bit array to the
-                    // specified size. A runtime exception is thrown if the size exceeds the number
-                    // of bits in the bit array.
-                    [Opt::Bits { .. }, Opt::Size { value: size, .. }]
-                    | [Opt::Size { value: size, .. }, Opt::Bits { .. }] => match &**size {
-                        TypedExpr::Int { value: size, .. } => {
-                            self.tracker.bit_array_slice_used = true;
-                            Ok(docvec!["bitArraySlice(", value, ", 0, ", size, ")"])
-                        }
-
-                        TypedExpr::Var { name, .. } => {
-                            self.tracker.bit_array_slice_used = true;
-                            Ok(docvec!["bitArraySlice(", value, ", 0, ", name, ")"])
-                        }
-
-                        _ => Err(Error::Unsupported {
-                            feature: "This bit array segment option".into(),
-                            location: segment.location,
-                        }),
-                    },
-
-                    // Anything else
                     _ => Err(Error::Unsupported {
                         feature: "This bit array segment option".into(),
                         location: segment.location,
                     }),
-                }
+                },
+
+                // Anything else
+                _ => Err(Error::Unsupported {
+                    feature: "This bit array segment option".into(),
+                    location: segment.location,
+                }),
             }
         }))?;
 
@@ -443,79 +439,33 @@ impl<'module, 'a> Generator<'module, 'a> {
         &mut self,
         segment: &'a TypedExprBitArraySegment,
     ) -> Result<SizedBitArraySegmentDetails<'a>, Error> {
-        use BitArrayOption as Opt;
-
-        if segment
-            .options
-            .iter()
-            .any(|x| matches!(x, Opt::Native { .. }))
-        {
-            return Err(Error::Unsupported {
-                feature: "This bit array segment option".into(),
-                location: segment.location,
-            });
-        }
-
-        let endianness = if segment
-            .options
-            .iter()
-            .any(|x| matches!(x, Opt::Little { .. }))
-        {
-            Endianness::Little
-        } else {
-            Endianness::Big
-        };
-
-        let size = segment
-            .options
-            .iter()
-            .find(|x| matches!(x, Opt::Size { .. }));
-
-        let unit = segment
-            .options
-            .iter()
-            .find_map(|option| match option {
-                Opt::Unit { value, .. } => Some(*value),
-                _ => None,
-            })
-            .unwrap_or(1);
-
+        let size = segment.size();
+        let unit = segment.unit();
         let (size_value, size) = match size {
-            Some(Opt::Size { value: size, .. }) => match *size.clone() {
-                TypedExpr::Int { int_value, .. } => {
-                    let size_value = int_value * unit as usize;
-                    let size = eco_format!("{}", size_value).to_doc();
+            Some(TypedExpr::Int { int_value, .. }) => {
+                let size_value = int_value * unit;
+                let size = eco_format!("{}", size_value).to_doc();
+                (Some(size_value), size)
+            }
+            Some(size) => {
+                let mut size = self.not_in_tail_position(Some(Ordering::Strict), |this| {
+                    this.wrap_expression(size)
+                })?;
 
-                    (Some(size_value), size)
+                if unit != 1 {
+                    size = size.group().append(" * ".to_doc().append(unit.to_doc()));
                 }
-                _ => {
-                    let mut size = self.not_in_tail_position(Some(Ordering::Strict), |this| {
-                        this.wrap_expression(size)
-                    })?;
 
-                    if unit != 1 {
-                        size = size.group().append(" * ".to_doc().append(unit.to_doc()));
-                    }
+                (None, size)
+            }
 
-                    (None, size)
-                }
-            },
-            _ => {
-                let size_value = if segment.type_ == crate::type_::int() {
-                    8usize
-                } else {
-                    64usize
-                };
-
+            None => {
+                let size_value: usize = if segment.type_.is_int() { 8 } else { 64 };
                 (Some(BigInt::from(size_value)), docvec![size_value])
             }
         };
 
-        Ok(SizedBitArraySegmentDetails {
-            size,
-            size_value,
-            endianness,
-        })
+        Ok(SizedBitArraySegmentDetails { size, size_value })
     }
 
     pub fn wrap_return(&mut self, document: Document<'a>) -> Document<'a> {
@@ -1733,18 +1683,24 @@ fn bit_array<'a>(
     segments: &'a [TypedConstantBitArraySegment],
     mut constant_expr_fun: impl FnMut(&mut UsageTracker, &'a TypedConstant) -> Output<'a>,
 ) -> Output<'a> {
-    tracker.bit_array_literal_used = true;
-
     use BitArrayOption as Opt;
 
+    tracker.bit_array_literal_used = true;
     let segments_array = array(segments.iter().map(|segment| {
         let value = constant_expr_fun(tracker, &segment.value)?;
 
-        if segment.type_ == crate::type_::int() || segment.type_ == crate::type_::float() {
-            let details =
-                sized_bit_array_segment_details(segment, tracker, &mut constant_expr_fun)?;
+        if segment.has_native_option() {
+            return Err(Error::Unsupported {
+                feature: "This bit array segment option".into(),
+                location: segment.location,
+            });
+        }
 
-            if segment.type_ == crate::type_::int() {
+        match segment.options.as_slice() {
+            // Int segment
+            _ if segment.type_.is_int() => {
+                let details =
+                    sized_bit_array_segment_details(segment, tracker, &mut constant_expr_fun)?;
                 match (details.size_value, segment.value.as_ref()) {
                     (Some(size_value), Constant::Int { int_value, .. })
                         if size_value <= SAFE_INT_SEGMENT_MAX_SIZE.into()
@@ -1753,7 +1709,7 @@ fn bit_array<'a>(
                         let bytes = bit_array_segment_int_value_to_bytes(
                             int_value.clone(),
                             size_value,
-                            details.endianness,
+                            segment.endianness(),
                         )?;
 
                         Ok(u8_slice(&bytes))
@@ -1765,68 +1721,59 @@ fn bit_array<'a>(
 
                     _ => {
                         tracker.sized_integer_segment_used = true;
-                        Ok(docvec![
-                            "sizedInt(",
-                            value,
-                            ", ",
-                            details.size,
-                            ", ",
-                            bool(details.endianness.is_big()),
-                            ")"
-                        ])
+                        let size = details.size;
+                        let is_big = bool(segment.endianness().is_big());
+                        Ok(docvec!["sizedInt(", value, ", ", size, ", ", is_big, ")"])
                     }
                 }
-            } else {
-                tracker.float_bit_array_segment_used = true;
-                Ok(docvec![
-                    "sizedFloat(",
-                    value,
-                    ", ",
-                    details.size,
-                    ", ",
-                    bool(details.endianness.is_big()),
-                    ")"
-                ])
             }
-        } else {
-            match segment.options.as_slice() {
-                // UTF8 strings
-                [Opt::Utf8 { .. }] => {
-                    tracker.string_bit_array_segment_used = true;
-                    Ok(docvec!["stringBits(", value, ")"])
+
+            // Float segments
+            _ if segment.type_.is_float() => {
+                tracker.float_bit_array_segment_used = true;
+                let details =
+                    sized_bit_array_segment_details(segment, tracker, &mut constant_expr_fun)?;
+                let size = details.size;
+                let is_big = bool(segment.endianness().is_big());
+                Ok(docvec!["sizedFloat(", value, ", ", size, ", ", is_big, ")"])
+            }
+
+            // UTF8 strings
+            [Opt::Utf8 { .. }] => {
+                tracker.string_bit_array_segment_used = true;
+                Ok(docvec!["stringBits(", value, ")"])
+            }
+
+            // UTF8 codepoints
+            [Opt::Utf8Codepoint { .. }] => {
+                tracker.codepoint_bit_array_segment_used = true;
+                Ok(docvec!["codepointBits(", value, ")"])
+            }
+
+            // Bit arrays
+            [Opt::Bits { .. }] => Ok(value),
+
+            // Bit arrays with explicit size. The explicit size slices the bit array to the
+            // specified size. A runtime exception is thrown if the size exceeds the number
+            // of bits in the bit array.
+            [Opt::Bits { .. }, Opt::Size { value: size, .. }]
+            | [Opt::Size { value: size, .. }, Opt::Bits { .. }] => match &**size {
+                Constant::Int { value: size, .. } => {
+                    tracker.bit_array_slice_used = true;
+                    Ok(docvec!["bitArraySlice(", value, ", 0, ", size, ")"])
                 }
 
-                // UTF8 codepoints
-                [Opt::Utf8Codepoint { .. }] => {
-                    tracker.codepoint_bit_array_segment_used = true;
-                    Ok(docvec!["codepointBits(", value, ")"])
-                }
-
-                // Bit arrays
-                [Opt::Bits { .. }] => Ok(value),
-
-                // Bit arrays with explicit size. The explicit size slices the bit array to the
-                // specified size. A runtime exception is thrown if the size exceeds the number
-                // of bits in the bit array.
-                [Opt::Bits { .. }, Opt::Size { value: size, .. }]
-                | [Opt::Size { value: size, .. }, Opt::Bits { .. }] => match &**size {
-                    Constant::Int { value: size, .. } => {
-                        tracker.bit_array_slice_used = true;
-                        Ok(docvec!["bitArraySlice(", value, ", 0, ", size, ")"])
-                    }
-
-                    _ => Err(Error::Unsupported {
-                        feature: "This bit array segment option".into(),
-                        location: segment.location,
-                    }),
-                },
-
-                // Anything else
                 _ => Err(Error::Unsupported {
                     feature: "This bit array segment option".into(),
                     location: segment.location,
                 }),
-            }
+            },
+
+            // Anything else
+            _ => Err(Error::Unsupported {
+                feature: "This bit array segment option".into(),
+                location: segment.location,
+            }),
         }
     }))?;
 
@@ -1836,10 +1783,9 @@ fn bit_array<'a>(
 #[derive(Debug)]
 struct SizedBitArraySegmentDetails<'a> {
     size: Document<'a>,
-    /// The size of the bit array segment stored as a BigInt. This has a value when the segment's
-    /// size is known at compile time.
+    /// The size of the bit array segment stored as a BigInt.
+    /// This has a value when the segment's size is known at compile time.
     size_value: Option<BigInt>,
-    endianness: Endianness,
 }
 
 fn sized_bit_array_segment_details<'a>(
@@ -1847,77 +1793,32 @@ fn sized_bit_array_segment_details<'a>(
     tracker: &mut UsageTracker,
     constant_expr_fun: &mut impl FnMut(&mut UsageTracker, &'a TypedConstant) -> Output<'a>,
 ) -> Result<SizedBitArraySegmentDetails<'a>, Error> {
-    use BitArrayOption as Opt;
-
-    if segment
-        .options
-        .iter()
-        .any(|x| matches!(x, Opt::Native { .. }))
-    {
-        return Err(Error::Unsupported {
-            feature: "This bit array segment option".into(),
-            location: segment.location,
-        });
-    }
-
-    let endianness = if segment
-        .options
-        .iter()
-        .any(|x| matches!(x, Opt::Little { .. }))
-    {
-        Endianness::Little
-    } else {
-        Endianness::Big
-    };
-
-    let unit = segment
-        .options
-        .iter()
-        .find_map(|option| match option {
-            Opt::Unit { value, .. } => Some(*value),
-            _ => None,
-        })
-        .unwrap_or(1);
-
-    let size = segment
-        .options
-        .iter()
-        .find(|x| matches!(x, Opt::Size { .. }));
-
+    let size = segment.size();
+    let unit = segment.unit();
     let (size_value, size) = match size {
-        Some(Opt::Size { value: size, .. }) => match *size.clone() {
-            Constant::Int { int_value, .. } => {
-                let size_value = int_value * unit as usize;
-                let size = eco_format!("{}", size_value).to_doc();
+        Some(Constant::Int { int_value, .. }) => {
+            let size_value = int_value * unit;
+            let size = eco_format!("{}", size_value).to_doc();
+            (Some(size_value), size)
+        }
 
-                (Some(size_value), size)
+        Some(size) => {
+            let mut size = constant_expr_fun(tracker, size)?;
+
+            if unit != 1 {
+                size = size.group().append(" * ".to_doc().append(unit.to_doc()));
             }
-            _ => {
-                let mut size = constant_expr_fun(tracker, size)?;
 
-                if unit != 1 {
-                    size = size.group().append(" * ".to_doc().append(unit.to_doc()));
-                }
+            (None, size)
+        }
 
-                (None, size)
-            }
-        },
-        _ => {
-            let size_value = if segment.type_ == crate::type_::int() {
-                8usize
-            } else {
-                64usize
-            };
-
+        None => {
+            let size_value: usize = if segment.type_.is_int() { 8 } else { 64 };
             (Some(BigInt::from(size_value)), docvec![size_value])
         }
     };
 
-    Ok(SizedBitArraySegmentDetails {
-        size,
-        size_value,
-        endianness,
-    })
+    Ok(SizedBitArraySegmentDetails { size, size_value })
 }
 
 pub fn string(value: &str) -> Document<'_> {
