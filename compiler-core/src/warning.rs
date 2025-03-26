@@ -940,6 +940,27 @@ hidden from the package's documentation.",
                     }),
                 },
 
+                type_::Warning::AssertAssignmentOnInferredVariant { location } => Diagnostic {
+                    title: "Assertion that will always fail".into(),
+                    text: wrap(
+                        "We can tell from the code above that the value will never match \
+this pattern and that this code will always crash.
+
+Either change the pattern or use `panic` to unconditionally fail.",
+                    ),
+                    hint: None,
+                    level: diagnostic::Level::Warning,
+                    location: Some(Location {
+                        label: diagnostic::Label {
+                            text: None,
+                            span: *location,
+                        },
+                        path: path.clone(),
+                        src: src.clone(),
+                        extra_labels: vec![],
+                    }),
+                },
+
                 type_::Warning::TodoOrPanicUsedAsFunction {
                     kind,
                     location,

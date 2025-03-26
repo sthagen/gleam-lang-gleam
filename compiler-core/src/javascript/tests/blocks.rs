@@ -277,3 +277,70 @@ pub fn main() {
 "
     )
 }
+
+// https://github.com/gleam-lang/gleam/issues/4393
+#[test]
+fn let_assert_only_statement_in_block() {
+    assert_js!(
+        "
+pub fn main() {
+  {
+    let assert Ok(1) = Error(Nil)
+  }
+}
+"
+    )
+}
+
+// https://github.com/gleam-lang/gleam/issues/4394
+#[test]
+fn assignment_last_in_block() {
+    assert_js!(
+        "
+pub fn main() {
+  let a = {
+    let b = 1
+    let c = b + 1
+  }
+  a
+}
+"
+    )
+}
+
+// https://github.com/gleam-lang/gleam/issues/4394
+#[test]
+fn pattern_assignment_last_in_block() {
+    assert_js!(
+        "
+pub fn main() {
+  let a = {
+    let b = #(1, 2)
+    let #(x, y) = b
+  }
+  a
+}
+"
+    )
+}
+
+// https://github.com/gleam-lang/gleam/issues/4395
+#[test]
+fn let_assert_message_no_lifted() {
+    assert_js!(
+        r#"
+fn side_effects(x) {
+  // Some side effects
+  x
+}
+
+pub fn main() {
+  let assert Error(Nil) = side_effects(Ok(10))
+    as {
+    let message = side_effects("some message")
+    message
+  }
+}
+"#
+    )
+}

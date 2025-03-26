@@ -692,33 +692,38 @@ impl<'module, 'a> Generator<'module, 'a> {
     fn block(&mut self, statements: &'a Vec1<TypedStatement>) -> Output<'a> {
         if statements.len() == 1 {
             match statements.first() {
-                Statement::Expression(expression) => self.child_expression(expression),
+                Statement::Expression(expression) => return self.child_expression(expression),
 
-                Statement::Assignment(assignment) => {
-                    self.child_expression(assignment.value.as_ref())
-                }
+                Statement::Assignment(assignment) => match &assignment.kind {
+                    AssignmentKind::Let | AssignmentKind::Generated => {
+                        return self.child_expression(assignment.value.as_ref());
+                    }
+                    // We can't just return the right-hand side of a `let assert`
+                    // assignment; we still need to check that the pattern matches.
+                    AssignmentKind::Assert { .. } => {}
+                },
 
-                Statement::Use(use_) => self.child_expression(&use_.call),
+                Statement::Use(use_) => return self.child_expression(&use_.call),
             }
-        } else {
-            match &self.scope_position {
-                Position::Tail | Position::Assign(_) => self.block_document(statements),
-                Position::NotTail(Ordering::Strict) => self
-                    .immediately_invoked_function_expression(statements, |this, statements| {
-                        this.statements(statements)
-                    }),
-                Position::NotTail(Ordering::Loose) => self.wrap_block(|this| {
-                    // Save previous scope
-                    let current_scope_vars = this.current_scope_vars.clone();
+        }
 
-                    let document = this.block_document(statements)?;
-
-                    // Restore previous state
-                    this.current_scope_vars = current_scope_vars;
-
-                    Ok(document)
+        match &self.scope_position {
+            Position::Tail | Position::Assign(_) => self.block_document(statements),
+            Position::NotTail(Ordering::Strict) => self
+                .immediately_invoked_function_expression(statements, |this, statements| {
+                    this.statements(statements)
                 }),
-            }
+            Position::NotTail(Ordering::Loose) => self.wrap_block(|this| {
+                // Save previous scope
+                let current_scope_vars = this.current_scope_vars.clone();
+
+                let document = this.block_document(statements)?;
+
+                // Restore previous state
+                this.current_scope_vars = current_scope_vars;
+
+                Ok(document)
+            }),
         }
     }
 
@@ -769,10 +774,17 @@ impl<'module, 'a> Generator<'module, 'a> {
             self.not_in_tail_position(Some(Ordering::Loose), |this| this.wrap_expression(value))?;
         let js_name = self.next_local_var(name);
         let assignment = docvec!["let ", js_name.clone(), " = ", subject, ";"];
-        let assignment = if self.scope_position.is_tail() {
-            docvec![assignment, line(), "return ", js_name, ";"]
-        } else {
-            assignment
+        let assignment = match &self.scope_position {
+            Position::NotTail(_) => assignment,
+            Position::Tail => docvec![assignment, line(), "return ", js_name, ";"],
+            Position::Assign(block_variable) => docvec![
+                assignment,
+                line(),
+                block_variable.clone(),
+                " = ",
+                js_name,
+                ";"
+            ],
         };
 
         Ok(assignment.force_break())
@@ -803,15 +815,21 @@ impl<'module, 'a> Generator<'module, 'a> {
         let compiled = pattern_generator.take_compiled();
 
         // If we are in tail position we can return value being assigned
-        let afterwards = if self.scope_position.is_tail() {
-            docvec![
+        let afterwards = match &self.scope_position {
+            Position::NotTail(_) => nil(),
+            Position::Tail => docvec![
                 line(),
                 "return ",
                 subject_assignment.clone().unwrap_or_else(|| value.clone()),
                 ";"
-            ]
-        } else {
-            nil()
+            ],
+            Position::Assign(block_variable) => docvec![
+                line(),
+                block_variable.clone(),
+                " = ",
+                subject_assignment.clone().unwrap_or_else(|| value.clone()),
+                ";"
+            ],
         };
 
         let compiled =
@@ -939,7 +957,7 @@ impl<'module, 'a> Generator<'module, 'a> {
     ) -> Output<'a> {
         let message = match message {
             Some(m) => {
-                self.not_in_tail_position(Some(Ordering::Loose), |this| this.expression(m))?
+                self.not_in_tail_position(Some(Ordering::Strict), |this| this.expression(m))?
             }
             None => string("Pattern match failed, no pattern matched the value."),
         };
