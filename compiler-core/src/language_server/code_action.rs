@@ -5977,3 +5977,179 @@ impl<'ast> ast::visit::Visit<'ast> for RemoveEchos<'ast> {
         ast::visit::visit_typed_pipeline_assignment(self, assignment);
     }
 }
+
+/// Code action to wrap assignment and case clause values in a block.
+///
+/// ```gleam
+/// pub type PokemonType {
+///   Fire
+///   Water
+/// }
+///
+/// pub fn main() {
+///   let pokemon_type: PokemonType = todo
+///   case pokemon_type {
+///     Water -> soak()
+///              ^^^^^^ Cursor over the spread
+///     Fire -> burn()
+///   }
+/// }
+/// ```
+/// Becomes
+/// ```gleam
+/// pub type PokemonType {
+///   Fire
+///   Water
+/// }
+///
+/// pub fn main() {
+///   let pokemon_type: PokemonType = todo
+///   case pokemon_type {
+///     Water -> {
+///       soak()
+///     }
+///     Fire -> burn()
+///   }
+/// }
+/// ```
+///
+pub struct WrapInBlock<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    selected_expression: Option<SrcSpan>,
+}
+
+impl<'a> WrapInBlock<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            selected_expression: None,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let Some(expr_span) = self.selected_expression else {
+            return vec![];
+        };
+
+        let Some(expr_string) = self
+            .module
+            .code
+            .get(expr_span.start as usize..(expr_span.end as usize + 1))
+        else {
+            return vec![];
+        };
+
+        let range = self
+            .edits
+            .src_span_to_lsp_range(self.selected_expression.expect("Real range value"));
+
+        let line_start = *self
+            .edits
+            .line_numbers
+            .line_starts
+            .get(range.start.line as usize)
+            .expect("Line number should be valid");
+        let chars = self.module.code.chars();
+        let mut chars = chars.skip(line_start as usize);
+
+        // Count indentation
+        let mut indent_size = 0;
+        while chars.next() == Some(' ') {
+            indent_size += 1;
+        }
+        let expr_indent_size = indent_size + 2;
+
+        let indent = " ".repeat(indent_size);
+        let inner_indent = " ".repeat(expr_indent_size);
+
+        self.edits.replace(
+            expr_span,
+            format!("{{\n{inner_indent}{expr_string}{indent}}}"),
+        );
+
+        let mut action = Vec::with_capacity(1);
+        CodeActionBuilder::new("Wrap in block")
+            .kind(CodeActionKind::REFACTOR_EXTRACT)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
+            .preferred(false)
+            .push_to(&mut action);
+        action
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for WrapInBlock<'ast> {
+    fn visit_typed_assignment(&mut self, assignment: &'ast TypedAssignment) {
+        ast::visit::visit_typed_expr(self, &assignment.value);
+        if !within(
+            self.params.range,
+            self.edits
+                .src_span_to_lsp_range(assignment.value.location()),
+        ) {
+            return;
+        }
+        match *assignment.to_owned().value {
+            // To avoid wrapping the same expression in multiple, nested blocks.
+            TypedExpr::Block { .. } => {}
+            TypedExpr::RecordAccess {
+                record, location, ..
+            } => {
+                self.selected_expression = Some(SrcSpan {
+                    start: record.location().start,
+                    end: location.end,
+                });
+            }
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => {
+                self.selected_expression = Some(assignment.value.location());
+            }
+        };
+        ast::visit::visit_typed_assignment(self, assignment);
+    }
+
+    fn visit_typed_clause(&mut self, clause: &'ast ast::TypedClause) {
+        ast::visit::visit_typed_clause(self, clause);
+
+        if !within(
+            self.params.range,
+            self.edits.src_span_to_lsp_range(clause.then.location()),
+        ) {
+            return;
+        }
+
+        // To avoid wrapping the same expression in multiple, nested blocks.
+        if !matches!(clause.then, TypedExpr::Block { .. }) {
+            self.selected_expression = Some(clause.then.location());
+        };
+
+        ast::visit::visit_typed_clause(self, clause);
+    }
+}
