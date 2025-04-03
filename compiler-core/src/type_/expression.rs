@@ -385,7 +385,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 left,
                 right,
                 ..
-            } => self.infer_binop(name, *left, *right, location),
+            } => Ok(self.infer_binop(name, *left, *right, location)),
 
             UntypedExpr::FieldAccess {
                 label_location,
@@ -1032,12 +1032,18 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         label_location: SrcSpan,
         usage: FieldAccessUsage,
     ) -> TypedExpr {
+        let container_location = container.location();
+
         // Computes a potential module access. This will be used if a record access can't be used.
         // Computes both the inferred access and if it shadows a variable.
         let module_access = match &container {
-            UntypedExpr::Var { location, name } => {
-                let module_access =
-                    self.infer_module_access(name, label.clone(), location, label_location);
+            UntypedExpr::Var { name, .. } => {
+                let module_access = self.infer_module_access(
+                    name,
+                    label.clone(),
+                    &container_location,
+                    label_location,
+                );
                 // Returns the result and if it shadows an existing variable in scope
                 Some((module_access, self.environment.scope.contains_key(name)))
             }
@@ -1060,7 +1066,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             Ok(record) => self.infer_known_record_expression_access(
                 record,
                 label.clone(),
+                location,
                 label_location,
+                container_location.start,
                 usage,
             ),
             Err(e) => Err(e),
@@ -1139,7 +1147,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     // This allows autocomplete to know a record access is being attempted
                     // Even if the access is not valid
                     Ok(record) => TypedExpr::RecordAccess {
-                        location: label_location,
+                        location,
+                        field_start: container_location.start,
                         type_: self.new_unbound_var(),
                         label: "".into(),
                         index: u64::MAX,
@@ -1377,29 +1386,45 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
+    /// Same as `self.infer` but instead of returning a `Result` with an error,
+    /// records the error and returns an invalid expression.
+    ///
+    fn infer_no_error(&mut self, expression: UntypedExpr) -> TypedExpr {
+        let location = expression.location();
+        match self.infer(expression) {
+            Ok(result) => result,
+            Err(error) => {
+                self.problems.error(error);
+                self.error_expr(location)
+            }
+        }
+    }
+
     fn infer_binop(
         &mut self,
         name: BinOp,
         left: UntypedExpr,
         right: UntypedExpr,
         location: SrcSpan,
-    ) -> Result<TypedExpr, Error> {
+    ) -> TypedExpr {
         let (input_type, output_type) = match &name {
             BinOp::Eq | BinOp::NotEq => {
-                let left = self.infer(left)?;
-                let right = self.infer(right)?;
-                unify(left.type_(), right.type_())
-                    .map_err(|e| convert_unify_error(e, right.location()))?;
+                let left = self.infer_no_error(left);
+                let right = self.infer_no_error(right);
+                if let Err(error) = unify(left.type_(), right.type_()) {
+                    self.problems
+                        .error(convert_unify_error(error, right.location()));
+                }
 
                 self.check_for_inefficient_empty_list_check(name, &left, &right, location);
 
-                return Ok(TypedExpr::BinOp {
+                return TypedExpr::BinOp {
                     location,
                     name,
                     type_: bool(),
                     left: Box::new(left),
                     right: Box::new(right),
-                });
+                };
             }
             BinOp::And => (bool(), bool()),
             BinOp::Or => (bool(), bool()),
@@ -1423,26 +1448,33 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             BinOp::Concatenate => (string(), string()),
         };
 
-        let left = self.infer(left)?;
-        unify(input_type.clone(), left.type_()).map_err(|e| {
-            e.operator_situation(name)
-                .into_error(left.type_defining_location())
-        })?;
-        let right = self.infer(right)?;
-        unify(input_type, right.type_()).map_err(|e| {
-            e.operator_situation(name)
-                .into_error(right.type_defining_location())
-        })?;
+        let left = self.infer_no_error(left);
+        if let Err(error) = unify(input_type.clone(), left.type_()) {
+            self.problems.error(
+                error
+                    .operator_situation(name)
+                    .into_error(left.type_defining_location()),
+            )
+        }
+
+        let right = self.infer_no_error(right);
+        if let Err(error) = unify(input_type.clone(), right.type_()) {
+            self.problems.error(
+                error
+                    .operator_situation(name)
+                    .into_error(right.type_defining_location()),
+            )
+        }
 
         self.check_for_inefficient_empty_list_check(name, &left, &right, location);
 
-        Ok(TypedExpr::BinOp {
+        TypedExpr::BinOp {
             location,
             name,
             type_: output_type,
             left: Box::new(left),
             right: Box::new(right),
-        })
+        }
     }
 
     /// Checks for inefficient usage of `list.length` for checking for the empty list.
@@ -2528,15 +2560,23 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         record: TypedExpr,
         label: EcoString,
         location: SrcSpan,
+        label_location: SrcSpan,
+        field_start: u32,
         usage: FieldAccessUsage,
     ) -> Result<TypedExpr, Error> {
         let record = Box::new(record);
         let record_type = record.type_();
-        let (index, label, type_) =
-            self.infer_known_record_access(record_type, record.location(), usage, location, label)?;
+        let (index, label, type_) = self.infer_known_record_access(
+            record_type,
+            record.location(),
+            usage,
+            label_location,
+            label,
+        )?;
         Ok(TypedExpr::RecordAccess {
             record,
             label,
+            field_start,
             index,
             location,
             type_,
@@ -2810,6 +2850,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     record.clone(),
                     label.clone(),
                     record_location,
+                    record_location,
+                    record_location.start,
                     FieldAccessUsage::RecordUpdate,
                 )?;
 
@@ -3666,13 +3708,23 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             .map_err(|e| convert_get_value_constructor_error(e, location, None))
             .and_then(|field_map| {
                 match field_map {
-                    // The fun has a field map so labelled arguments may be present and need to be reordered.
+                    // The fun has a field map so labelled arguments may be
+                    // present and need to be reordered.
                     Some(field_map) => field_map.reorder(&mut args, location),
 
-                    // The fun has no field map and so we error if arguments have been labelled
+                    // The fun has no field map and so we error if arguments
+                    // have been labelled.
+                    // There's an exception to this rule: if the function itself
+                    // doesn't exist (that is it's an `Invalid` expression), then
+                    // we don't want to error on any labels that might have been
+                    // used as it would be quite noisy. Once the function is
+                    // known to be a valid function we can make sure that there's
+                    // no labelled arguments if it doesn't actually have a field map.
+                    None if fun.is_invalid() => Ok(()),
                     None => assert_no_labelled_arguments(&args),
                 }
             });
+
         if let Err(e) = field_map {
             match e {
                 Error::IncorrectArity {

@@ -3642,7 +3642,7 @@ fn wibble(f) {
     assert_code_action!(
         CONVERT_FROM_USE,
         TestProject::for_source(src),
-        find_position_of("use").select_until(find_position_of("todo")),
+        find_position_of("use").select_until(find_position_of("wibble")),
     );
 }
 
@@ -3702,7 +3702,7 @@ fn wibble(n, m, f) {
     assert_code_action!(
         CONVERT_FROM_USE,
         TestProject::for_source(src),
-        find_position_of("todo").to_selection(),
+        find_position_of("a <-").to_selection(),
     );
 }
 
@@ -3722,7 +3722,7 @@ fn wibble(n, m, f) {
     assert_code_action!(
         CONVERT_FROM_USE,
         TestProject::for_source(src),
-        find_position_of("todo").nth_occurrence(2).to_selection(),
+        find_position_of("wibble").to_selection(),
     );
 }
 
@@ -3742,7 +3742,26 @@ fn wibble(n, m, f) {
     assert_code_action!(
         CONVERT_FROM_USE,
         TestProject::for_source(src),
-        find_position_of("todo").under_last_char().to_selection(),
+        find_position_of("use").nth_occurrence(2).to_selection(),
+    );
+}
+
+#[test]
+fn convert_from_use_only_triggers_on_the_use_line() {
+    let src = r#"
+pub fn main() {
+  use a, b <- wibble(1, 2)
+  todo
+}
+
+fn wibble(n, m, f) {
+    f(1, 2)
+}
+"#;
+    assert_no_code_actions!(
+        CONVERT_FROM_USE,
+        TestProject::for_source(src),
+        find_position_of("todo").to_selection(),
     );
 }
 
@@ -3819,7 +3838,7 @@ fn wibble(one _, two _, three f) {
     assert_code_action!(
         CONVERT_FROM_USE,
         TestProject::for_source(src),
-        find_position_of("todo").to_selection(),
+        find_position_of("use").to_selection(),
     );
 }
 
@@ -3838,7 +3857,7 @@ fn wibble(one _, two _, three f) {
     assert_code_action!(
         CONVERT_FROM_USE,
         TestProject::for_source(src),
-        find_position_of("todo").to_selection(),
+        find_position_of("use").to_selection(),
     );
 }
 
@@ -3857,7 +3876,7 @@ fn wibble(one _, two f, three _) {
     assert_code_action!(
         CONVERT_FROM_USE,
         TestProject::for_source(src),
-        find_position_of("todo").to_selection(),
+        find_position_of("use").to_selection(),
     );
 }
 
@@ -3876,7 +3895,7 @@ fn wibble(one f, two _, three _) {
     assert_code_action!(
         CONVERT_FROM_USE,
         TestProject::for_source(src),
-        find_position_of("todo").to_selection(),
+        find_position_of("use").to_selection(),
     );
 }
 
@@ -6313,6 +6332,35 @@ pub fn main() {
 }
 
 #[test]
+fn generate_function_generates_argument_names_from_labels() {
+    assert_code_action!(
+        GENERATE_FUNCTION,
+        "
+pub fn main() {
+  add(1, addend: 10)
+}
+",
+        find_position_of("add").to_selection()
+    );
+}
+
+#[test]
+fn generate_function_generates_argument_names_from_variables() {
+    assert_code_action!(
+        GENERATE_FUNCTION,
+        "
+pub fn main() {
+  let wibble = 10
+  let wobble = 20
+
+  wubble(wibble, wobble, 14)
+}
+",
+        find_position_of("wubble").to_selection()
+    );
+}
+
+#[test]
 fn pattern_match_on_argument_generates_unique_names_even_with_labels() {
     assert_code_action!(
         PATTERN_MATCH_ON_ARGUMENT,
@@ -7160,6 +7208,71 @@ pub fn main() {
     );
 }
 
+#[test]
+fn convert_to_pipe_with_string_concat_adds_braces() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble <> woo, waa)
+}
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_bool_operator_adds_braces() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(wobble != woo, waa)
+}
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_sum_adds_no_braces() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(1 + 1, waa)
+}
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_comparison_adds_braces() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble(1.0 >=. 0.0, waa)
+}
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_with_complex_binop_adds_braces() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+fn bug() {
+    bool.guard(1 == 2 || 2 == 3, Nil, fn() { Nil })
+}
+",
+        find_position_of("||").to_selection()
+    );
+}
+
 // https://github.com/gleam-lang/gleam/issues/4342
 #[test]
 fn inline_variable_in_record_update() {
@@ -7176,6 +7289,26 @@ pub fn main() {
 }
 ",
         find_position_of("c1,").to_selection()
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/4430
+#[test]
+fn inline_variable_with_record_field() {
+    assert_code_action!(
+        INLINE_VARIABLE,
+        "
+type Couple {
+  Couple(l: Int, r: Int)
+}
+
+pub fn main() {
+  let c1 = Couple(l: 1, r: 1)
+  let c2 = c1.l
+  echo c2
+}
+",
+        find_position_of("c2").nth_occurrence(2).to_selection()
     );
 }
 
@@ -7239,7 +7372,7 @@ fn wrap_case_clause_with_multiple_patterns_in_block() {
   Water
   Fire
 }
-        
+
   pub fn f(pokemon_type: PokemonType) {
     case pokemon_type {
       Water | Air -> soak()
@@ -7259,7 +7392,7 @@ fn wrap_case_clause_inside_assignment_in_block() {
   Water
   Fire
 }
-        
+
   pub fn f(pokemon_type: PokemonType) {
     let damage = case pokemon_type {
       Water -> soak()
@@ -7364,5 +7497,23 @@ fn do_not_wrap_assignment_value_in_block() {
   let var = "value"
 }"#,
         find_position_of("var").to_selection()
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/4427
+#[test]
+fn extract_constant_function() {
+    assert_no_code_actions!(
+        EXTRACT_CONSTANT,
+        r#"
+fn print(x) {
+  Nil
+}
+
+pub fn main() {
+  print("Hello")
+}
+"#,
+        find_position_of("print").nth_occurrence(2).to_selection()
     );
 }

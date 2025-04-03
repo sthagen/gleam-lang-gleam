@@ -4,10 +4,10 @@ use crate::{
     Error, STDLIB_PACKAGE_NAME,
     ast::{
         self, AssignName, AssignmentKind, CallArg, CustomType, FunctionLiteralKind,
-        ImplicitCallArgOrigin, Pattern, PatternUnusedArguments, PipelineAssignmentKind,
-        RecordConstructor, SrcSpan, TodoKind, TypedArg, TypedAssignment, TypedExpr,
-        TypedModuleConstant, TypedPattern, TypedPipelineAssignment, TypedRecordConstructor,
-        TypedStatement, TypedUse,
+        ImplicitCallArgOrigin, PIPE_PRECEDENCE, Pattern, PatternUnusedArguments,
+        PipelineAssignmentKind, RecordConstructor, SrcSpan, TodoKind, TypedArg, TypedAssignment,
+        TypedExpr, TypedModuleConstant, TypedPattern, TypedPipelineAssignment,
+        TypedRecordConstructor, TypedStatement, TypedUse,
         visit::{Visit as _, visit_typed_call_arg, visit_typed_pattern_call_arg},
     },
     build::{Located, Module},
@@ -275,7 +275,7 @@ impl<'a> RedundantTupleInCaseSubject<'a> {
         // tuple items.
         self.edits.replace(
             discard_location,
-            itertools::intersperse(iter::repeat("_").take(tuple_items), ", ").collect(),
+            itertools::intersperse(iter::repeat_n("_", tuple_items), ", ").collect(),
         )
     }
 }
@@ -724,7 +724,7 @@ impl<'a> FillInMissingLabelledArgs<'a> {
             //
             let label_insertion_start = call_location.end - 1;
             let has_comma_after_last_argument =
-                if let Some(last_arg) = args.iter().filter(|arg| !arg.is_implicit()).last() {
+                if let Some(last_arg) = args.iter().filter(|arg| !arg.is_implicit()).next_back() {
                     self.module
                         .code
                         .get(last_arg.location.end as usize..=label_insertion_start as usize)
@@ -2310,7 +2310,7 @@ impl<'a> ConvertFromUse<'a> {
             .get(use_line_end as usize - 1..use_line_end as usize)
             == Some(")");
 
-        let last_explicit_arg = args.iter().filter(|arg| !arg.is_implicit()).last();
+        let last_explicit_arg = args.iter().filter(|arg| !arg.is_implicit()).next_back();
         let last_arg_end = last_explicit_arg.map_or(use_line_end - 1, |arg| arg.location.end);
 
         // This is the piece of code between the end of the last argument and
@@ -2400,15 +2400,7 @@ impl<'a> ConvertFromUse<'a> {
 
 impl<'ast> ast::visit::Visit<'ast> for ConvertFromUse<'ast> {
     fn visit_typed_use(&mut self, use_: &'ast TypedUse) {
-        // We only want to take into account the innermost use we find ourselves
-        // into, so we can't stop at the first use we find (the outermost one)
-        // and have to keep traversing it in case we're inside some nested
-        // `use`s.
-        let use_src_span = use_.location.merge(&use_.call.location());
-        let use_range = self.edits.src_span_to_lsp_range(use_src_span);
-        if !within(self.params.range, use_range) {
-            return;
-        }
+        let use_range = self.edits.src_span_to_lsp_range(use_.location);
 
         // If the use expression is using patterns that are not just variable
         // assignments then we can't automatically rewrite it as it would result
@@ -2417,16 +2409,18 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertFromUse<'ast> {
         // At the same time we can't safely add bindings inside the anonymous
         // function body by picking placeholder names as we'd risk shadowing
         // variables coming from the outer scope.
-        //
         // So we just skip those use expressions we can't safely rewrite!
-        if use_
-            .assignments
-            .iter()
-            .all(|assignment| assignment.pattern.is_variable())
+        if within(self.params.range, use_range)
+            && use_
+                .assignments
+                .iter()
+                .all(|assignment| assignment.pattern.is_variable())
         {
             self.selected_use = Some(use_);
         }
 
+        // We still want to visit the use expression so that we always end up
+        // picking the innermost, most relevant use under the cursor.
         self.visit_typed_expr(&use_.call);
     }
 }
@@ -3023,8 +3017,8 @@ fn can_be_constant(
         }
 
         // Extract record types as long as arguments can be constant
-        TypedExpr::Call { args, type_, .. } => {
-            matches!(type_.as_ref(), Type::Named { .. })
+        TypedExpr::Call { args, fun, .. } => {
+            fun.is_record_builder()
                 && args
                     .iter()
                     .all(|arg| can_be_constant(module, &arg.value, module_constants))
@@ -4716,6 +4710,7 @@ pub struct GenerateFunction<'a> {
 struct FunctionToGenerate<'a> {
     name: &'a str,
     arguments: Vec<(Option<EcoString>, Arc<Type>)>,
+    given_arguments: Option<&'a [TypedCallArg]>,
     return_type: Arc<Type>,
     previous_function_end: Option<u32>,
 }
@@ -4741,6 +4736,7 @@ impl<'a> GenerateFunction<'a> {
         let Some(FunctionToGenerate {
             name,
             arguments,
+            given_arguments,
             previous_function_end: Some(insert_at),
             return_type,
         }) = self.function_to_generate
@@ -4752,8 +4748,31 @@ impl<'a> GenerateFunction<'a> {
         let mut printer = Printer::new(&self.module.ast.names);
         let args = arguments
             .iter()
-            .map(|(arg_label, arg_type)| {
-                let arg_name = name_generator.generate_name_from_type(arg_type);
+            .enumerate()
+            .map(|(index, (arg_label, arg_type))| {
+                let arg_name = if let Some(label) = arg_label {
+                    name_generator.add_used_name(label.clone());
+                    label.clone()
+                } else {
+                    let given_argument = given_arguments
+                        .and_then(|arguments| arguments.get(index).map(|argument| &argument.value));
+
+                    match given_argument {
+                        // If the argument is a record, we can't use it as an argument name.
+                        // Similarly, we don't want to base the variable name off a
+                        // compiler-generated variable like `_pipe`.
+                        Some(TypedExpr::Var {
+                            name, constructor, ..
+                        }) if !constructor.variant.is_record()
+                            && !constructor.variant.is_generated_variable() =>
+                        {
+                            name_generator.add_used_name(name.clone());
+                            name.clone()
+                        }
+                        _ => name_generator.generate_name_from_type(arg_type),
+                    }
+                };
+
                 let pretty_type = printer.print_type(arg_type);
                 if let Some(arg_label) = arg_label {
                     format!("{arg_label} {arg_name}: {pretty_type}")
@@ -4784,6 +4803,7 @@ impl<'a> GenerateFunction<'a> {
         function_name_location: SrcSpan,
         function_type: &Arc<Type>,
         labels: HashMap<usize, EcoString>,
+        given_arguments: Option<&'a [TypedCallArg]>,
     ) {
         let name_range = function_name_location.start as usize..function_name_location.end as usize;
         let candidate_name = self.module.code.get(name_range);
@@ -4800,6 +4820,7 @@ impl<'a> GenerateFunction<'a> {
                 self.function_to_generate = Some(FunctionToGenerate {
                     name,
                     arguments,
+                    given_arguments,
                     return_type,
                     previous_function_end: self.last_visited_function_end,
                 })
@@ -4817,7 +4838,7 @@ impl<'ast> ast::visit::Visit<'ast> for GenerateFunction<'ast> {
     fn visit_typed_expr_invalid(&mut self, location: &'ast SrcSpan, type_: &'ast Arc<Type>) {
         let invalid_range = self.edits.src_span_to_lsp_range(*location);
         if within(self.params.range, invalid_range) {
-            self.try_save_function_to_generate(*location, type_, HashMap::new());
+            self.try_save_function_to_generate(*location, type_, HashMap::new(), None);
         }
 
         ast::visit::visit_typed_expr_invalid(self, location, type_);
@@ -4842,7 +4863,12 @@ impl<'ast> ast::visit::Visit<'ast> for GenerateFunction<'ast> {
                     .filter_map(|(i, arg)| arg.label.as_ref().map(|label| (i, label.clone())))
                     .collect();
 
-                self.try_save_function_to_generate(fun.location(), &fun.type_(), labels);
+                self.try_save_function_to_generate(
+                    fun.location(),
+                    &fun.type_(),
+                    labels,
+                    Some(args),
+                );
             }
         } else {
             ast::visit::visit_typed_expr_call(self, location, type_, fun, args);
@@ -4868,7 +4894,7 @@ fn labels_are_correct(args: &[TypedCallArg]) -> bool {
                 labelled_arg_found = true;
                 let _ = used_labels.insert(label);
             }
-            None => continue,
+            None => {}
         }
     }
 
@@ -5369,6 +5395,15 @@ impl<'a> ConvertToPipe<'a> {
         };
 
         let arg_text = self.module.code.get(arg_range).expect("invalid srcspan");
+        let arg_text = match arg.value {
+            // If the expression being piped is a binary operation with
+            // precedence lower than pipes then we have to wrap it in curly
+            // braces to not mess with the order of operations.
+            TypedExpr::BinOp { name, .. } if name.precedence() < PIPE_PRECEDENCE => {
+                &format!("{{ {arg_text} }}")
+            }
+            _ => arg_text,
+        };
 
         match next_arg {
             // When extracting an argument we never want to remove any explicit
@@ -5849,7 +5884,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillUnusedFields<'ast> {
                 let last_argument_end = arguments
                     .iter()
                     .filter(|arg| !arg.is_implicit())
-                    .last()
+                    .next_back()
                     .map(|arg| arg.location.end);
 
                 self.data = Some(FillUnusedFieldsData {
@@ -6100,15 +6135,8 @@ impl<'ast> ast::visit::Visit<'ast> for WrapInBlock<'ast> {
         match *assignment.to_owned().value {
             // To avoid wrapping the same expression in multiple, nested blocks.
             TypedExpr::Block { .. } => {}
-            TypedExpr::RecordAccess {
-                record, location, ..
-            } => {
-                self.selected_expression = Some(SrcSpan {
-                    start: record.location().start,
-                    end: location.end,
-                });
-            }
-            TypedExpr::Int { .. }
+            TypedExpr::RecordAccess { .. }
+            | TypedExpr::Int { .. }
             | TypedExpr::Float { .. }
             | TypedExpr::String { .. }
             | TypedExpr::Pipeline { .. }
