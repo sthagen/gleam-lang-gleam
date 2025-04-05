@@ -3540,6 +3540,59 @@ Consider removing the deprecation attribute on the variant.");
                         extra_labels: vec![],
                     }),
                 },
+
+                TypeError::StringConcatenationWithAddInt { location } => Diagnostic {
+                    title: "Type mismatch".to_string(),
+                    text: wrap("The + operator can only be used on Ints.
+To join two strings together you can use the <> operator."),
+                    hint: None,
+                    level: Level::Error,
+                    location: Some(Location {
+                        label: Label {
+                            text: Some("Use <> instead".into()),
+                            span: *location,
+                        },
+                        path: path.clone(),
+                        src: src.clone(),
+                        extra_labels: vec![],
+                    }),
+                },
+
+                TypeError::IntOperatorOnFloats { location, operator } => Diagnostic {
+                    title: "Type mismatch".to_string(),
+                    text: wrap_format!("The {} operator can only be used on Ints.", operator.name()),
+                    hint: None,
+                    level: Level::Error,
+                    location: Some(Location {
+                        label: Label {
+                            text: operator.float_equivalent().map(|operator|
+                                format!("Use {} instead", operator.name())
+                            ),
+                            span: *location,
+                        },
+                        path: path.clone(),
+                        src: src.clone(),
+                        extra_labels: vec![],
+                    }),
+                },
+
+                TypeError::FloatOperatorOnInts { location, operator } => Diagnostic {
+                    title: "Type mismatch".to_string(),
+                    text: wrap_format!("The {} operator can only be used on Floats.", operator.name()),
+                    hint: None,
+                    level: Level::Error,
+                    location: Some(Location {
+                        label: Label {
+                            text: operator.int_equivalent().map(|operator|
+                                format!("Use {} instead", operator.name())
+                            ),
+                            span: *location,
+                        },
+                        path: path.clone(),
+                        src: src.clone(),
+                        extra_labels: vec![],
+                    }),
+                },
             }
         }).collect_vec(),
 
@@ -4120,10 +4173,7 @@ fn hint_numeric_message(alt: &str, type_: &str) -> String {
 }
 
 fn hint_string_message() -> String {
-    wrap(
-        "Strings can be joined using the `append` or `concat` \
-functions from the `gleam/string` module.",
-    )
+    wrap("Strings can be joined using the `<>` operator.")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
