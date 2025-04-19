@@ -30,6 +30,42 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The compiler will now include labels in the error message when a `case`
+  expression is inexhaustive. For example, this code:
+
+  ```gleam
+  pub type Person {
+    Person(name: String, age: Int)
+  }
+
+  pub fn classify(person: Person) {
+    case person {
+      Person(name: "John", age: 27) -> todo
+      Person(name: _, age: 42) -> todo
+    }
+  }
+  ```
+
+  Will produces this error:
+
+  ```
+  error: Inexhaustive patterns
+    ┌─ /src/main.gleam:6:3
+    │
+  6 │ ╭   case person {
+  7 │ │     Person(name: "John", age: 27) -> todo
+  8 │ │     Person(name: _, age: 42) -> todo
+  9 │ │   }
+    │ ╰───^
+
+  This case expression does not have a pattern for all possible values. If it
+  is run on one of the values without a pattern then it will crash.
+
+  The missing patterns are:
+
+      Person(name:, age:)
+  ```
+
 ### Build tool
 
 - The build tool now supports placing modules in a directory called `dev`,
@@ -39,6 +75,11 @@
 - There is now a new CLI command, `gleam dev`, which runs the `$PACKAGE_dev`
   module, for running development entrypoints.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Updated the Erlang shipment POSIX entrypoint script to add an exec statement
+  so the Erlang process replaces the shell's process and can receive signals
+  when deployed.
+  ([Christopher De Vries](https://github.com/devries))
 
 ### Language server
 
@@ -77,6 +118,46 @@
 
   ([Louis Pilfold](https://github.com/lpil))
 
+- The code action to add missing patterns to a `case` expression now includes
+  labels in the generated patterns. For example:
+
+  ```gleam
+  pub type Person {
+    Person(name: String, age: Int)
+  }
+
+  pub fn classify(person: Person) {
+    case person {
+      Person(name: "John", age: 27) -> todo
+      Person(name: _, age: 42) -> todo
+    }
+  }
+  ```
+
+  Will now become:
+
+  ```gleam
+  pub type Person {
+    Person(name: String, age: Int)
+  }
+
+  pub fn classify(person: Person) {
+    case person {
+      Person(name: "John", age: 27) -> todo
+      Person(name: _, age: 42) -> todo
+      Person(name:, age:) -> todo
+    }
+  }
+  ```
+
 ### Formatter
 
 ### Bug fixes
+
+- Fixed a bug where `case` expressions in custom panic messages would compile
+  to invalid syntax on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where `case` expressions in custom panic messages would compile
+  to invalid syntax on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
