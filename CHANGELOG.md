@@ -66,6 +66,13 @@
       Person(name:, age:)
   ```
 
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The analysis of lists, tuples, negation operators, `panic`, `echo` and `todo`
+  is now fault tolerant, meaning that the compiler will not stop reporting
+  errors as soon as it finds one.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Build tool
 
 - The build tool now supports placing modules in a directory called `dev`,
@@ -149,6 +156,11 @@
     }
   }
   ```
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The language server now provides hover, autocomplete and goto definition
+  for constant definitions.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Formatter
 
@@ -160,4 +172,8 @@
 
 - Fixed a bug where `case` expressions in custom panic messages would compile
   to invalid syntax on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where an underscore after a zero in a number would compile to
+  invalid syntax on the JavaScript target.
   ([Surya Rose](https://github.com/GearsDatapacks))
