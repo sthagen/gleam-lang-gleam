@@ -73,6 +73,31 @@
   errors as soon as it finds one.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The error message for types used with the wrong number of arguments has been
+  improved. For example, this piece of code:
+
+  ```gleam
+  type Wibble(a)
+
+  type Wobble {
+    Wobble(Wibble)
+  }
+  ```
+
+  Produces the following error:
+
+  ```txt
+    error: Incorrect arity
+    ┌─ /src/one/two.gleam:5:10
+    │
+  5 │   Wobble(Wibble)
+    │          ^^^^^^ Expected 1 type argument, got 0
+
+  `Wibble` requires 1 type argument but none where provided.
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Build tool
 
 - The build tool now supports placing modules in a directory called `dev`,
@@ -87,6 +112,10 @@
   so the Erlang process replaces the shell's process and can receive signals
   when deployed.
   ([Christopher De Vries](https://github.com/devries))
+
+- The build tool now provides additional information when printing warnings for
+  deprecated environment variables.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Language server
 
@@ -227,3 +256,10 @@
 - Fixed a bug where replacing a Hex dependency with a Git dependency of the
   same name would cause the build tool to fail.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where updating the remote URL of a Git dependency would fail to
+  update the remote in the local dependency, causing a caching issue.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fix slightly wrong error message for missing main function in test module.
+  ([Samuel Cristobal](https://github.com/scristobal))

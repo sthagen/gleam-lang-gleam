@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use crate::build::{Outcome, Runtime, Target};
+use crate::build::{Origin, Outcome, Runtime, Target};
 use crate::diagnostic::{Diagnostic, ExtraLabel, Label, Location};
 use crate::type_::collapse_links;
 use crate::type_::error::{
@@ -177,7 +177,7 @@ pub enum Error {
     },
 
     #[error("{module} does not have a main function")]
-    ModuleDoesNotHaveMainFunction { module: EcoString },
+    ModuleDoesNotHaveMainFunction { module: EcoString, origin: Origin },
 
     #[error("{module}'s main function has the wrong arity so it can not be run")]
     MainFunctionHasWrongArity { module: EcoString, arity: usize },
@@ -923,7 +923,7 @@ forward slash and must not end with a slash."
                 }]
             }
 
-            Error::ModuleDoesNotHaveMainFunction { module } => vec![Diagnostic {
+            Error::ModuleDoesNotHaveMainFunction { module, origin } => vec![Diagnostic {
                 title: "Module does not have a main function".into(),
                 text: format!(
                     "`{module}` does not have a main function so the module can not be run."
@@ -932,7 +932,7 @@ forward slash and must not end with a slash."
                 location: None,
                 hint: Some(format!(
                     "Add a public `main` function to \
-to `src/{module}.gleam`."
+to `{}/{module}.gleam`.", origin.folder_name()
                 )),
             }],
 
@@ -2163,16 +2163,20 @@ But function expects:
                 TypeError::IncorrectTypeArity {
                     location,
                     expected,
-                    given,
-                    ..
+                    given: given_number,
+                    name,
                 } => {
-                    let text = wrap("Functions and constructors have to be \
-called with their expected number of arguments.");
                     let expected = match expected {
-                        0 => "no arguments".into(),
-                        1 => "1 argument".into(),
-                        _ => format!("{expected} arguments"),
+                        0 => "no type arguments".into(),
+                        1 => "1 type argument".into(),
+                        _ => format!("{expected} type arguments"),
                     };
+                    let given = match given_number {
+                        0 => "none",
+                        _ => &format!("{given_number}")
+                    };
+                    let text = wrap_format!("`{name}` requires {expected} \
+but {given} where provided.");
                     Diagnostic {
                         title: "Incorrect arity".into(),
                         text,
@@ -2180,7 +2184,7 @@ called with their expected number of arguments.");
                         level: Level::Error,
                         location: Some(Location {
                             label: Label {
-                                text: Some(format!("Expected {expected}, got {given}")),
+                                text: Some(format!("Expected {expected}, got {given_number}")),
                                 span: *location,
                             },
                             path: path.clone(),

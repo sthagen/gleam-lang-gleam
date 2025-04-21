@@ -164,8 +164,34 @@ pub enum Warning {
     },
 
     DeprecatedEnvironmentVariable {
-        name: String,
+        variable: DeprecatedEnvironmentVariable,
     },
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+pub enum DeprecatedEnvironmentVariable {
+    HexpmUser,
+    HexpmPass,
+}
+
+impl DeprecatedEnvironmentVariable {
+    fn name(&self) -> &'static str {
+        match self {
+            DeprecatedEnvironmentVariable::HexpmUser => "HEXPM_USER",
+            DeprecatedEnvironmentVariable::HexpmPass => "HEXPM_PASS",
+        }
+    }
+
+    fn message(&self) -> &'static str {
+        match self {
+            DeprecatedEnvironmentVariable::HexpmUser => {
+                "Use the `{API_ENV_NAME}` environment variable instead."
+            }
+            DeprecatedEnvironmentVariable::HexpmPass => {
+                "Use the `{API_ENV_NAME}` environment variable instead."
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
@@ -1174,13 +1200,22 @@ information.",
                 },
             },
 
-            Warning::DeprecatedEnvironmentVariable { name } => Diagnostic {
-                title: "Use of deprecated environment variable".into(),
-                text: wrap(&format!("The environment variable `{name}` is deprecated.")),
-                hint: None,
-                level: diagnostic::Level::Warning,
-                location: None,
-            },
+            Warning::DeprecatedEnvironmentVariable { variable } => {
+                let name = variable.name();
+                let message = variable.message();
+
+                let text = wrap(&format!(
+                    "The environment variable `{name}` is deprecated.\n\n{message}"
+                ));
+
+                Diagnostic {
+                    title: "Use of deprecated environment variable".into(),
+                    text,
+                    hint: None,
+                    level: diagnostic::Level::Warning,
+                    location: None,
+                }
+            }
         }
     }
 
