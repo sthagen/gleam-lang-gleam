@@ -19,7 +19,7 @@ use crate::type_::expression::Implementations;
 use crate::type_::printer::Names;
 use crate::type_::{
     self, Deprecation, ModuleValueConstructor, PatternConstructor, Type, TypedCallArg,
-    ValueConstructor,
+    ValueConstructor, nil,
 };
 use std::sync::Arc;
 
@@ -2673,6 +2673,8 @@ pub enum Statement<TypeT, ExpressionT> {
     Assignment(Assignment<TypeT, ExpressionT>),
     /// A `use` expression.
     Use(Use<TypeT, ExpressionT>),
+    /// A bool assertion.
+    Assert(Assert<ExpressionT>),
 }
 
 pub type UntypedUse = Use<(), UntypedExpr>;
@@ -2782,6 +2784,7 @@ impl UntypedStatement {
             Statement::Expression(expression) => expression.location(),
             Statement::Assignment(assignment) => assignment.location,
             Statement::Use(use_) => use_.location,
+            Statement::Assert(assert) => assert.location,
         }
     }
 
@@ -2790,13 +2793,14 @@ impl UntypedStatement {
             Statement::Expression(expression) => expression.start_byte_index(),
             Statement::Assignment(assignment) => assignment.location.start,
             Statement::Use(use_) => use_.location.start,
+            Statement::Assert(assert) => assert.location.start,
         }
     }
 
     pub fn is_placeholder(&self) -> bool {
         match self {
             Statement::Expression(expression) => expression.is_placeholder(),
-            Statement::Assignment(_) | Statement::Use(_) => false,
+            Statement::Assignment(_) | Statement::Use(_) | Statement::Assert(_) => false,
         }
     }
 }
@@ -2807,6 +2811,7 @@ impl TypedStatement {
             Statement::Expression(e) => e.is_println(),
             Statement::Assignment(_) => false,
             Statement::Use(_) => false,
+            Statement::Assert(_) => false,
         }
     }
 
@@ -2815,6 +2820,7 @@ impl TypedStatement {
             Statement::Expression(expression) => expression.location(),
             Statement::Assignment(assignment) => assignment.location,
             Statement::Use(use_) => use_.location,
+            Statement::Assert(assert) => assert.location,
         }
     }
 
@@ -2826,6 +2832,7 @@ impl TypedStatement {
             Statement::Expression(expression) => expression.last_location(),
             Statement::Assignment(assignment) => assignment.value.last_location(),
             Statement::Use(use_) => use_.call.last_location(),
+            Statement::Assert(assert) => assert.value.last_location(),
         }
     }
 
@@ -2833,7 +2840,8 @@ impl TypedStatement {
         match self {
             Statement::Expression(expression) => expression.type_(),
             Statement::Assignment(assignment) => assignment.type_(),
-            Statement::Use(_use) => _use.call.type_(),
+            Statement::Use(use_) => use_.call.type_(),
+            Statement::Assert(_) => nil(),
         }
     }
 
@@ -2842,6 +2850,7 @@ impl TypedStatement {
             Statement::Expression(expression) => expression.definition_location(),
             Statement::Assignment(_) => None,
             Statement::Use(use_) => use_.call.definition_location(),
+            Statement::Assert(_) => None,
         }
     }
 
@@ -2851,6 +2860,13 @@ impl TypedStatement {
             Statement::Expression(expression) => expression.find_node(byte_index),
             Statement::Assignment(assignment) => assignment.find_node(byte_index).or_else(|| {
                 if assignment.location.contains(byte_index) {
+                    Some(Located::Statement(self))
+                } else {
+                    None
+                }
+            }),
+            Statement::Assert(assert) => assert.find_node(byte_index).or_else(|| {
+                if assert.location.contains(byte_index) {
                     Some(Located::Statement(self))
                 } else {
                     None
@@ -2872,6 +2888,13 @@ impl TypedStatement {
                     }
                 })
             }
+            Statement::Assert(assert) => assert.value.find_statement(byte_index).or_else(|| {
+                if assert.location.contains(byte_index) {
+                    Some(self)
+                } else {
+                    None
+                }
+            }),
         }
     }
 
@@ -2880,6 +2903,7 @@ impl TypedStatement {
             Statement::Expression(expression) => expression.type_defining_location(),
             Statement::Assignment(assignment) => assignment.location,
             Statement::Use(use_) => use_.location,
+            Statement::Assert(assert) => assert.location,
         }
     }
 
@@ -2892,6 +2916,8 @@ impl TypedStatement {
                 !assignment.kind.is_assert() && assignment.value.is_pure_value_constructor()
             }
             Statement::Use(Use { call, .. }) => call.is_pure_value_constructor(),
+            // Assert statements by definition are not pure
+            Statement::Assert(_) => false,
         }
     }
 }
@@ -2922,6 +2948,30 @@ impl TypedAssignment {
 
     pub fn type_(&self) -> Arc<Type> {
         self.value.type_()
+    }
+}
+
+pub type TypedAssert = Assert<TypedExpr>;
+pub type UntypedAssert = Assert<UntypedExpr>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assert<Expression> {
+    pub location: SrcSpan,
+    pub value: Expression,
+    pub message: Option<Expression>,
+}
+
+impl TypedAssert {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        if let Some(found) = self.value.find_node(byte_index) {
+            return Some(found);
+        }
+        if let Some(message) = &self.message {
+            if let Some(found) = message.find_node(byte_index) {
+                return Some(found);
+            }
+        }
+        None
     }
 }
 

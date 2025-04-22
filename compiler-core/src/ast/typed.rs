@@ -669,7 +669,40 @@ impl TypedExpr {
             | Self::Tuple { .. }
             | Self::String { .. }
             | Self::BitArray { .. } => true,
+
+            // Calls are literals if they are records and all the arguemnts are also literals.
+            Self::Call { fun, args, .. } => {
+                fun.is_record_constructor()
+                    && args.iter().all(|argument| argument.value.is_literal())
+            }
+
+            // Variables are literals if they are record constructors that take no arguments.
+            Self::Var {
+                constructor:
+                    ValueConstructor {
+                        variant: ValueConstructorVariant::Record { arity: 0, .. },
+                        ..
+                    },
+                ..
+            } => true,
+
             _ => false,
+        }
+    }
+
+    pub fn is_known_value(&self) -> bool {
+        match self {
+            Self::Int { .. }
+            | Self::List { .. }
+            | Self::Float { .. }
+            | Self::Tuple { .. }
+            | Self::String { .. }
+            | Self::BitArray { .. } => true,
+            TypedExpr::BinOp { left, right, .. } => left.is_known_value() && right.is_known_value(),
+            TypedExpr::NegateBool { value, .. } | TypedExpr::NegateInt { value, .. } => {
+                value.is_known_value()
+            }
+            expr => expr.is_record_builder(),
         }
     }
 
@@ -817,6 +850,21 @@ impl TypedExpr {
     }
 
     #[must_use]
+    pub fn is_record_constructor(&self) -> bool {
+        match self {
+            TypedExpr::Var {
+                constructor:
+                    ValueConstructor {
+                        variant: ValueConstructorVariant::Record { .. },
+                        ..
+                    },
+                ..
+            } => true,
+            _ => false,
+        }
+    }
+
+    #[must_use]
     pub fn is_record_builder(&self) -> bool {
         match self {
             TypedExpr::Call { fun, .. } => fun.is_record_builder(),
@@ -829,6 +877,7 @@ impl TypedExpr {
         }
     }
 
+    #[must_use]
     /// If `self` is a record constructor, returns the nuber of arguments it
     /// needs to be called. Otherwise, returns `None`.
     ///

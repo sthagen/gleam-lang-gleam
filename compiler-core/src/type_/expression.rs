@@ -2,14 +2,15 @@ use super::{pipe::PipeTyper, *};
 use crate::{
     analyse::{infer_bit_array_option, name::check_argument_names},
     ast::{
-        Arg, Assignment, AssignmentKind, BinOp, BitArrayOption, BitArraySegment, CallArg, Clause,
-        ClauseGuard, Constant, FunctionLiteralKind, HasLocation, ImplicitCallArgOrigin, Layer,
-        RECORD_UPDATE_VARIABLE, RecordBeingUpdated, SrcSpan, Statement, TodoKind, TypeAst,
-        TypedArg, TypedAssignment, TypedClause, TypedClauseGuard, TypedConstant, TypedExpr,
-        TypedMultiPattern, TypedStatement, USE_ASSIGNMENT_VARIABLE, UntypedArg, UntypedAssignment,
-        UntypedClause, UntypedClauseGuard, UntypedConstant, UntypedConstantBitArraySegment,
-        UntypedExpr, UntypedExprBitArraySegment, UntypedMultiPattern, UntypedStatement, UntypedUse,
-        UntypedUseAssignment, Use, UseAssignment,
+        Arg, Assert, Assignment, AssignmentKind, BinOp, BitArrayOption, BitArraySegment, CallArg,
+        Clause, ClauseGuard, Constant, FunctionLiteralKind, HasLocation, ImplicitCallArgOrigin,
+        Layer, RECORD_UPDATE_VARIABLE, RecordBeingUpdated, SrcSpan, Statement, TodoKind, TypeAst,
+        TypedArg, TypedAssert, TypedAssignment, TypedClause, TypedClauseGuard, TypedConstant,
+        TypedExpr, TypedMultiPattern, TypedStatement, USE_ASSIGNMENT_VARIABLE, UntypedArg,
+        UntypedAssert, UntypedAssignment, UntypedClause, UntypedClauseGuard, UntypedConstant,
+        UntypedConstantBitArraySegment, UntypedExpr, UntypedExprBitArraySegment,
+        UntypedMultiPattern, UntypedStatement, UntypedUse, UntypedUseAssignment, Use,
+        UseAssignment,
     },
     build::Target,
     exhaustiveness::{self, CompileCaseResult, CompiledCase, Reachability},
@@ -245,20 +246,43 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
     }
 
-    pub fn in_new_scope<T, E>(
+    fn in_new_scope<T, E>(
         &mut self,
         process_scope: impl FnOnce(&mut Self) -> Result<T, E>,
     ) -> Result<T, E> {
+        self.scoped(|this| {
+            let result = process_scope(this);
+            let was_successful = result.is_ok();
+            (result, was_successful)
+        })
+    }
+
+    fn value_in_new_scope<A>(&mut self, process_scope: impl FnOnce(&mut Self) -> A) -> A {
+        self.scoped(|this| (process_scope(this), true))
+    }
+
+    fn expr_in_new_scope(
+        &mut self,
+        process_scope: impl FnOnce(&mut Self) -> TypedExpr,
+    ) -> TypedExpr {
+        self.scoped(|this| {
+            let expr = process_scope(this);
+            let was_successful = !expr.is_invalid();
+            (expr, was_successful)
+        })
+    }
+
+    fn scoped<A>(&mut self, process_scope: impl FnOnce(&mut Self) -> (A, bool)) -> A {
         // Create new scope
         let environment_reset_data = self.environment.open_new_scope();
         let hydrator_reset_data = self.hydrator.open_new_scope();
 
         // Process the scope
-        let result = process_scope(self);
+        let (result, was_successful) = process_scope(self);
 
         // Close scope, discarding any scope local state
         self.environment
-            .close_scope(environment_reset_data, result.is_ok(), self.problems);
+            .close_scope(environment_reset_data, was_successful, self.problems);
         self.hydrator.close_scope(hydrator_reset_data);
         result
     }
@@ -326,7 +350,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             UntypedExpr::Block {
                 statements,
                 location,
-            } => self.infer_block(statements, location),
+            } => Ok(self.infer_block(statements, location)),
 
             UntypedExpr::Tuple {
                 location, elements, ..
@@ -357,7 +381,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 body,
                 return_annotation,
                 ..
-            } => self.infer_fn(args, &[], body, kind, return_annotation, location),
+            } => Ok(self.infer_fn(args, &[], body, kind, return_annotation, location)),
 
             UntypedExpr::Case {
                 location,
@@ -609,7 +633,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     statements.push(statement);
                     break; // Inferring the use has consumed the rest of the exprs
                 }
-
                 Statement::Expression(expression) => {
                     let location = expression.location();
                     let expression = match self.infer_or_error(expression) {
@@ -628,10 +651,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     }
                     statements.push(Statement::Expression(expression));
                 }
-
                 Statement::Assignment(assignment) => {
                     let assignment = self.infer_assignment(assignment);
                     statements.push(Statement::Assignment(assignment));
+                }
+                Statement::Assert(assert) => {
+                    let assert = self.infer_assert(assert);
+                    statements.push(Statement::Assert(assert));
                 }
             }
         }
@@ -782,7 +808,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         kind: FunctionLiteralKind,
         return_annotation: Option<TypeAst>,
         location: SrcSpan,
-    ) -> Result<TypedExpr, Error> {
+    ) -> TypedExpr {
         for Arg { names, .. } in args.iter() {
             check_argument_names(names, self.problems);
         }
@@ -791,7 +817,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         self.already_warned_for_unreachable_code = false;
         self.previous_panics = false;
 
-        let (args, body) = self.do_infer_fn(args, expected_args, body, &return_annotation)?;
+        let (args, body) = match self.do_infer_fn(args, expected_args, body, &return_annotation) {
+            Ok(result) => result,
+            Err(error) => {
+                self.problems.error(error);
+                return self.error_expr(location);
+            }
+        };
         let args_types = args.iter().map(|a| a.type_.clone()).collect();
         let type_ = fn_(args_types, body.last().type_());
 
@@ -799,14 +831,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         self.already_warned_for_unreachable_code = already_warned_for_unreachable_code;
         self.previous_panics = false;
 
-        Ok(TypedExpr::Fn {
+        TypedExpr::Fn {
             location,
             type_,
             kind,
             args,
             body,
             return_annotation,
-        })
+        }
     }
 
     fn infer_arg(
@@ -1554,15 +1586,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             annotation,
             location,
         } = assignment;
-        let value_location = value.location();
-        let value = match self.in_new_scope(|value_typer| value_typer.infer_or_error(*value)) {
-            Ok(value) => value,
-            Err(error) => {
-                self.problems.error(error);
-                self.error_expr(value_location)
-            }
-        };
-
+        let value = self.expr_in_new_scope(|this| this.infer(*value));
         let type_ = value.type_();
         let kind = self.infer_assignment_kind(kind.clone());
 
@@ -1695,6 +1719,63 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
     }
 
+    fn infer_assert(&mut self, assert: UntypedAssert) -> TypedAssert {
+        let Assert {
+            value,
+            location,
+            message,
+        } = assert;
+        let value_location = value.location();
+
+        let value = self.infer(value);
+
+        if value.is_known_value() {
+            self.problems.warning(Warning::AssertLiteralValue {
+                location: value_location,
+            });
+        }
+
+        match unify(bool(), value.type_()) {
+            Ok(()) => {}
+            Err(error) => self
+                .problems
+                .error(convert_unify_error(error, value_location)),
+        }
+
+        let message = message.map(|message| {
+            let message_location = message.location();
+            match self.infer_assert_message(message) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.problems.error(error);
+                    self.error_expr(message_location)
+                }
+            }
+        });
+
+        self.track_feature_usage(FeatureKind::BoolAssert, location);
+
+        Assert {
+            location,
+            value,
+            message,
+        }
+    }
+
+    fn infer_assert_message(&mut self, message: UntypedExpr) -> Result<TypedExpr, Error> {
+        let message_location = message.location();
+        let message = self.infer(message);
+
+        match unify(string(), message.type_()) {
+            Ok(()) => {}
+            Err(error) => self
+                .problems
+                .error(convert_unify_error(error, message_location)),
+        }
+
+        Ok(message)
+    }
+
     fn infer_case(
         &mut self,
         subjects: Vec<UntypedExpr>,
@@ -1710,19 +1791,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         self.previous_panics = false;
         let mut any_subject_panics = false;
         for subject in subjects {
-            let subject_location = subject.location();
-            let subject = self.in_new_scope(|subject_typer| {
-                let subject = subject_typer.infer_or_error(subject)?;
-                Ok(subject)
-            });
-            let subject = match subject {
-                Ok(subject) => subject,
-                Err(error) => {
-                    self.problems.error(error);
-                    self.error_expr(subject_location)
-                }
-            };
-
+            let subject = self.expr_in_new_scope(|this| this.infer(subject));
             any_subject_panics = any_subject_panics || self.previous_panics;
             subject_types.push(subject.type_());
             typed_subjects.push(subject);
@@ -1758,20 +1827,18 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 all_patterns_are_discards && clause.pattern.iter().all(|p| p.is_discard());
 
             self.previous_panics = false;
-            let typed_clause = match self.infer_clause(clause, &typed_subjects) {
-                Ok(clause) => clause,
-                Err(clause) => {
-                    patterns_typechecked_successfully = false;
-                    clause
-                }
-            };
+            let (typed_clause, error_typing_patterns) = self.infer_clause(clause, &typed_subjects);
+            if error_typing_patterns {
+                patterns_typechecked_successfully = false
+            }
             all_clauses_panic = all_clauses_panic && self.previous_panics;
 
-            if let Err(e) = unify(return_type.clone(), typed_clause.then.type_()).map_err(|e| {
-                e.case_clause_mismatch(typed_clause.location)
-                    .into_error(typed_clause.then.type_defining_location())
-            }) {
-                self.problems.error(e);
+            if let Err(error) = unify(return_type.clone(), typed_clause.then.type_()) {
+                self.problems.error(
+                    error
+                        .case_clause_mismatch(typed_clause.location)
+                        .into_error(typed_clause.then.type_defining_location()),
+                );
             }
             typed_clauses.push(typed_clause);
         }
@@ -1814,11 +1881,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
     }
 
+    /// Returns a tuple with the typed clause and a bool that is true if an error
+    /// was encountered while typing the clause patterns.
+    ///
     fn infer_clause(
         &mut self,
         clause: UntypedClause,
         subjects: &[TypedExpr],
-    ) -> Result<TypedClause, TypedClause> {
+    ) -> (TypedClause, bool) {
         let Clause {
             pattern,
             alternative_patterns,
@@ -1826,70 +1896,28 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             then,
             location,
         } = clause;
-        let then_location = then.location();
+        self.value_in_new_scope(|this| {
+            let (typed_pattern, typed_alternatives, error_encountered) =
+                this.infer_clause_pattern(pattern, alternative_patterns, subjects, &location);
 
-        let scoped_clause_inference = self.in_new_scope(|clause_typer| {
-            // Check the types
-            let (typed_pattern, typed_alternatives, error_encountered) = clause_typer
-                .infer_clause_pattern(pattern, alternative_patterns, subjects, &location);
-            let guard = match clause_typer.infer_optional_clause_guard(guard) {
+            let guard = match this.infer_optional_clause_guard(guard) {
                 Ok(guard) => guard,
                 // If an error occurs inferring guard then assume no guard
                 Err(error) => {
-                    clause_typer.problems.error(error);
+                    this.problems.error(error);
                     None
                 }
             };
-            let then = match clause_typer.infer_or_error(then) {
-                Ok(then) => then,
-                Err(error) => {
-                    clause_typer.problems.error(error);
-                    clause_typer.error_expr(then_location)
-                }
-            };
-
-            Ok((
+            let then = this.infer(then);
+            let clause = Clause {
+                location,
+                pattern: typed_pattern,
+                alternative_patterns: typed_alternatives,
                 guard,
                 then,
-                typed_pattern,
-                typed_alternatives,
-                error_encountered,
-            ))
-        });
-        let (guard, then, typed_pattern, typed_alternatives, error_encountered) =
-            match scoped_clause_inference {
-                Ok(res) => res,
-                Err(error) => {
-                    // NOTE: theoretically it should be impossible to get here
-                    // since the individual parts have been made fault tolerant
-                    // but in_new_scope requires that the return type be a result
-                    self.problems.error(error);
-                    (
-                        None,
-                        TypedExpr::Invalid {
-                            location: then_location,
-                            type_: self.new_unbound_var(),
-                        },
-                        vec![],
-                        vec![],
-                        true,
-                    )
-                }
             };
-
-        let clause = Clause {
-            location,
-            pattern: typed_pattern,
-            alternative_patterns: typed_alternatives,
-            guard,
-            then,
-        };
-
-        if error_encountered {
-            Err(clause)
-        } else {
-            Ok(clause)
-        }
+            (clause, error_encountered)
+        })
     }
 
     fn infer_clause_pattern(
@@ -3667,20 +3695,19 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         location: SrcSpan,
         kind: CallKind,
     ) -> (TypedExpr, Vec<TypedCallArg>, Arc<Type>) {
-        let function_location = fun.location();
-        let typed_fun = match fun {
+        let fun = match fun {
             UntypedExpr::FieldAccess {
                 label,
                 container,
                 label_location,
                 location,
-            } => Ok(self.infer_field_access(
+            } => self.infer_field_access(
                 *container,
                 location,
                 label,
                 label_location,
                 FieldAccessUsage::MethodCall,
-            )),
+            ),
 
             UntypedExpr::Fn {
                 location,
@@ -3698,15 +3725,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 location,
             ),
 
-            fun => self.infer_or_error(fun),
-        };
-
-        let fun = match typed_fun {
-            Ok(fun) => fun,
-            Err(function_inference_error) => {
-                self.problems.error(function_inference_error);
-                self.error_expr(function_location)
-            }
+            fun => self.infer(fun),
         };
 
         let (fun, args, type_) = self.do_infer_call_with_known_fun(fun, args, location, kind);
@@ -3721,7 +3740,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         kind: FunctionLiteralKind,
         return_annotation: Option<TypeAst>,
         location: SrcSpan,
-    ) -> Result<TypedExpr, Error> {
+    ) -> TypedExpr {
         let typed_call_args: Vec<Arc<Type>> = call_args
             .iter()
             .map(|a| {
@@ -3970,9 +3989,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         kind: ArgumentKind,
     ) -> TypedExpr {
         let type_ = collapse_links(type_);
-
-        let value_location = value.location();
-        let result = match (&*type_, value) {
+        let value = match (&*type_, value) {
             // If the argument is expected to be a function and we are passed a
             // function literal with the correct number of arguments then we
             // have special handling of this argument, passing in information
@@ -4003,36 +4020,15 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             ),
 
             // Otherwise just perform normal type inference.
-            (_, value) => self.infer_or_error(value),
+            (_, value) => self.infer(value),
         };
 
-        match result {
-            Err(error) => {
-                // If we couldn't infer the value, we record the error and
-                // return an invalid expression with the type we were expecting
-                // to see.
-                self.problems.error(error);
-                TypedExpr::Invalid {
-                    location: value_location,
-                    type_,
-                }
-            }
-            Ok(value) => match unify(type_.clone(), value.type_()) {
-                Ok(_) => value,
-                Err(error) => {
-                    // If we couldn't unify it, we record the error and return
-                    // an invalid expression with the type we infered for the
-                    // value.
-                    let location = value.location();
-                    let error = convert_unify_call_error(error, location, kind);
-                    self.problems.error(error);
-                    TypedExpr::Invalid {
-                        location,
-                        type_: value.type_(),
-                    }
-                }
-            },
+        if let Err(error) = unify(type_.clone(), value.type_()) {
+            self.problems
+                .error(convert_unify_call_error(error, value.location(), kind));
         }
+
+        value
     }
 
     pub fn do_infer_fn(
@@ -4069,11 +4065,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         if body.first().is_placeholder() {
             self.implementations.gleam = false;
         }
+
         self.in_new_scope(|body_typer| {
             // Used to track if any argument names are used more than once
             let mut argument_names = HashSet::with_capacity(args.len());
 
-            for (arg, t) in args.iter().zip(args.iter().map(|arg| arg.type_.clone())) {
+            for arg in args.iter() {
                 match &arg.names {
                     ArgNames::Named { name, location }
                     | ArgNames::NamedLabelled {
@@ -4095,7 +4092,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             name.clone(),
                             *location,
                             VariableOrigin::Variable(name.clone()),
-                            t,
+                            arg.type_.clone(),
                         );
 
                         if !body.first().is_placeholder() {
@@ -4145,17 +4142,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         })
     }
 
-    fn infer_block(
-        &mut self,
-        statements: Vec1<UntypedStatement>,
-        location: SrcSpan,
-    ) -> Result<TypedExpr, Error> {
-        self.in_new_scope(|typer| {
+    fn infer_block(&mut self, statements: Vec1<UntypedStatement>, location: SrcSpan) -> TypedExpr {
+        self.expr_in_new_scope(|typer| {
             let statements = typer.infer_statements(statements);
-            Ok(TypedExpr::Block {
+            TypedExpr::Block {
                 statements,
                 location,
-            })
+            }
         })
     }
 
@@ -4278,7 +4271,7 @@ fn extract_typed_use_call_assignments(
         .iter()
         .take(assignments_count)
         .map(|statement| match statement {
-            Statement::Expression(_) | Statement::Use(_) => None,
+            Statement::Expression(_) | Statement::Use(_) | Statement::Assert(_) => None,
             Statement::Assignment(assignment) => Some(UseAssignment {
                 location: assignment.location,
                 pattern: assignment.pattern.clone(),
