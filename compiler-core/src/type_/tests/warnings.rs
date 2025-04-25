@@ -1344,7 +1344,7 @@ fn unused_pipeline_not_ending_with_variant_raises_no_warnings() {
     assert_no_warnings!(
         r#"
 pub type Wibble(a) { Wibble(a) }
-pub fn wibble(a) { a }
+pub fn wibble(a) { echo a }
 
 pub fn main() {
   1 |> wibble |> wibble
@@ -1417,7 +1417,7 @@ pub fn main() {
 #[test]
 fn calling_function_from_other_module_is_not_marked_unused() {
     assert_no_warnings!(
-        ("wibble", "wibble", "pub fn println(a) { Nil }"),
+        ("wibble", "wibble", "pub fn println(a) { panic }"),
         r#"
 import wibble
 
@@ -2825,7 +2825,7 @@ pub fn main() {
   Nil
 }
 
-fn wibble() { wibble() }
+fn wibble() { panic }
 "#
     );
 }
@@ -2859,7 +2859,7 @@ pub fn main() {
     Nil
 }
 
-fn wibble() { wibble() }
+fn wibble() { panic }
 "#
     );
 }
@@ -2877,7 +2877,7 @@ pub fn main() {
     Nil
 }
 
-fn wibble() { wibble() }
+fn wibble() { panic }
 "#
     );
 }
@@ -2944,7 +2944,7 @@ pub fn main() {
     Nil
 }
 
-fn wibble(n) { n }
+fn wibble(n) { echo n }
 "#
     );
 }
@@ -2978,7 +2978,7 @@ pub fn main() {
     Nil
 }
 
-fn each(list, _fun) { list }
+fn each(list, _fun) { echo list }
 "#
     );
 }
@@ -3063,5 +3063,465 @@ pub fn main() {
   w
 }
 "
+    );
+}
+
+#[test]
+fn bit_array_truncated_segment() {
+    assert_warning!(
+        "
+pub fn main() {
+  <<12:size(1)>>
+}
+"
+    );
+}
+
+#[test]
+fn unused_pure_function() {
+    assert_warning!(
+        "
+fn add(a, b) { a + b }
+
+pub fn main() {
+  add(1, 2)
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn bit_array_truncated_segment_in_bytes() {
+    assert_warning!(
+        "
+pub fn main() {
+  <<258:size(8)>>
+}
+"
+    );
+}
+#[test]
+
+fn unused_pure_function_that_calls_other_pure_function() {
+    assert_warning!(
+        "
+fn sub(a, b) { add(a, -b) }
+
+fn add(a, b) { a + b }
+
+pub fn main() {
+  sub(1, 2)
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn bit_array_truncated_segment_in_bytes_2() {
+    assert_warning!(
+        "
+pub fn main() {
+  <<65_537:size(2)-unit(8)>>
+}
+"
+    );
+}
+
+#[test]
+fn bit_array_truncated_segment_in_range() {
+    assert_no_warnings!(
+        "
+pub fn main() {
+  <<255>>
+}
+"
+    );
+}
+
+#[test]
+fn function_is_impure_if_external() {
+    assert_no_warnings!(
+        r#"
+@external(erlang, "maths", "add")
+fn add(a: Int, b: Int) -> Int
+
+pub fn main() {
+  add(1, 2)
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn bit_array_truncated_segment_in_range_2() {
+    assert_no_warnings!(
+        "
+pub fn main() {
+  <<0>>
+}
+"
+    );
+}
+
+#[test]
+fn function_is_impure_if_uses_echo() {
+    assert_no_warnings!(
+        r#"
+fn add(a: Int, b: Int) -> Int {
+  echo a + b
+}
+
+pub fn main() {
+  add(1, 2)
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn bit_array_negative_truncated_segment() {
+    assert_warning!(
+        "
+pub fn main() {
+  // -5 in 2's complement is 1111...111011
+  // so if we truncate it to its first 3 bits we
+  // get 011, which is positive 3!
+  <<-5:size(3)>>
+}
+"
+    );
+}
+
+#[test]
+fn bit_array_negative_truncated_segment_2() {
+    assert_warning!(
+        "
+pub fn main() {
+  <<-200:size(8)>>
+}
+"
+    );
+}
+
+#[test]
+fn bit_array_negative_truncated_segment_in_range() {
+    assert_no_warnings!(
+        "
+pub fn main() {
+  <<-128>>
+}
+"
+    );
+}
+
+#[test]
+fn function_is_impure_if_uses_panic() {
+    assert_no_warnings!(
+        r#"
+fn add(a: Int, b: Int) -> Int {
+  case a + b {
+    0 -> panic as "Cannot add to zero"
+    x -> x
+  }
+}
+
+pub fn main() {
+  add(1, 2)
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn function_is_impure_if_uses_todo() {
+    // We have to use `assert_warning` here instead of `assert_no_warnings`, because
+    // `todo` will always emit a warning. However, that should be the only warning;
+    // there should not be an unused function warning.
+    assert_warning!(
+        r#"
+fn add(a: Int, b: Int) -> Int {
+  case a + b {
+    0 -> todo as "Handle zero"
+    x -> x
+  }
+}
+
+pub fn main() {
+  add(1, 2)
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn function_is_impure_if_uses_let_assert() {
+    assert_no_warnings!(
+        r#"
+fn assert_ok(x: Result(a, b)) -> a {
+  let assert Ok(x) = x
+  x
+}
+
+pub fn main() {
+  assert_ok(Ok(10))
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn function_is_impure_if_uses_assert() {
+    assert_no_warnings!(
+        r#"
+fn assert_equal(a, b) {
+  assert a == b
+}
+
+pub fn main() {
+  assert_equal(1, 2)
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn function_is_impure_if_call_impure_function() {
+    assert_no_warnings!(
+        r#"
+@external(erlang, "erlang", "something")
+fn impure() -> Nil
+
+fn add(a: Int, b: Int) -> Int {
+  impure()
+  a + b
+}
+
+pub fn main() {
+  add(1, 2)
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn pure_pipeline_raises_warning() {
+    assert_warning!(
+        "
+fn add(a, b) { a + b }
+
+pub fn main() {
+  1 |> add(2)
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn pure_pipeline_with_many_steps_raises_warning() {
+    assert_warning!(
+        "
+fn add(a, b) { a + b }
+
+pub fn main() {
+  1 |> add(2) |> add(3) |> add(4)
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn pipeline_with_echo_is_impure() {
+    assert_no_warnings!(
+        "
+fn add(a, b) { a + b }
+
+pub fn main() {
+  1 |> add(2) |> echo |> add(3)
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn pipeline_with_impure_function_raises_no_warnings() {
+    assert_no_warnings!(
+        "
+fn add(a, b) { echo a + b }
+
+pub fn main() {
+  1 |> add(2)
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn function_is_pure_on_js_if_external_on_erlang() {
+    assert_js_warning!(
+        r#"
+@external(erlang, "maths", "add")
+fn add(a: Int, b: Int) -> Int { a + b }
+
+pub fn main() {
+  add(1, 2)
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn function_is_pure_on_erlang_if_external_on_js() {
+    assert_warning!(
+        r#"
+@external(javascript, "./maths.mjs", "add")
+fn add(a: Int, b: Int) -> Int { a + b }
+
+pub fn main() {
+  add(1, 2)
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn pure_standard_library_function() {
+    assert_warning!(
+        (
+            "gleam_stdlib",
+            "gleam/dict",
+            r#"
+pub type Dict(key, value)
+
+@external(erlang, "map", "new")
+pub fn new() -> Dict(a, b)
+
+@external(erlang, "map", "insert")
+pub fn insert(dict: Dict(key, value), key: key, value: value) -> Dict(key, value)
+"#
+        ),
+        "
+import gleam/dict
+
+pub fn main() {
+  dict.insert(dict.new(), 1, 2)
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn impure_standard_library_function() {
+    assert_no_warnings!(
+        (
+            "gleam_stdlib",
+            "gleam/io",
+            r#"
+@external(erlang, "io", "print")
+pub fn println(message: String) -> Nil
+"#
+        ),
+        r#"
+import gleam/io
+
+pub fn main() {
+  io.println("Hello, world!")
+  Nil
+}
+"#
+    );
+}
+
+#[test]
+fn trusted_pure_standard_library_function_that_panics_is_impure() {
+    assert_no_warnings!(
+        (
+            "gleam_stdlib",
+            "gleam/int",
+            r#"
+pub fn add(_a, _b) {
+  panic
+}
+"#
+        ),
+        "
+import gleam/int
+pub fn main() {
+  int.add(1, 2)
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn higher_order_function_is_not_marked_as_pure() {
+    assert_no_warnings!(
+        (
+            "gleam/list",
+            r#"
+pub fn each(list, f) {
+  case list {
+    [] -> Nil
+    [first, ..rest] -> {
+      f(first)
+      each(rest, f)
+    }
+  }
+}
+"#
+        ),
+        "
+import gleam/list
+pub fn main() {
+  list.each([1, 2, 3, 4], fn(x) { echo x })
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn calling_local_variable_not_marked_as_pure() {
+    assert_no_warnings!(
+        "
+pub fn main() {
+  let side_effects = fn() { panic }
+
+  side_effects()
+  Nil
+}
+"
+    );
+}
+
+#[test]
+fn constructing_anonymous_function_is_pure() {
+    assert_warning!(
+        r#"
+fn make_panic(message) {
+  fn() { panic as message }
+}
+
+pub fn main() {
+  make_panic("This is a crash")
+  Nil
+}
+"#
     );
 }

@@ -30,6 +30,28 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The compiler now raises a warning when it can tell that an integer segment
+  with a literal value is going to be truncated. For example, if you wrote this:
+
+  ```gleam
+  <<258>>
+  ```
+
+  The compiler will now warn you:
+
+  ```txt
+  warning: Truncated bit array segment
+    ┌─ /src/main.gleam:4:5
+    │
+  4 │   <<258>>
+    │     ^^^ You can safely replace this with 2
+
+  This segment is 1 byte long, but 258 doesn't fit in that many bytes. It
+  would be truncated by taking its its first byte, resulting in the value 2.
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The compiler will now include labels in the error message when a `case`
   expression is inexhaustive. For example, this code:
 
@@ -120,6 +142,29 @@
   pub fn identity_test() {
     assert function.identity(True) as "Identity of True should never be False"
   }
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The compiler will now emit a warning when the return value of a call to a
+  function without side effects is unused. For example the following code:
+
+  ```gleam
+  fn add(a, b) { a + b }
+  ```
+
+  Will produce the following warning:
+
+  ```
+  warning: Unused value
+    ┌─ /src/main.gleam:4:3
+    │
+  4 │   add(1, 2)
+    │   ^^^^^^^^^ This value is never used
+
+  This expression computes a value without any side effects, but then the
+  value isn't used at all. You might way to assign it to a variable, or
+  delete the expression entirely if it not needed.
   ```
 
   ([Surya Rose](https://github.com/GearsDatapacks))
@@ -289,3 +334,8 @@
 
 - Fix slightly wrong error message for missing main function in test module.
   ([Samuel Cristobal](https://github.com/scristobal))
+
+- Fixed a bug where the compiler would not properly warn for unreachable
+  patterns in a `case` expression when the clause matched on multiple
+  alternative patterns.
+  ([Surya Rose](https://github.com/GearsDatapacks))

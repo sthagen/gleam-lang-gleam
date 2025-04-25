@@ -233,7 +233,12 @@ macro_rules! assert_warning {
             None
         );
         assert!(!warning.is_empty());
-        let output = format!("----- SOURCE CODE\n{}\n\n----- WARNING\n{}", $src, warning);
+
+        let mut output = String::from("----- SOURCE CODE\n");
+        for (name, src) in [$(($name, $module_src)),*] {
+            output.push_str(&format!("-- {name}.gleam\n{src}\n\n"));
+        }
+        output.push_str(&format!("-- main.gleam\n{}\n\n----- WARNING\n{warning}", $src));
         insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 }
@@ -313,6 +318,15 @@ macro_rules! assert_js_no_warnings_with_gleam_version {
 macro_rules! assert_no_warnings {
     ($src:expr $(,)?) => {
         let warnings = $crate::type_::tests::get_warnings($src, vec![], crate::build::Target::Erlang, None);
+        assert_eq!(warnings, vec![]);
+    };
+    ($(($name:expr, $module_src:literal)),+, $src:expr $(,)?) => {
+        let warnings = $crate::type_::tests::get_warnings(
+            $src,
+            vec![$(("thepackage", $name, $module_src)),*],
+            crate::build::Target::Erlang,
+            None,
+        );
         assert_eq!(warnings, vec![]);
     };
     ($(($package:expr, $name:expr, $module_src:literal)),+, $src:expr $(,)?) => {
@@ -2707,6 +2721,7 @@ fn assert_suitable_main_function_wrong_arity() {
                 can_run_on_erlang: true,
                 can_run_on_javascript: true,
             },
+            purity: Purity::Pure,
         },
     };
     assert!(
@@ -2737,6 +2752,7 @@ fn assert_suitable_main_function_ok() {
                 can_run_on_erlang: true,
                 can_run_on_javascript: true,
             },
+            purity: Purity::Pure,
         },
     };
     assert!(
@@ -2767,6 +2783,7 @@ fn assert_suitable_main_function_erlang_not_supported() {
                 can_run_on_erlang: false,
                 can_run_on_javascript: true,
             },
+            purity: Purity::Impure,
         },
     };
     assert!(
@@ -2797,6 +2814,7 @@ fn assert_suitable_main_function_javascript_not_supported() {
                 can_run_on_erlang: true,
                 can_run_on_javascript: false,
             },
+            purity: Purity::Impure,
         },
     };
     assert!(

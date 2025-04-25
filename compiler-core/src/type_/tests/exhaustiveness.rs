@@ -1658,3 +1658,89 @@ fn different_catch_all_bytes_are_not_redundant() {
 }"#
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/2616
+#[test]
+fn duplicated_alternative_patterns() {
+    assert_warning!(
+        "
+pub fn main() {
+  let x = 1
+  case x {
+    2 | 2 -> 2
+    _ -> panic
+  }
+}
+"
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2616
+#[test]
+fn duplicated_pattern_in_alternative() {
+    assert_warning!(
+        "
+pub fn main() {
+  let x = 1
+  case x {
+    2 -> x
+    1 | 2 -> x - 4
+    _ -> panic
+  }
+}
+"
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/2616
+#[test]
+fn duplicated_pattern_with_multiple_alternatives() {
+    assert_warning!(
+        "
+pub fn main() {
+  let x = 1
+  case x {
+    1 -> 1
+    3 -> 3
+    5 -> 5
+    1 | 2 | 3 | 4 | 5 -> x - 1
+    _ -> panic
+  }
+}
+"
+    );
+}
+
+#[test]
+fn unreachable_multi_pattern() {
+    assert_warning!(
+        "
+pub fn main() {
+  let x = 1
+  let y = 2
+  case x, y {
+    1, 2 -> True
+    1, 2 -> False
+    _, _ -> panic
+  }
+}
+"
+    );
+}
+
+#[test]
+fn unreachable_alternative_multi_pattern() {
+    assert_warning!(
+        "
+pub fn main() {
+  let x = 1
+  let y = 2
+  case x, y {
+    1, 2 -> True
+    3, 4 | 1, 2 -> False
+    _, _ -> panic
+  }
+}
+"
+    );
+}

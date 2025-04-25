@@ -1,5 +1,6 @@
 use super::{pipe::PipeTyper, *};
 use crate::{
+    STDLIB_PACKAGE_NAME,
     analyse::{infer_bit_array_option, name::check_argument_names},
     ast::{
         Arg, Assert, Assignment, AssignmentKind, BinOp, BitArrayOption, BitArraySegment, CallArg,
@@ -24,7 +25,7 @@ use vec1::Vec1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialOrd, Ord, PartialEq, Serialize)]
 pub struct Implementations {
-    /// Wether the function has a pure-gleam implementation.
+    /// Whether the function has a pure-gleam implementation.
     ///
     /// It's important to notice that, even if all individual targets are
     /// supported, it would not be the same as being pure Gleam.
@@ -42,10 +43,10 @@ pub struct Implementations {
     pub gleam: bool,
     pub can_run_on_erlang: bool,
     pub can_run_on_javascript: bool,
-    /// Wether the function has an implementation that uses external erlang
+    /// Whether the function has an implementation that uses external erlang
     /// code.
     pub uses_erlang_externals: bool,
-    /// Wether the function has an implementation that uses external javascript
+    /// Whether the function has an implementation that uses external javascript
     /// code.
     pub uses_javascript_externals: bool,
 }
@@ -58,6 +59,86 @@ impl Implementations {
             can_run_on_javascript: true,
             uses_javascript_externals: false,
             uses_erlang_externals: false,
+        }
+    }
+}
+
+/// The purity of a function.
+///
+/// This is not actually proper purity tracking, rather an approximation, which
+/// is good enough for the purpose it is currently used for: warning for unused
+/// pure functions. The current system contains some false negatives, i.e. some
+/// cases where it will fail to emit a warning when it probably should.
+///
+/// If we wanted to properly track function side effects - say to perform
+/// optimisations on pure Gleam code - we would probably need to lift that
+/// tracking into the type system, the same way that variant inference currently
+/// works. This would require quite a lot of work and doesn't seem a worthwhile
+/// amount of effort for a single warning message, where a much simpler solution
+/// is generally going to be good enough.
+///
+/// In the future we may want to implement a full side effect tracking system;
+/// this current implementation will not be sufficient for anything beyond a
+/// warning message to help people out in certain cases.
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purity {
+    /// The function is in pure Gleam, and does not reference any language
+    /// feature that can cause side effects, such as `panic`, `assert` or `echo`.
+    /// It also does not call any impure functions.
+    Pure,
+    /// This function is part of the standard library, or an otherwise trusted
+    /// source, and though it might use FFI, we can trust that the FFI function
+    /// will not cause any side effects.
+    TrustedPure,
+    /// This function is impure because it either uses FFI, panics, uses `echo`,
+    /// or calls another impure function.
+    Impure,
+    /// We don't know the purity of this function. This highlights the main issue
+    /// with the current purity tracking system. In the following code for example:
+    ///
+    /// ```gleam
+    /// let f = function.identity
+    ///
+    /// f(10)
+    /// ```
+    ///
+    /// Since purity is not currently part of the type system, when analysing the
+    /// call of the local `f` function, we now have no information about the
+    /// purity of it, and therefore cannot infer the consequences of calling it.
+    ///
+    /// If there was a `purity` or `side_effects` field in the `Type::Fn` variant,
+    /// we would be able to properly infer it.
+    ///
+    Unknown,
+}
+
+impl Purity {
+    pub fn is_pure(&self) -> bool {
+        match self {
+            Purity::Pure | Purity::TrustedPure => true,
+            Purity::Impure | Purity::Unknown => false,
+        }
+    }
+
+    #[must_use]
+    pub fn merge(self, other: Purity) -> Purity {
+        match (self, other) {
+            // If we call a trusted pure function, the current function remains pure
+            (Purity::Pure, Purity::TrustedPure) => Purity::Pure,
+            (Purity::Pure, other) => other,
+
+            // If we call a pure function, the current function remains trusted pure
+            (Purity::TrustedPure, Purity::Pure) => Purity::TrustedPure,
+            (Purity::TrustedPure, other) => other,
+
+            // Nothing can make an already impure function pure again
+            (Purity::Impure, _) => Purity::Impure,
+
+            // If we call an impure function from a function we don't know the
+            // purity of, we are now certain that it is impure.
+            (Purity::Unknown, Purity::Impure) => Purity::Impure,
+            (Purity::Unknown, _) => Purity::Impure,
         }
     }
 }
@@ -205,6 +286,7 @@ pub(crate) struct ExprTyper<'a, 'b> {
     pub(crate) already_warned_for_unreachable_code: bool,
 
     pub(crate) implementations: Implementations,
+    pub(crate) purity: Purity,
     pub(crate) current_function_definition: FunctionDefinition,
 
     // Type hydrator for creating types from annotations
@@ -233,6 +315,23 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             uses_javascript_externals: definition.has_javascript_external,
         };
 
+        let uses_externals = match environment.target {
+            Target::Erlang => implementations.uses_erlang_externals,
+            Target::JavaScript => implementations.uses_javascript_externals,
+        };
+
+        let is_non_io_standard_library_function = environment.current_package
+            == STDLIB_PACKAGE_NAME
+            && environment.current_module != "gleam/io";
+
+        let purity = if is_non_io_standard_library_function {
+            Purity::TrustedPure
+        } else if uses_externals {
+            Purity::Impure
+        } else {
+            Purity::Pure
+        };
+
         hydrator.permit_holes(true);
         Self {
             hydrator,
@@ -240,6 +339,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             already_warned_for_unreachable_code: false,
             environment,
             implementations,
+            purity,
             current_function_definition: definition,
             minimum_required_version: Version::new(0, 1, 0),
             problems,
@@ -317,11 +417,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             // body, instead only giving an external implementation for this
             // target. This placeholder implementation will never be used so we
             // treat it as a `panic` expression during analysis.
-            UntypedExpr::Placeholder { location } => Ok(self.infer_panic(location, None)),
+            UntypedExpr::Placeholder { location } => {
+                Ok(self.infer_panic(location, None, PanicKind::Placeholder))
+            }
 
             UntypedExpr::Panic {
                 location, message, ..
-            } => Ok(self.infer_panic(location, message)),
+            } => Ok(self.infer_panic(location, message, PanicKind::Panic)),
 
             UntypedExpr::Echo {
                 location,
@@ -476,6 +578,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             type_: type_.clone(),
         });
 
+        self.purity = Purity::Impure;
+
         let message = message.map(|message| {
             // If there is a message expression then it must be a string.
             let message = self.infer(*message);
@@ -494,8 +598,22 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
     }
 
-    fn infer_panic(&mut self, location: SrcSpan, message: Option<Box<UntypedExpr>>) -> TypedExpr {
+    fn infer_panic(
+        &mut self,
+        location: SrcSpan,
+        message: Option<Box<UntypedExpr>>,
+        kind: PanicKind,
+    ) -> TypedExpr {
         let type_ = self.new_unbound_var();
+
+        match kind {
+            PanicKind::Panic => self.purity = Purity::Impure,
+            // If this panic is a placeholder, we've already tracked impurity
+            // based on the FFI of this function, and don't need to change
+            // anything here.
+            PanicKind::Placeholder => {}
+        }
+
         let message = match message {
             None => None,
             Some(message) => {
@@ -517,6 +635,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     fn infer_echo(&mut self, location: SrcSpan, expression: Option<Box<UntypedExpr>>) -> TypedExpr {
         self.environment.echo_found = true;
+        self.purity = Purity::Impure;
+
         if let Some(expression) = expression {
             let expression = self.infer(*expression);
             if self.previous_panics {
@@ -817,6 +937,29 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         self.already_warned_for_unreachable_code = false;
         self.previous_panics = false;
 
+        let outer_purity = self.purity;
+
+        // If an anonymous function can panic, that doesn't mean that the outer
+        // function can too, so we track the purity separately. For example, in
+        // this code:
+        //
+        // ```gleam
+        // pub fn divide_partial(dividend: Int) {
+        //   fn(divisor) {
+        //     case divisor {
+        //       0 -> panic as "Cannot divide by 0"
+        //       _ -> dividend / divisor
+        //     }
+        //   }
+        // }
+        // ```
+        //
+        // Although the `divide_partial` function uses the `panic` keyword, it is
+        // actually pure. Only the anonymous function that it constructs is impure;
+        // constructing and returning it does not have any side effects, so there is
+        // no way for a call to `divide_partial` to produce any side effects.
+        self.purity = Purity::Pure;
+
         let (args, body) = match self.do_infer_fn(args, expected_args, body, &return_annotation) {
             Ok(result) => result,
             Err(error) => {
@@ -831,6 +974,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         self.already_warned_for_unreachable_code = already_warned_for_unreachable_code;
         self.previous_panics = false;
 
+        let function_purity = self.purity;
+        self.purity = outer_purity;
+
         TypedExpr::Fn {
             location,
             type_,
@@ -838,6 +984,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             args,
             body,
             return_annotation,
+            purity: function_purity,
         }
     }
 
@@ -908,6 +1055,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 args: args.len(),
             });
         }
+
+        self.purity = self.purity.merge(fun.called_function_purity());
 
         TypedExpr::Call {
             location,
@@ -1375,7 +1524,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
                     if type_ == int() {
                         match &(**value).as_int_literal() {
-                            Some(size) if size % 8 != 0 => {
+                            Some(size) if size % 8 != BigInt::ZERO => {
                                 using_unaligned_bit_array = true;
                             }
                             _ => (),
@@ -1398,12 +1547,22 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         unify(type_.clone(), value.type_())
             .map_err(|e| convert_unify_error(e, value.location()))?;
 
-        Ok(BitArraySegment {
+        let segment = BitArraySegment {
             location,
             type_,
             value: Box::new(value),
             options,
-        })
+        };
+
+        if let Some(truncation) = segment.check_for_truncated_value() {
+            self.problems
+                .warning(Warning::BitArraySegmentTruncatedValue {
+                    location,
+                    truncation,
+                });
+        }
+
+        Ok(segment)
     }
 
     /// Same as `self.infer_or_error` but instead of returning a `Result` with an error,
@@ -1562,7 +1721,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         };
 
         // Check that we're actually using `list.length` from the standard library.
-        if list_module.package != crate::STDLIB_PACKAGE_NAME {
+        if list_module.package != STDLIB_PACKAGE_NAME {
             return;
         }
 
@@ -1660,19 +1819,17 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 // we can warn the user about this.
                 (AssignmentKind::Assert { .. }, Err(_)) => {
                     // There is only one pattern to match, so it is index 0
-                    match output.is_reachable(0) {
-                        Reachability::Unreachable(
-                            UnreachableCaseClauseReason::ImpossibleVariant,
-                        ) => self
-                            .problems
-                            .warning(Warning::AssertAssignmentOnInferredVariant {
-                                location: pattern.location(),
-                            }),
+                    match output.is_reachable(0, 0) {
+                        Reachability::Unreachable(UnreachablePatternReason::ImpossibleVariant) => {
+                            self.problems
+                                .warning(Warning::AssertAssignmentOnInferredVariant {
+                                    location: pattern.location(),
+                                })
+                        }
                         // A duplicate pattern warning should not happen, since there is only one pattern.
                         Reachability::Reachable
-                        | Reachability::Unreachable(
-                            UnreachableCaseClauseReason::DuplicatePattern,
-                        ) => {}
+                        | Reachability::Unreachable(UnreachablePatternReason::DuplicatePattern) => {
+                        }
                     }
                 }
             }
@@ -1695,6 +1852,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             AssignmentKind::Let => AssignmentKind::Let,
             AssignmentKind::Generated => AssignmentKind::Generated,
             AssignmentKind::Assert { location, message } => {
+                self.purity = Purity::Impure;
+
                 let message = match message {
                     Some(message) => {
                         self.track_feature_usage(
@@ -1728,6 +1887,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let value_location = value.location();
 
         let value = self.infer(value);
+
+        self.purity = Purity::Impure;
 
         if value.is_known_value() {
             self.problems.warning(Warning::AssertLiteralValue {
@@ -4195,15 +4356,27 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             });
         }
 
-        // Emit warnings for unreachable clauses
+        // Emit warnings for unreachable patterns
         for (clause_index, clause) in clauses.iter().enumerate() {
-            match result.is_reachable(clause_index) {
-                Reachability::Reachable => {}
-                Reachability::Unreachable(reason) => {
-                    self.problems.warning(Warning::UnreachableCaseClause {
-                        location: clause.location,
-                        reason,
-                    })
+            let patterns_iterator =
+                std::iter::once(&clause.pattern).chain(clause.alternative_patterns.iter());
+
+            for (pattern_index, multi_pattern) in patterns_iterator.enumerate() {
+                match result.is_reachable(clause_index, pattern_index) {
+                    Reachability::Reachable => {}
+                    Reachability::Unreachable(reason) => {
+                        let first = multi_pattern
+                            .first()
+                            .expect("All case expressions match at least one subject");
+                        let last = multi_pattern
+                            .last()
+                            .expect("All case expressions match at least one subject");
+
+                        let location = SrcSpan::new(first.location().start, last.location().end);
+
+                        self.problems
+                            .warning(Warning::UnreachableCasePattern { location, reason })
+                    }
                 }
             }
         }
@@ -4515,4 +4688,9 @@ impl RecordUpdateVariant<'_> {
     fn field_names(&self) -> Vec<EcoString> {
         self.fields.keys().cloned().collect()
     }
+}
+
+enum PanicKind {
+    Panic,
+    Placeholder,
 }

@@ -3,7 +3,7 @@ use super::{
     expression::{ArgumentKind, CallKind},
 };
 use crate::{
-    ast::{BinOp, Layer, SrcSpan, TodoKind},
+    ast::{BinOp, BitArraySegmentTruncation, Layer, SrcSpan, TodoKind},
     build::Target,
     type_::Type,
 };
@@ -747,7 +747,6 @@ pub enum Warning {
     UnusedValue {
         location: SrcSpan,
     },
-
     NoFieldsRecordUpdate {
         location: SrcSpan,
     },
@@ -824,9 +823,9 @@ pub enum Warning {
         layer: Layer,
     },
 
-    UnreachableCaseClause {
+    UnreachableCasePattern {
         location: SrcSpan,
-        reason: UnreachableCaseClauseReason,
+        reason: UnreachablePatternReason,
     },
 
     /// This happens when someone tries to write a case expression where one of
@@ -968,6 +967,14 @@ pub enum Warning {
     AssertLiteralValue {
         location: SrcSpan,
     },
+
+    /// When a segment has a constant value that is bigger than its size and we
+    /// know for certain is going to be truncated.
+    ///
+    BitArraySegmentTruncatedValue {
+        truncation: BitArraySegmentTruncation,
+        location: SrcSpan,
+    },
 }
 
 #[derive(Debug, Eq, Copy, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
@@ -1043,7 +1050,7 @@ pub enum TodoOrPanic {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum UnreachableCaseClauseReason {
+pub enum UnreachablePatternReason {
     /// The clause is unreachable because a previous pattern
     /// matches the same case.
     DuplicatePattern,
@@ -1177,7 +1184,7 @@ impl Warning {
             | Warning::InefficientEmptyListCheck { location, .. }
             | Warning::TransitiveDependencyImported { location, .. }
             | Warning::DeprecatedItem { location, .. }
-            | Warning::UnreachableCaseClause { location, .. }
+            | Warning::UnreachableCasePattern { location, .. }
             | Warning::CaseMatchOnLiteralCollection { location, .. }
             | Warning::CaseMatchOnLiteralValue { location, .. }
             | Warning::OpaqueExternalType { location, .. }
@@ -1189,7 +1196,8 @@ impl Warning {
             | Warning::RedundantPipeFunctionCapture { location, .. }
             | Warning::FeatureRequiresHigherGleamVersion { location, .. }
             | Warning::JavaScriptIntUnsafe { location, .. }
-            | Warning::AssertLiteralValue { location, .. } => *location,
+            | Warning::AssertLiteralValue { location, .. }
+            | Warning::BitArraySegmentTruncatedValue { location, .. } => *location,
         }
     }
 

@@ -61,6 +61,7 @@ pub enum TypedExpr {
         args: Vec<TypedArg>,
         body: Vec1<TypedStatement>,
         return_annotation: Option<TypeAst>,
+        purity: Purity,
     },
 
     List {
@@ -800,23 +801,28 @@ impl TypedExpr {
             TypedExpr::ModuleSelect { .. } => true,
 
             // A pipeline is a pure value constructor if its last step is a record builder,
-            // or a call to a fn expression that has a body comprised of just pure value
-            // constructors. For example:
+            // or a call to a pure function. For example:
             //  - `wibble() |> wobble() |> Ok`
             //  - `"hello" |> fn(s) { s <> " world!" }`
-            TypedExpr::Pipeline { finally, .. } => match finally.as_ref() {
-                TypedExpr::Fn { body, .. } => body.iter().all(|s| s.is_pure_value_constructor()),
-                fun => fun.is_pure_value_constructor(),
-            },
+            TypedExpr::Pipeline {
+                first_value,
+                assignments,
+                finally,
+                ..
+            } => {
+                first_value.value.is_pure_value_constructor()
+                    && assignments
+                        .iter()
+                        .all(|(assignment, _)| assignment.value.is_pure_value_constructor())
+                    && finally.is_pure_value_constructor()
+            }
 
-            TypedExpr::Call { fun, .. } => match fun.as_ref() {
-                // Immediately calling a fn expression that has a body comprised of just
-                // pure value constructors is in itself pure.
-                TypedExpr::Fn { body, .. } => body.iter().all(|s| s.is_pure_value_constructor()),
-                // And calling a record builder is a pure value constructor:
-                // `Some(1)`
-                fun => fun.is_record_builder(),
-            },
+            TypedExpr::Call { fun, args, .. } => {
+                (fun.is_record_builder() || fun.called_function_purity().is_pure())
+                    && args
+                        .iter()
+                        .all(|argument| argument.value.is_pure_value_constructor())
+            }
 
             // A block is pure if all the statements it's made of are pure.
             // For example `{ True 1 }`
@@ -846,6 +852,66 @@ impl TypedExpr {
             | TypedExpr::Panic { .. }
             | TypedExpr::Echo { .. }
             | TypedExpr::Invalid { .. } => false,
+        }
+    }
+
+    /// Returns the purity of the left hand side of a function call. For example:
+    ///
+    /// ```gleam
+    /// io.println("Hello, world!")
+    /// ```
+    ///
+    /// Here, the left hand side is `io.println`, which is an impure function,
+    /// so we would return `Purity::Impure`.
+    ///
+    /// This does not check whether an expression is pure on its own; for that
+    /// see `is_pure_value_constructor`.
+    ///
+    pub fn called_function_purity(&self) -> Purity {
+        match self {
+            TypedExpr::Var { constructor, .. } => constructor.called_function_purity(),
+            TypedExpr::ModuleSelect { constructor, .. } => constructor.called_function_purity(),
+            TypedExpr::Fn { purity, .. } => *purity,
+
+            // While we can infer the purity of some of these expressions, such
+            // as `Case`, in this example:
+            //  ```gleam
+            // case x {
+            //   True -> io.println
+            //   False -> function.identity
+            // }("Hello")
+            // ```
+            //
+            // This kind of code is rare in real Gleam applications, and as this
+            // system is just used for warnings, it is unlikely that supporting
+            // them will provide any significant benefit to developer experience,
+            // so we just return `Unknown` for simplicity.
+            //
+            TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Echo { .. } => Purity::Unknown,
+
+            // The following expressions are all invalid on the left hand side
+            // of a call expression: `10()` is not valid Gleam. Therefore, we
+            // don't really care about any of these as they shouldn't appear in
+            // well typed Gleam code, and so we can just return `Unknown`.
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => Purity::Unknown,
         }
     }
 
@@ -1011,13 +1077,12 @@ impl HasType for TypedExpr {
     }
 }
 
-impl crate::bit_array::GetLiteralValue for TypedExpr {
-    fn as_int_literal(&self) -> Option<i64> {
-        if let TypedExpr::Int { value: val, .. } = self {
-            if let Ok(val) = val.parse::<i64>() {
-                return Some(val);
-            }
+impl bit_array::GetLiteralValue for TypedExpr {
+    fn as_int_literal(&self) -> Option<BigInt> {
+        if let TypedExpr::Int { int_value, .. } = self {
+            Some(int_value.clone())
+        } else {
+            None
         }
-        None
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    ast::{SrcSpan, TodoKind},
+    ast::{BitArraySegmentTruncation, SrcSpan, TodoKind},
     build::Target,
     diagnostic::{self, Diagnostic, Location},
     error::wrap,
@@ -7,7 +7,7 @@ use crate::{
         self,
         error::{
             FeatureKind, LiteralCollectionKind, PanicPosition, TodoOrPanic,
-            UnreachableCaseClauseReason,
+            UnreachablePatternReason,
         },
         pretty::Printer,
     },
@@ -804,19 +804,19 @@ Run this command to add it to your dependencies:
                     }
                 }
 
-                type_::Warning::UnreachableCaseClause { location, reason } => {
+                type_::Warning::UnreachableCasePattern { location, reason } => {
                     let text: String = match reason {
-                        UnreachableCaseClauseReason::DuplicatePattern => wrap(
-                            "This case clause cannot be reached as a previous clause matches \
-the same values.\n",
+                        UnreachablePatternReason::DuplicatePattern => wrap(
+                            "This pattern cannot be reached as a previous \
+pattern matches the same values.\n",
                         ),
-                        UnreachableCaseClauseReason::ImpossibleVariant => wrap(
-                            "This case clause cannot be reached as it matches \
-on a variant of a type which is never present.\n",
+                        UnreachablePatternReason::ImpossibleVariant => wrap(
+                            "This pattern cannot be reached as it matches on \
+a variant of a type which is never present.\n",
                         ),
                     };
                     Diagnostic {
-                        title: "Unreachable case clause".into(),
+                        title: "Unreachable pattern".into(),
                         text,
                         hint: Some("It can be safely removed.".into()),
                         level: diagnostic::Level::Warning,
@@ -906,7 +906,11 @@ can already tell which branch is going to match with this value.",
 
                 type_::Warning::UnusedValue { location } => Diagnostic {
                     title: "Unused value".into(),
-                    text: "".into(),
+                    text: wrap(
+                        "This expression computes a value without any side \
+effects, but then the value isn't used at all. You might way to assign it to a \
+variable, or delete the expression entirely if it not needed.",
+                    ),
                     hint: None,
                     level: diagnostic::Level::Warning,
                     location: Some(Location {
@@ -1200,6 +1204,60 @@ information.",
                     }),
                 },
 
+                type_::Warning::BitArraySegmentTruncatedValue {
+                    location: _,
+                    truncation:
+                        BitArraySegmentTruncation {
+                            truncated_value,
+                            truncated_into,
+                            segment_bits,
+                            value_location,
+                        },
+                } => {
+                    let (unit, segment_size, taken) = if segment_bits % 8 == 0 {
+                        let bytes = segment_bits / 8;
+                        let segment_size = pluralise(format!("{bytes} byte"), bytes);
+                        let taken = if bytes == 1 {
+                            "its first byte".into()
+                        } else {
+                            format!("its first {bytes} bytes")
+                        };
+
+                        ("bytes", segment_size, taken)
+                    } else {
+                        let segment_size = pluralise(format!("{segment_bits} bit"), *segment_bits);
+                        let taken = if *segment_bits == 1 {
+                            "its first bit".into()
+                        } else {
+                            format!("its first {segment_bits} bits")
+                        };
+                        ("bits", segment_size, taken)
+                    };
+
+                    let text = format!(
+                        "This segment is {segment_size} long, but {truncated_value} \
+doesn't fit in that many {unit}. It would be truncated by taking its {taken}, resulting in the value {truncated_into}."
+                    );
+
+                    Diagnostic {
+                        title: "Truncated bit array segment".into(),
+                        text: wrap(&text),
+                        hint: None,
+                        level: diagnostic::Level::Warning,
+                        location: Some(Location {
+                            path: path.to_path_buf(),
+                            src: src.clone(),
+                            label: diagnostic::Label {
+                                text: Some(format!(
+                                    "You can safely replace this with {truncated_into}"
+                                )),
+                                span: *value_location,
+                            },
+                            extra_labels: vec![],
+                        }),
+                    }
+                }
+
                 type_::Warning::AssertLiteralValue { location } => Diagnostic {
                     title: "Assertion of a literal value".into(),
                     text: wrap(
@@ -1250,5 +1308,13 @@ can already tell whether it will be true or false.",
         let mut nocolor = Buffer::no_color();
         self.pretty(&mut nocolor);
         String::from_utf8(nocolor.into_inner()).expect("Warning printing produced invalid utf8")
+    }
+}
+
+fn pluralise(string: String, quantity: i64) -> String {
+    if quantity == 1 {
+        string
+    } else {
+        format!("{string}s")
     }
 }

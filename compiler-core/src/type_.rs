@@ -16,6 +16,7 @@ use ecow::EcoString;
 pub use environment::*;
 pub use error::{Error, Problems, UnifyErrorSituation, Warning};
 pub(crate) use expression::ExprTyper;
+use expression::Purity;
 pub use fields::FieldMap;
 use hexpm::version::Version;
 pub use prelude::*;
@@ -684,6 +685,7 @@ pub enum ValueConstructorVariant {
         implementations: Implementations,
         external_erlang: Option<(EcoString, EcoString)>,
         external_javascript: Option<(EcoString, EcoString)>,
+        purity: Purity,
     },
 
     /// A constructor for a custom type
@@ -749,6 +751,7 @@ impl ValueConstructorVariant {
                 documentation: None,
                 location: *location,
                 field_map: None,
+                purity: Purity::Impure,
             },
 
             Self::ModuleFn {
@@ -759,6 +762,7 @@ impl ValueConstructorVariant {
                 field_map,
                 external_erlang,
                 external_javascript,
+                purity,
                 ..
             } => ModuleValueConstructor::Fn {
                 name: name.clone(),
@@ -768,6 +772,7 @@ impl ValueConstructorVariant {
                 external_javascript: external_javascript.clone(),
                 location: *location,
                 field_map: field_map.clone(),
+                purity: *purity,
             },
         }
     }
@@ -883,6 +888,7 @@ pub enum ModuleValueConstructor {
         external_javascript: Option<(EcoString, EcoString)>,
         field_map: Option<FieldMap>,
         documentation: Option<EcoString>,
+        purity: Purity,
     },
 
     Constant {
@@ -906,6 +912,38 @@ impl ModuleValueConstructor {
             ModuleValueConstructor::Record { documentation, .. }
             | ModuleValueConstructor::Fn { documentation, .. }
             | ModuleValueConstructor::Constant { documentation, .. } => documentation.as_deref(),
+        }
+    }
+
+    /// Returns the purity of this value constructor if it is called as a function.
+    /// Referencing a module value by itself is always pure, but calling is as a
+    /// function might not be.
+    pub fn called_function_purity(&self) -> Purity {
+        match self {
+            // If we call a module constant or local variable as a function, we
+            // no longer have enough information to determine its purity. For
+            // example:
+            //
+            // ```gleam
+            // const function1 = io.println
+            // const function2 = function.identity
+            //
+            // pub fn main() {
+            //   function1("Hello")
+            //   function2("Hello")
+            // }
+            // ```
+            //
+            // At this point, we don't have any information about the purity of
+            // the `function1` and `function2` functions, and must return
+            // `Purity::Unknown`. See the documentation for the `Purity` type
+            // for more information on why this is the case.
+            ModuleValueConstructor::Constant { .. } => Purity::Unknown,
+
+            // Constructing records is always pure
+            ModuleValueConstructor::Record { .. } => Purity::Pure,
+
+            ModuleValueConstructor::Fn { purity, .. } => *purity,
         }
     }
 }
@@ -1368,6 +1406,40 @@ impl ValueConstructor {
             | ValueConstructorVariant::ModuleConstant { documentation, .. } => {
                 Some(documentation.as_ref()?.as_str())
             }
+        }
+    }
+
+    /// Returns the purity of this value constructor if it is called as a function.
+    /// Referencing a value constructor by itself is always pure, but calling is as a
+    /// function might not be.
+    pub fn called_function_purity(&self) -> Purity {
+        match &self.variant {
+            // If we call a module constant or local variable as a function, we
+            // no longer have enough information to determine its purity. For
+            // example:
+            //
+            // ```gleam
+            // const function1 = io.println
+            // const function2 = function.identity
+            //
+            // pub fn main() {
+            //   function1("Hello")
+            //   function2("Hello")
+            // }
+            // ```
+            //
+            // At this point, we don't have any information about the purity of
+            // the `function1` and `function2` functions, and must return
+            // `Purity::Unknown`. See the documentation for the `Purity` type
+            // for more information on why this is the case.
+            ValueConstructorVariant::LocalVariable { .. }
+            | ValueConstructorVariant::ModuleConstant { .. }
+            | ValueConstructorVariant::LocalConstant { .. } => Purity::Unknown,
+
+            // Constructing records is always pure
+            ValueConstructorVariant::Record { .. } => Purity::Pure,
+
+            ValueConstructorVariant::ModuleFn { purity, .. } => *purity,
         }
     }
 }
