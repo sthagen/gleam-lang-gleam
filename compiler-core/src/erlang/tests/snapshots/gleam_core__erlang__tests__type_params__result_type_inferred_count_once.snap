@@ -38,7 +38,7 @@ wobble() ->
 -spec wibble() -> {ok, any()} | {error, wobble(any())}.
 wibble() ->
     _assert_subject = wobble(),
-    {ok, _} = case _assert_subject of
+    case _assert_subject of
         {ok, _} -> _assert_subject;
         _assert_fail ->
             erlang:error(#{gleam_error => let_assert,

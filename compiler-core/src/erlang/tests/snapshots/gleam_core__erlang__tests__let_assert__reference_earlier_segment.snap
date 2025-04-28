@@ -1,11 +1,12 @@
 ---
-source: compiler-core/src/erlang/tests/strings.rs
-expression: "\npub fn main(x) {\n  let assert \"m-\" <> _ = x\n}\n"
+source: compiler-core/src/erlang/tests/let_assert.rs
+expression: "\npub fn main() {\n  let assert <<length, bytes:size(length)-unit(8)>> = <<3, 1, 2, 3>>\n  bytes\n}\n"
 ---
 ----- SOURCE CODE
 
-pub fn main(x) {
-  let assert "m-" <> _ = x
+pub fn main() {
+  let assert <<length, bytes:size(length)-unit(8)>> = <<3, 1, 2, 3>>
+  bytes
 }
 
 
@@ -13,13 +14,13 @@ pub fn main(x) {
 -module(my@mod).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch]).
 
--export([main/1]).
+-export([main/0]).
 
 -file("project/test/my/mod.gleam", 2).
--spec main(binary()) -> binary().
-main(X) ->
-    case X of
-        <<"m-"/utf8, _/binary>> -> X;
+-spec main() -> integer().
+main() ->
+    {Length@1, Bytes@1} = case <<3, 1, 2, 3>> of
+        <<Length, Bytes:Length/unit:8>> -> {Length, Bytes};
         _assert_fail ->
             erlang:error(#{gleam_error => let_assert,
                         message => <<"Pattern match failed, no pattern matched the value."/utf8>>,
@@ -27,4 +28,5 @@ main(X) ->
                         module => <<"my/mod"/utf8>>,
                         function => <<"main"/utf8>>,
                         line => 3})
-    end.
+    end,
+    Bytes@1.

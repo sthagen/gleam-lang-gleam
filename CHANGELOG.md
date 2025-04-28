@@ -169,6 +169,10 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The compiler will now generate more efficient code for `let assert` on the
+  Erlang target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Build tool
 
 - The build tool now supports placing modules in a directory called `dev`,
@@ -306,6 +310,11 @@
 
 ### Formatter
 
+### Installation
+
+- Windows ARM64 pre-built binaries are now provided.
+  ([Jonatan Männchen](https://github.com/maennchen))
+
 ### Bug fixes
 
 - Fixed a bug where `case` expressions in custom panic messages would compile
@@ -339,3 +348,16 @@
   patterns in a `case` expression when the clause matched on multiple
   alternative patterns.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the language server would generate invalid code for the
+  "fill in missing labels" code action.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where referencing an earlier segment of the bit array in a bit
+  array pattern in a `let assert` assignment would generate invalid code on the
+  Erlang target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed instances where the "Extract variable" code action would produce invalid
+  code, most noticeable in code inside `case` clauses and `use` expressions.
+  ([Matias Carlander](https://github.com/matiascr))

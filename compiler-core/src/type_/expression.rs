@@ -320,11 +320,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             Target::JavaScript => implementations.uses_javascript_externals,
         };
 
-        let is_non_io_standard_library_function = environment.current_package
-            == STDLIB_PACKAGE_NAME
-            && environment.current_module != "gleam/io";
-
-        let purity = if is_non_io_standard_library_function {
+        let purity = if is_trusted_pure_module(environment) {
+            // The standard library uses a lot of FFI, but as we are the maintainers we know that
+            // it can be trusted to pure pure.
             Purity::TrustedPure
         } else if uses_externals {
             Purity::Impure
@@ -4411,6 +4409,24 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             self.minimum_required_version = minimum_required_version;
         }
     }
+}
+
+/// Returns `true` if the current function is one that the Gleam core team
+/// maintains and we know it to be pure.
+/// Used in purity tracking.
+fn is_trusted_pure_module(environment: &Environment<'_>) -> bool {
+    // We only t
+    if environment.current_package != STDLIB_PACKAGE_NAME {
+        return false;
+    }
+
+    // The gleam/io module has side effects
+    if environment.current_module == "gleam/io" {
+        return false;
+    }
+
+    // Test and dev modules may have side effects
+    environment.origin == Origin::Src
 }
 
 #[derive(Debug, Clone, Copy)]

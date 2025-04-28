@@ -1,24 +1,24 @@
 ---
 source: compiler-core/src/erlang/tests/let_assert.rs
-expression: "pub fn go(x) {\n  let assert [1, a, b, c] = x\n  [a, b, c]\n}"
+expression: "pub fn go() {\n  let assert \"Hello!\" = \"Hel\" <> \"lo!\"\n}"
 ---
 ----- SOURCE CODE
-pub fn go(x) {
-  let assert [1, a, b, c] = x
-  [a, b, c]
+pub fn go() {
+  let assert "Hello!" = "Hel" <> "lo!"
 }
 
 ----- COMPILED ERLANG
 -module(my@mod).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch]).
 
--export([go/1]).
+-export([go/0]).
 
 -file("project/test/my/mod.gleam", 1).
--spec go(list(integer())) -> list(integer()).
-go(X) ->
-    {A@1, B@1, C@1} = case X of
-        [1, A, B, C] -> {A, B, C};
+-spec go() -> binary().
+go() ->
+    _assert_subject = <<"Hel"/utf8, "lo!"/utf8>>,
+    case _assert_subject of
+        <<"Hello!"/utf8>> -> _assert_subject;
         _assert_fail ->
             erlang:error(#{gleam_error => let_assert,
                         message => <<"Pattern match failed, no pattern matched the value."/utf8>>,
@@ -26,5 +26,4 @@ go(X) ->
                         module => <<"my/mod"/utf8>>,
                         function => <<"go"/utf8>>,
                         line => 2})
-    end,
-    [A@1, B@1, C@1].
+    end.

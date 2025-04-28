@@ -884,10 +884,19 @@ fn const_segment<'a>(
     )
 }
 
-fn statement<'a>(statement: &'a TypedStatement, env: &mut Env<'a>) -> Document<'a> {
+enum Position {
+    Tail,
+    NotTail,
+}
+
+fn statement<'a>(
+    statement: &'a TypedStatement,
+    env: &mut Env<'a>,
+    position: Position,
+) -> Document<'a> {
     match statement {
         Statement::Expression(e) => expr(e, env),
-        Statement::Assignment(a) => assignment(a, env),
+        Statement::Assignment(a) => assignment(a, env, position),
         Statement::Use(use_) => expr(&use_.call, env),
         Statement::Assert(a) => assert(a, env),
     }
@@ -1042,7 +1051,12 @@ fn statement_sequence<'a>(statements: &'a [TypedStatement], env: &mut Env<'a>) -
     let count = statements.len();
     let mut documents = Vec::with_capacity(count * 3);
     for (i, expression) in statements.iter().enumerate() {
-        documents.push(statement(expression, env).group());
+        let position = if i + 1 == count {
+            Position::Tail
+        } else {
+            Position::NotTail
+        };
+        documents.push(statement(expression, env, position).group());
 
         if i + 1 < count {
             // This isn't the final expression so add the delimeters
@@ -1159,37 +1173,125 @@ fn binop_documents<'a>(left: Document<'a>, op: &'static str, right: Document<'a>
 
 fn let_assert<'a>(
     value: &'a TypedExpr,
-    pat: &'a TypedPattern,
+    pattern: &'a TypedPattern,
     env: &mut Env<'a>,
     message: Option<&'a TypedExpr>,
+    position: Position,
 ) -> Document<'a> {
+    // If the pattern will never fail, like a tuple or a simple variable, we
+    // simply treat it as if it were a `let` assignment.
+    if pattern.always_matches() {
+        return let_(value, pattern, env);
+    }
+
     let mut vars: Vec<&str> = vec![];
-    let body = maybe_block_expr(value, env);
-    let (subject_var, subject_definition) = if value.is_var() {
-        (body, nil())
+    let subject = maybe_block_expr(value, env);
+
+    // The code we generated for a `let assert` assignment looks something like
+    // this. For this Gleam code:
+    //
+    // ```gleam
+    // let assert [a, b, c] = [1, 2, 3]
+    // ```
+    //
+    // We generate (roughly) the following Erlang:
+    //
+    // ```erlang
+    // {A, B, C} = case [1, 2, 3] of
+    //   [A, B, C] -> {A, B, C};
+    //   _ -> erlang:error(...)
+    // end.
+    // ```
+    // This is the most efficient way to properly extract all the required
+    // variables from the pattern. However, if the `let assert` assignment is
+    // the last in a block, like this:
+    //
+    // ```gleam
+    // let x = {
+    //   let assert [a, b, c] = [1, 2, 3]
+    // }
+    // ```
+    //
+    // The generated Erlang code will end up assigning the value `#(1, 2, 3)`
+    // to the variable `x`, instead of `[1, 2, 3]`. In this case, we must
+    // generate slightly different code. Since we know we won't be using the
+    // bound variables anywhere (there is nothing else in this scope to
+    // reference them), we can safely remove the assignment from the generated
+    // code, and generate the following:
+    //
+    // ```erlang
+    // X = begin
+    //   _assert_subject = [1, 2, 3]
+    //   case _assert_subject of
+    //     [A, B, C] -> _assert_subject;
+    //     _ -> erlang:error(...)
+    //   end
+    // end.
+    // ```
+    //
+    // That correctly assigns `[1, 2, 3]` to the `x` variable.
+    //
+    let is_tail = match position {
+        Position::Tail => true,
+        Position::NotTail => false,
+    };
+
+    let (subject_assignment, subject) = if is_tail && !value.is_var() {
+        let variable = env.next_local_var_name(ASSERT_SUBJECT_VARIABLE);
+        let assignment = docvec![variable.clone(), " = ", subject, ",", line()];
+        (assignment, variable)
     } else {
-        let var = env.next_local_var_name(ASSERT_SUBJECT_VARIABLE);
-        let definition = docvec![var.clone(), " = ", body, ",", line()];
-        (var, definition)
+        (nil(), subject)
     };
 
     let mut guards = vec![];
-    let check_pattern = pattern::to_doc_discarding_all(pat, &mut vars, env, &mut guards);
+    let pattern_document = pattern::to_doc(pattern, &mut vars, env, &mut guards);
     let clause_guard = optional_clause_guard(None, guards, env);
 
-    // We don't take the guards from the assign pattern or we would end up with
-    // all the same guards repeated twice!
-    let assign_pattern = pattern::to_doc(pat, &mut vars, env, &mut vec![]);
     let message = match message {
         Some(message) => expr(message, env),
         None => string("Pattern match failed, no pattern matched the value."),
     };
 
+    let value = match vars.as_slice() {
+        _ if is_tail => subject.clone(),
+        [] => "nil".to_doc(),
+        [variable] => env.local_var_name(variable),
+        variables => {
+            let variables = variables
+                .iter()
+                .map(|variable| env.local_var_name(variable));
+            docvec![
+                break_("{", "{"),
+                join(variables, break_(",", ", ")).nest(INDENT),
+                "}"
+            ]
+            .group()
+        }
+    };
+
+    let assignment = match vars.as_slice() {
+        _ if is_tail => nil(),
+        [] => nil(),
+        [variable] => env.next_local_var_name(variable).append(" = "),
+        variables => {
+            let variables = variables
+                .iter()
+                .map(|variable| env.next_local_var_name(variable));
+            docvec![
+                break_("{", "{"),
+                join(variables, break_(",", ", ")).nest(INDENT),
+                "} = "
+            ]
+            .group()
+        }
+    };
+
     let clauses = docvec![
-        check_pattern.clone(),
+        pattern_document,
         clause_guard,
         " -> ",
-        subject_var.clone(),
+        value,
         ";",
         line(),
         env.next_local_var_name(ASSERT_FAIL_VARIABLE),
@@ -1199,7 +1301,7 @@ fn let_assert<'a>(
             erlang_error(
                 "let_assert",
                 &message,
-                pat.location(),
+                pattern.location(),
                 vec![("value", env.local_var_name(ASSERT_FAIL_VARIABLE))],
                 env,
             )
@@ -1208,10 +1310,10 @@ fn let_assert<'a>(
         .nest(INDENT)
     ];
     docvec![
-        subject_definition,
-        assign_pattern,
-        " = case ",
-        subject_var,
+        subject_assignment,
+        assignment,
+        "case ",
+        subject,
         " of",
         docvec![line(), clauses].nest(INDENT),
         line(),
@@ -1845,7 +1947,7 @@ fn record_update<'a>(
     let vars = env.current_scope_vars.clone();
 
     let document = docvec![
-        assignment(record, env),
+        assignment(record, env, Position::NotTail),
         ",",
         line(),
         call(constructor, args, env)
@@ -2144,7 +2246,11 @@ fn pipeline<'a>(
     documents.to_doc()
 }
 
-fn assignment<'a>(assignment: &'a TypedAssignment, env: &mut Env<'a>) -> Document<'a> {
+fn assignment<'a>(
+    assignment: &'a TypedAssignment,
+    env: &mut Env<'a>,
+    position: Position,
+) -> Document<'a> {
     match &assignment.kind {
         AssignmentKind::Let | AssignmentKind::Generated => {
             let_(&assignment.value, &assignment.pattern, env)
@@ -2154,6 +2260,7 @@ fn assignment<'a>(assignment: &'a TypedAssignment, env: &mut Env<'a>) -> Documen
             &assignment.pattern,
             env,
             message.as_deref(),
+            position,
         ),
     }
 }

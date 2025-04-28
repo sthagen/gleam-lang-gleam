@@ -4421,17 +4421,169 @@ fn extract_variable_does_not_extract_a_variable() {
 }
 
 #[test]
-fn extract_variable_does_not_extract_an_entire_pipeline_step() {
+fn extract_variable_does_not_extract_top_level_statement() {
     assert_no_code_actions!(
         EXTRACT_VARIABLE,
         r#"pub fn main() {
+  let wibble = 1
+}"#,
+        find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_does_not_extract_top_level_statement_inside_block() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+  let x = {
+    let y = "y"
+    let w = "w" <> y
+    w
+  }
+}"#,
+        find_position_of("y").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_does_not_extract_top_level_statement_inside_use() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        "
+pub fn main() {
+  use x <- try(Ok(1))
+  let y = 2
+  Ok(y + x)
+}
+pub fn try(result: Result(a, e), fun: fn(a) -> Result(b, e)) -> Result(b, e) { todo }
+",
+        find_position_of("2").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_does_not_extract_use() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        "
+pub fn main() {
+  use x <- try(Ok(1))
+  Ok(x)
+}
+pub fn try(result: Result(a, e), fun: fn(a) -> Result(b, e)) -> Result(b, e) { todo }
+",
+        find_position_of("use").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_does_not_extract_panic() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+  let x = 1
+  panic
+}"#,
+        find_position_of("panic").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_does_not_extract_echo() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+  let x = 1
+  echo x
+}"#,
+        find_position_of("echo").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_from_arg_in_pipelined_call() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        "
+pub fn main() {
+  let adder = add
+  let x = [4, 5, 6] |> map2([1, 2, 3], adder)
+  x
+}
+pub fn map2(list1: List(a), list2: List(b), fun: fn(a, b) -> c) -> List(c) { todo }
+pub fn add(a: Int, b: Int) -> Int { todo }
+",
+        find_position_of("[1").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_from_arg_in_pipelined_call_to_capture() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        "
+pub fn main() {
+  let adder = add
+  let x = adder |> reduce([1, 2, 3], _)
+  x
+}
+pub fn reduce(list: List(a), fun: fn(a, a) -> a) -> Result(a, Nil) { todo }
+pub fn add(a: Int, b: Int) -> Int { todo }
+",
+        find_position_of("[1").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_from_arg_in_pipelined_call_of_function_to_capture() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        "
+pub fn main() {
+  fn(total, item) { total + item }
+  |> fold(with: _, from: 0, over: [1, 2, 3])
+}
+pub fn fold(over l: List(a), from i: t, with f: fn(t, a) -> t) -> acc { todo }
+",
+        find_position_of("fold").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_from_arg_in_nested_function_called_in_pipeline() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        "
+pub fn main() {
+  let result =
     [1, 2, 3]
-    |> map(todo)
-    |> map(todo)
+    |> map(add(_, 1))
+    |> map(subtract(_, 9))
+
+  result
+}
+pub fn map(list: List(a), fun: fn(a) -> b) -> List(b) { todo }
+pub fn add(a: Int, b: Int) -> Int { todo }
+pub fn subtract(a: Int, b: Int) -> Int { todo }
+",
+        find_position_of("9").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_does_not_extract_an_entire_pipeline_step() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        "
+pub fn main() {
+  [1, 2, 3]
+  |> map(todo)
+  |> map(todo)
 }
 
 fn map(list, fun) { todo }
-"#,
+",
         find_position_of("map").to_selection()
     );
 }
@@ -4454,20 +4606,16 @@ fn map(list, fun) { todo }
 
 #[test]
 fn extract_variable_2() {
-    let src = r#"
-import gleam/list
-import gleam/int
-
-pub fn main() {
-  list.map([1, 2, 3], int.add(1, _))
-}"#;
-
     assert_code_action!(
         EXTRACT_VARIABLE,
-        TestProject::for_source(src)
-            .add_module("gleam/int", "pub fn add(n, m) { todo }")
-            .add_module("gleam/list", "pub fn map(l, f) { todo }"),
-        find_position_of("int.").select_until(find_position_of("add"))
+        "
+pub fn main() {
+  map([1, 2, 3], add(1, _))
+}
+pub fn add(n, m) { todo }
+pub fn map(l, f) { todo }
+",
+        find_position_of("add").to_selection()
     );
 }
 
@@ -4552,6 +4700,34 @@ fn extract_variable_in_multiline_case_subject_branch() {
 }
 
 #[test]
+fn extract_variable_in_case_branch_using_var() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+  case todo {
+    Ok(value) -> 2 * value + 1
+    Error(_) -> panic
+  }
+}"#,
+        find_position_of("2").select_until(find_position_of("value").nth_occurrence(2))
+    );
+}
+
+#[test]
+fn extract_variable_in_case_branch_from_second_arg() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+  case todo {
+    Ok(_) -> #(Ok(1), Error("s"))
+    Error(_) -> panic
+  }
+}"#,
+        find_position_of("E").to_selection()
+    );
+}
+
+#[test]
 fn extract_variable_in_use() {
     assert_code_action!(
         EXTRACT_VARIABLE,
@@ -4587,6 +4763,72 @@ fn extract_variable_in_multiline_use() {
     todo
 }"#,
         find_position_of("[1").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_after_nested_anonymous_function() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+    let f = fn() {
+        let x = 1 + 2
+        let ff = fn() {
+            let y = x + 3
+            let z = y + x
+            z
+        }
+        let z = x * 4
+        z
+    }
+    let y = 5 + 6
+    f()
+}"#,
+        find_position_of("6").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_in_nested_anonymous_function() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+    let f = fn() {
+        let x = 1 + 2
+        let ff = fn() {
+            let y = x + 3
+            let z = y + x
+            z
+        }
+        let z = x * 4
+        z
+    }
+    let y = 5 + 6
+    f()
+}"#,
+        find_position_of("4").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_in_double_nested_anonymous_function() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+    let f = fn() {
+        let x = 1 + 2
+        let ff = fn() {
+            let y = x + 3
+            let z = y + x
+            z
+        }
+        let z = x * 4
+        z
+    }
+    let y = 5 + 6
+    f()
+}"#,
+        find_position_of("3").to_selection()
     );
 }
 
@@ -7794,6 +8036,21 @@ pub fn main() {
 }
 ",
         find_position_of("Wobble()").to_selection(),
+    );
+}
+
+#[test]
+// https://github.com/gleam-lang/gleam/issues/4499
+fn fill_labels_with_function_with_unlabelled_arguments() {
+    assert_no_code_actions!(
+        FILL_LABELS,
+        "
+pub fn main() {
+    fold(0, over: [], with: fn(acc, item) { acc + item })
+}
+
+pub fn fold(over list, from initial, with fun) { todo }",
+        find_position_of("fold").to_selection(),
     );
 }
 
