@@ -164,7 +164,7 @@
 
   This expression computes a value without any side effects, but then the
   value isn't used at all. You might way to assign it to a variable, or
-  delete the expression entirely if it not needed.
+  delete the expression entirely if it's not needed.
   ```
 
   ([Surya Rose](https://github.com/GearsDatapacks))
@@ -361,3 +361,16 @@
 - Fixed instances where the "Extract variable" code action would produce invalid
   code, most noticeable in code inside `case` clauses and `use` expressions.
   ([Matias Carlander](https://github.com/matiascr))
+
+- Fixed a bug where the compiler would crash when type-checking code containing
+  an assignment pattern inside a bit-array pattern.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where a using the pipe operator in the `size` option of a bit array
+  segment would generate invalid code on the Erlang target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the language server would generate invalid code for the
+  "convert to use" code action, when used on a function call with labelled
+  arguments.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
