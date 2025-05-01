@@ -395,3 +395,11 @@
 - Fixed a bug where the compiler would not correctly check the size of bit
   arrays when doing bit array pattern matching on the JavaScript target.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where using the pipe operator inside a record update would cause
+  the compiler to generate invalid code on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where some code actions would produce invalid code when a file
+  contained characters that were represented with more than one byte in UTF-8.
+  ([Surya Rose](https://github.com/GearsDatapacks))
