@@ -28,6 +28,10 @@ expression: "\nlet a = \"inner 'quotes'\"\n"
                 ),
             },
             kind: Let,
+            compiled_case: CompiledCase {
+                tree: Fail,
+                subject_variables: [],
+            },
             annotation: None,
         },
     ),

@@ -492,6 +492,7 @@ pub fn code_action_inexhaustive_let_to_case(
             pattern,
             kind: AssignmentKind::Let,
             location,
+            compiled_case: _,
             annotation: _,
         }))) = module.find_node(location.start)
         else {
@@ -1161,7 +1162,7 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
 
         // Various expressions such as pipelines and `use` expressions generate assignments
         // internally. However, these cannot be annotated and so we don't offer a code action here.
-        if assignment.kind.is_generated() {
+        if matches!(assignment.kind, AssignmentKind::Generated) {
             return;
         }
 

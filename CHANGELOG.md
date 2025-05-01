@@ -30,6 +30,10 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The code generated for pattern matching on the JavaScript target has been
+  improved to be more efficient and perform as little checks as possible.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The compiler now raises a warning when it can tell that an integer segment
   with a literal value is going to be truncated. For example, if you wrote this:
 
@@ -172,6 +176,14 @@
 - The compiler will now generate more efficient code for `let assert` on the
   Erlang target.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The compiler will now reject bit array segment patterns whose constant size is
+  zero or negative. Previously a zero or negative sized segment would crash the
+  compiler.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The compiler will not generate needless code for unused pattern variables.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Build tool
 
@@ -366,11 +378,20 @@
   an assignment pattern inside a bit-array pattern.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- Fixed a bug where a using the pipe operator in the `size` option of a bit array
+- Fixed a bug where using the pipe operator in the `size` option of a bit array
   segment would generate invalid code on the Erlang target.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 - Fixed a bug where the language server would generate invalid code for the
   "convert to use" code action, when used on a function call with labelled
   arguments.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where a reference to an imported external function with a
+  non-alphanumeric module name would compile to invalid syntax on the Erlang
+  target.
+  ([Mathieu Darse](https://github.com/mdarse))
+
+- Fixed a bug where the compiler would not correctly check the size of bit
+  arrays when doing bit array pattern matching on the JavaScript target.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))

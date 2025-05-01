@@ -69,6 +69,7 @@ use crate::ast::{
 };
 use crate::build::Target;
 use crate::error::wrap;
+use crate::exhaustiveness::CompiledCase;
 use crate::parse::extra::ModuleExtra;
 use crate::type_::Deprecation;
 use crate::type_::error::VariableOrigin;
@@ -1062,6 +1063,7 @@ where
         Ok(Statement::Assignment(Assignment {
             location: SrcSpan { start, end },
             value: Box::new(value),
+            compiled_case: CompiledCase::failure(),
             pattern,
             annotation,
             kind,

@@ -16,8 +16,9 @@ import { makeError, bitArraySliceToInt } from "../gleam.mjs";
 function go(x) {
   let size = 3;
   if (
-    bitArraySliceToInt(x, 0, size * 2, true, false) !== 1 ||
-    !(x.bitSize == size * 2)
+    x.bitSize !== size * 2 ||
+    size <= 0 ||
+    bitArraySliceToInt(x, 0, size * 2, true, false) !== 1
   ) {
     throw makeError(
       "let_assert",

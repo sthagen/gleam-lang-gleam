@@ -68,7 +68,7 @@ fn inlining_external_functions_from_another_module() {
 pub type Atom
 
 @external(erlang, "erlang", "binary_to_atom")
-pub fn make(x: String) -> String
+pub fn make(x: String) -> Atom
 "#
         ),
         r#"import atom
@@ -89,7 +89,7 @@ fn unqualified_inlining_external_functions_from_another_module() {
 pub type Atom
 
 @external(erlang, "erlang", "binary_to_atom")
-pub fn make(x: String) -> String
+pub fn make(x: String) -> Atom
 "#
         ),
         "import atom.{make}
@@ -97,6 +97,48 @@ pub fn main() {
   make(\"ok\")
 }
 "
+    );
+}
+
+#[test]
+fn reference_to_imported_elixir_external_fn() {
+    assert_erl!(
+        (
+            "lib",
+            "my_app",
+            r#"
+@external(erlang, "Elixir.MyApp", "run")
+pub fn run() -> Int
+"#
+        ),
+        r#"import my_app
+pub fn main() {
+  let x = my_app.run
+  id(my_app.run)
+}
+fn id(x) { x }
+"#
+    );
+}
+
+#[test]
+fn unqualified_reference_to_imported_elixir_external_fn() {
+    assert_erl!(
+        (
+            "lib",
+            "my_app",
+            r#"
+@external(erlang, "Elixir.MyApp", "run")
+pub fn run() -> Int
+"#
+        ),
+        r#"import my_app.{run}
+pub fn main() {
+  let x = run
+  id(run)
+}
+fn id(x) { x }
+"#
     );
 }
 

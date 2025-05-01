@@ -54,6 +54,10 @@ expression: "let assert [x] = [2]"
                 },
                 message: None,
             },
+            compiled_case: CompiledCase {
+                tree: Fail,
+                subject_variables: [],
+            },
             annotation: None,
         },
     ),

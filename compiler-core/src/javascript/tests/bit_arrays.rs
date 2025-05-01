@@ -293,6 +293,34 @@ fn go(x) {
 }
 
 #[test]
+fn match_case_utf8_with_escape_chars() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<"\"\\\r\n\t\f\u{1f600}">> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn match_case_utf8() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<"Gleam 👍":utf8>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn utf8_codepoint() {
     assert_js!(
         r#"
@@ -393,11 +421,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_empty_match() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_bytes() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<1, y>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_bytes() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1, y>> -> y
+    _ -> 1
+  }
 }
 "#,
     );
@@ -415,11 +471,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:16, b:8>> -> a + b
+    _ -> 1
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_sized_unaligned() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:17, b:7>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_sized_unaligned() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:17, b:7>> -> b * 2
+    _ -> 1
+  }
 }
 "#,
     );
@@ -437,11 +521,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1234:16, 123:8>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_unsigned() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:unsigned>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_unsigned() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:unsigned>> -> a
+    _ -> 1
+  }
 }
 "#,
     );
@@ -459,11 +571,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_unsigned_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<-2:unsigned>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_signed() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:signed>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_signed() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:signed>> -> a
+    _ -> 1
+  }
 }
 "#,
     );
@@ -481,11 +621,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_signed_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<-1:signed>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_sized_big_endian() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:16-big>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_sized_big_endian() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:16-big>> -> a
+    _ -> 1
+  }
 }
 "#,
     );
@@ -503,11 +671,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized_big_endian_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1234:16-big>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_sized_little_endian() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:16-little>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_sized_little_endian() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:16-little>> -> a
+    _ -> 1
+  }
 }
 "#,
     );
@@ -525,11 +721,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized_little_endian_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1234:16-little>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_sized_big_endian_unsigned() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:16-big-unsigned>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_sized_big_endian_unsigned() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:16-big-unsigned>> -> a
+    _ -> 1
+  }
 }
 "#,
     );
@@ -547,11 +771,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized_big_endian_unsigned_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1234:16-big-unsigned>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_sized_big_endian_signed() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:16-big-signed>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_sized_big_endian_signed() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:16-big-signed>> -> a
+    _ -> 1
+  }
 }
 "#,
     );
@@ -569,11 +821,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized_big_endian_signed_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1234:16-big-signed>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_sized_little_endian_unsigned() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:16-little-unsigned>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_sized_little_endian_unsigned() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:16-little-unsigned>> -> a
+    _ -> 1
+  }
 }
 "#,
     );
@@ -591,11 +871,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized_little_endian_unsigned_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1234:16-little-unsigned>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_sized_little_endian_signed() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:16-little-signed>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_sized_little_endian_signed() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:16-little-signed>> -> a
+    _ -> 1
+  }
 }
 "#,
     );
@@ -613,12 +921,41 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized_little_endian_signed_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1234:16-little-signed>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_dynamic_size() {
     assert_js!(
         r#"
 fn go(x) {
   let n = 16
   let assert <<a:size(n)>> = x
+}
+"#
+    );
+}
+
+#[test]
+fn case_match_dynamic_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 16
+  case x {
+    <<a:size(n)>> -> a
+    _ -> 1
+  }
 }
 "#
     );
@@ -638,6 +975,22 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_dynamic_size_with_other_segments() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 16
+  let m = 32
+  case x {
+    <<first:size(8), a:size(n), b:size(m), rest:bits>> -> first + a + b
+    _ -> 1
+  }
+}
+"#
+    );
+}
+
+#[test]
 fn match_dynamic_size_shadowed_variable() {
     assert_js!(
         r#"
@@ -645,6 +998,22 @@ fn go(x) {
   let n = 16
   let n = 5
   let assert <<a:size(n)>> = x
+}
+"#
+    );
+}
+
+#[test]
+fn case_match_dynamic_size_shadowed_variable() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 16
+  let n = 5
+  case x {
+    <<a:size(n)>> -> a
+    _ -> 1
+  }
 }
 "#
     );
@@ -663,12 +1032,42 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_dynamic_size_literal_value() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 8
+  case x {
+    <<a:size(n), 0b010101:size(8)>> -> a
+    _ -> 1
+  }
+}
+"#
+    );
+}
+
+#[test]
 fn match_dynamic_bits_size() {
     assert_js!(
         r#"
 fn go(x) {
   let n = 16
   let assert <<a:bits-size(n)>> = x
+}
+"#
+    );
+}
+
+#[test]
+fn case_match_dynamic_bits_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 16
+  case x {
+    <<a:bits-size(n)>> -> a
+    _ -> x
+  }
 }
 "#
     );
@@ -687,12 +1086,45 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_dynamic_bytes_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 3
+  case x {
+    <<a:bytes-size(n)>> -> a
+    _ -> x
+  }
+}
+"#
+    );
+}
+
+#[test]
 fn discard_sized() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<_:16, _:8>> = x
   let assert <<_:16-little-signed, _:8>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_discard_sized() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<_:16, _:8>> -> 1
+    _ -> 2
+  }
+  case x {
+    <<_:16-little-signed, _:8>> -> 1
+    _ -> 2
+  }
 }
 "#,
     );
@@ -710,11 +1142,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_sized_value() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<i:16>> -> i
+    _ -> 1
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_sized_value_constant_pattern() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<258:16>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_sized_value_constant_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<258:16>> -> 1
+    _ -> 2
+  }
 }
 "#,
     );
@@ -732,11 +1192,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_float() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:float, b:int>> -> #(a, b)
+    _ -> #(1.1, 2)
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_float_big_endian() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:float-big, b:int>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_float_big_endian() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:float-big, b:int>> -> #(a, b)
+    _ -> #(1.1, 1)
+  }
 }
 "#,
     );
@@ -754,11 +1242,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_float_little_endian() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:float-little, b:int>> -> #(a, b)
+    _ -> #(1.1, 2)
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_float_sized() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:float-32, b:int>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_float_sized() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:float-32, b:int>> -> #(a, b)
+    _ -> #(1.1, 2)
+  }
 }
 "#,
     );
@@ -776,11 +1292,116 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_float_sized_big_endian() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:float-32-big, b:int>> -> #(a, b)
+    _ -> #(1.1, 2)
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_float_sized_little_endian() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<a:float-32-little, b:int>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_float_sized_little_endian() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:float-32-little, b:int>> -> #(a, b)
+    _ -> #(1.1, 2)
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn match_literal_float() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let assert <<1.4, b:int>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_literal_float() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1.4, b:int>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn match_literal_unaligned_float() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 1
+  let assert <<_:size(n), 1.1, _:bits>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_literal_unaligned_float() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 1
+  case x {
+    <<_:size(n), 1.1, _:int>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn match_literal_aligned_float() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let assert <<_, 1.1, _:bits>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_literal_aligned_float() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<_, 1.1, _:int>> -> 1
+    _ -> 2
+  }
 }
 "#,
     );
@@ -798,11 +1419,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_float_16_bit() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<a:float-size(16)>> -> a
+    _ -> 1.1
+  }
+}
+"#
+    );
+}
+
+#[test]
 fn match_rest() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<_, b:bytes>> = <<1,2,3>>
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_rest() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case <<1, 2, 3>> {
+    <<_, b:bytes>> -> b
+    _ -> x
+  }
 }
 "#,
     );
@@ -820,11 +1469,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_bytes_with_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case <<1, 2>> {
+    <<f:bytes-2>> -> f
+    _ -> x
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_bits_with_size() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<_:4, f:bits-2, _:1>> = <<0x77:7>>
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_bits_with_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case <<0x77:7>> {
+    <<_:4, f:bits-2, _:1>> -> f
+    _ -> x
+  }
 }
 "#,
     );
@@ -842,11 +1519,39 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_rest_bytes() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<_, b:bytes>> -> b
+    _ -> x
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_rest_bits() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<_, b:bits>> = <<1,2,3>>
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_rest_bits() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<_, b:bits>> -> b
+    _ -> x
+  }
 }
 "#,
     );
@@ -864,12 +1569,45 @@ fn go(x) {
 }
 
 #[test]
+fn case_match_rest_bits_unaligned() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<_:5, b:bits>> -> b
+    _ -> x
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn match_binary_size() {
     assert_js!(
         r#"
 fn go(x) {
   let assert <<_, a:2-bytes>> = x
   let assert <<_, b:bytes-size(2)>> = x
+}
+"#,
+    );
+}
+
+#[test]
+fn case_match_binary_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<_, a:2-bytes>> -> a
+    _ -> x
+  }
+
+  case x {
+    <<_, b:bytes-size(2)>> -> b
+    _ -> x
+  }
 }
 "#,
     );
@@ -1000,28 +1738,6 @@ fn as_module_const() {
 }
 
 #[test]
-fn negative_size() {
-    assert_js!(
-        r#"
-fn go(x: Int) {
-  <<x:size(-1)>>
-}
-"#,
-    );
-}
-
-#[test]
-fn negative_size_constant_value() {
-    assert_js!(
-        r#"
-fn go(x: Int) {
-  <<1:size(-1)>>
-}
-"#,
-    );
-}
-
-#[test]
 fn bit_array_literal_string_constant_is_treated_as_utf8() {
     assert_js!(r#"const a = <<"hello", " ", "world">>"#);
 }
@@ -1084,6 +1800,20 @@ fn go(x) {
 }
 
 #[test]
+fn case_pattern_with_unit() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<1:size(2)-unit(2), 2:size(3)-unit(4)>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
 fn dynamic_size_pattern_with_unit() {
     assert_js!(
         r#"
@@ -1092,5 +1822,278 @@ fn go(x) {
   let assert <<1:size(size)-unit(2)>> = x
 }
 "#,
+    );
+}
+
+#[test]
+fn case_dynamic_size_pattern_with_unit() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let size = 3
+  case x {
+    <<1:size(size)-unit(2)>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn case_dynamic_size_float_pattern_with_unit() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let size = 3
+  case x {
+    <<1.3:size(size)-unit(2)>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn case_with_remaining_bytes_after_constant_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<_, _, _:bytes>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn case_with_remaining_bytes_after_variable_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 1
+  case x {
+    <<_:size(n), _, _:bytes>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn case_with_remaining_bytes_after_variable_size_2() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 1
+  case x {
+    <<m:size(n), _:size(m), _:bytes>> -> 1
+    _ -> 2
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn case_is_byte_aligned() {
+    assert_js!(
+        r#"
+fn is_byte_aligned(x) {
+  case x {
+    <<_:bytes>> -> True
+    _ -> False
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn alternative_patterns_with_variable_size() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<_, n, rest:size(n)>> |
+    <<n, _, rest:size(n)>> -> True
+    _ -> False
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn variable_sized_segment() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<n, rest:size(n)>> -> 1
+    _ -> 2
+  }
+}
+"#
+    )
+}
+
+#[test]
+fn segments_shadowing_each_other() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = 1
+  case x {
+    <<n, rest:size(n)>> -> 1
+    _ -> 2
+  }
+}
+"#
+    )
+}
+
+#[test]
+fn negative_size_pattern() {
+    assert_js!(
+        r#"
+fn go(x) {
+  let n = -10
+  case x {
+    <<int:size(n)>> -> int
+    _ -> 2
+  }
+}
+"#
+    )
+}
+
+#[test]
+fn negative_size_pattern_2() {
+    assert_js!(
+        r#"
+fn go(x) {
+  case x {
+    <<n:signed, int:size(n)>> -> int
+    _ -> 2
+  }
+}
+"#
+    )
+}
+
+// https://github.com/gleam-lang/gleam/issues/3375
+#[test]
+fn bit_array_assignment_int() {
+    assert_js!(
+        "
+pub fn main() {
+ let assert <<1 as a>> = <<1>>
+ a
+}
+"
+    );
+}
+
+#[test]
+fn case_bit_array_assignment_int() {
+    assert_js!(
+        "
+pub fn go(x) {
+ case x {
+    <<1 as n>>
+    | <<2 as n, _:bytes>> -> n
+    _ -> 1
+ }
+}
+"
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/3375
+#[test]
+fn bit_array_assignment_float() {
+    assert_js!(
+        "
+pub fn main() {
+ let assert <<3.14 as pi:float>> = <<3.14>>
+ pi
+}
+"
+    );
+}
+
+#[test]
+fn case_bit_array_assignment_float() {
+    assert_js!(
+        "
+pub fn go(x) {
+ case x {
+    <<3.14 as pi:float>>
+    | <<1.1 as pi:float, _:bytes>> -> pi
+    _ -> 1.1
+ }
+}
+"
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/3375
+#[test]
+fn bit_array_assignment_string() {
+    assert_js!(
+        r#"
+pub fn main() {
+ let assert <<"Hello, world!" as message:utf8>> = <<"Hello, world!">>
+ message
+}
+"#
+    );
+}
+
+#[test]
+fn case_bit_array_assignment_string() {
+    assert_js!(
+        r#"
+pub fn go(x) {
+ case x {
+    <<"Hello" as message>>
+    | <<"Jak" as message, _:bytes>> -> message
+    _ -> "wibble"
+ }
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/3375
+#[test]
+fn bit_array_assignment_discard() {
+    assert_js!(
+        r#"
+pub fn main() {
+ let assert <<_ as number>> = <<10>>
+ number
+}
+"#
+    );
+}
+
+#[test]
+fn case_bit_array_assignment_discard() {
+    assert_js!(
+        r#"
+pub fn go(x) {
+ case x {
+    <<_ as n>>
+    | <<_ as n, _:bytes>> -> n
+    _ -> 1
+ }
+}
+"#
     );
 }
