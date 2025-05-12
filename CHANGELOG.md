@@ -167,7 +167,7 @@
     │   ^^^^^^^^^ This value is never used
 
   This expression computes a value without any side effects, but then the
-  value isn't used at all. You might way to assign it to a variable, or
+  value isn't used at all. You might want to assign it to a variable, or
   delete the expression entirely if it's not needed.
   ```
 
@@ -194,6 +194,10 @@
   constructor is wrong).
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- On the JavaScript target, bit arrays now support UTf-16 and UTF-32 string
+  segments.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Build tool
 
 - The build tool now supports placing modules in a directory called `dev`,
@@ -211,6 +215,64 @@
 
 - The build tool now provides additional information when printing warnings for
   deprecated environment variables.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- When generating documentation, the build tool now prints type variable using
+  the same names as were used in the code for function signatures. For example,
+  this code:
+
+  ```gleam
+  pub fn from_list(entries: List(#(key, value))) -> Dict(key, value) {
+    ...
+  }
+  ```
+
+  Previously would have been printed as:
+
+  ```gleam
+  pub fn from_list(entries: List(#(a, b))) -> Dict(a, b)
+  ```
+
+  But now is rendered as the following:
+
+  ```gleam
+  pub fn from_list(entries: List(#(key, value))) -> Dict(key, value)
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- When generating documentation, types from other modules are now rendered with
+  their module qualifiers. Hovering over them shows the full path to their module.
+  For example, this code:
+
+  ```gleam
+  import gleam/dynamic/decode
+
+  pub fn something_decoder() -> decode.Decoder(Something) {
+    ...
+  }
+  ```
+
+  Will now generate the following documentation:
+
+  ```gleam
+  pub fn something_decoder() -> decode.Decoder(Something)
+  ```
+
+  And hovering over the `decode.Decoder` text will show the following:
+
+  ```txt
+  gleam/dynamic/decode.{type Decoder}
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- When generating documentation, types in rendered documentation code will now
+  link to their corresponding documentation pages.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The build tool will now emit an error when compiling a package if the package
+  has a Gleam and Erlang file which would collide.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Language server
@@ -359,6 +421,9 @@
 
 ### Formatter
 
+- Improved the formatting of `echo` when followed by long binary expressions.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Installation
 
 - Windows ARM64 pre-built binaries are now provided.
@@ -455,4 +520,12 @@
 
 - Fixed a bug where renaming a local variable which is used in combination with
   label shorthand syntax would produce invalid code.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the stack would overflow on Windows when type-checking
+  multiple nested `use` expressions.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where using a variable from a separate pattern inside a bit array
+  pattern would be allowed but generate invalid Erlang code.
   ([Surya Rose](https://github.com/GearsDatapacks))

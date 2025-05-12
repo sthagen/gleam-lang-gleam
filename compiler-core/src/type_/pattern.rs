@@ -33,6 +33,55 @@ pub struct PatternTyper<'a, 'b> {
     pub minimum_required_version: Version,
 
     pub error_encountered: bool,
+
+    /// Variables which have been assigned in the current pattern. We can't
+    /// register them immediately. If we're in a bit array, variables that are
+    /// assigned in the pattern can be used as part of the pattern, e.g.
+    /// `<<a, b:size(a)>>`. However, if we are not in a bit array pattern,
+    /// variables cannot be used within the pattern. This is invalid:
+    /// `#(size, <<a:size(size)>>)`. This is due to a limitation of Erlang.
+    ///
+    /// What we do instead is store the variables in this map. Each variable
+    /// keeps track of whether it is in scope, so that we can correctly detect
+    /// valid/invalid uses.
+    variables: HashMap<EcoString, LocalVariable>,
+}
+
+#[derive(Debug)]
+struct LocalVariable {
+    location: SrcSpan,
+    origin: VariableOrigin,
+    type_: Arc<Type>,
+    usage: Usage,
+    scope: Scope,
+}
+
+impl LocalVariable {
+    fn in_scope(&self) -> bool {
+        match self.scope {
+            Scope::CurrentBitArrayPattern => true,
+            Scope::OtherPattern => false,
+        }
+    }
+
+    fn was_used(&self) -> bool {
+        match self.usage {
+            Usage::UsedInPattern => true,
+            Usage::UnusedSoFar => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Usage {
+    UsedInPattern,
+    UnusedSoFar,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Scope {
+    CurrentBitArrayPattern,
+    OtherPattern,
 }
 
 enum PatternMode {
@@ -59,27 +108,25 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
             minimum_required_version: Version::new(0, 1, 0),
             problems,
             error_encountered: false,
+            variables: HashMap::new(),
         }
     }
 
     fn insert_variable(
         &mut self,
-        name: &str,
+        name: &EcoString,
         type_: Arc<Type>,
         location: SrcSpan,
         origin: VariableOrigin,
     ) {
-        self.check_name_case(location, &EcoString::from(name), Named::Variable);
+        self.check_name_case(location, name, Named::Variable);
 
         match &mut self.mode {
             PatternMode::Initial => {
-                // Register usage for the unused variable detection
-                self.environment
-                    .init_usage(name.into(), origin.clone(), location, self.problems);
                 // Ensure there are no duplicate variable names in the pattern
                 if self.initial_pattern_vars.contains(name) {
                     self.error(convert_unify_error(
-                        UnifyError::DuplicateVarInPattern { name: name.into() },
+                        UnifyError::DuplicateVarInPattern { name: name.clone() },
                         location,
                     ));
                     return;
@@ -90,18 +137,25 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 // Record that this variable originated in this pattern so any
                 // following alternative patterns can be checked to ensure they
                 // have the same variables.
-                let _ = self.initial_pattern_vars.insert(name.into());
-                // And now insert the variable for use in the code that comes
-                // after the pattern.
-                self.environment
-                    .insert_local_variable(name.into(), location, origin, type_);
+                let _ = self.initial_pattern_vars.insert(name.clone());
+
+                _ = self.variables.insert(
+                    name.clone(),
+                    LocalVariable {
+                        location,
+                        origin: origin.clone(),
+                        type_: type_.clone(),
+                        usage: Usage::UnusedSoFar,
+                        scope: Scope::CurrentBitArrayPattern,
+                    },
+                );
             }
 
             PatternMode::Alternative(assigned) => {
                 match self.environment.scope.get_mut(name) {
                     // This variable was defined in the Initial multi-pattern
                     Some(initial) if self.initial_pattern_vars.contains(name) => {
-                        assigned.push(name.into());
+                        assigned.push(name.clone());
                         let initial_type = initial.type_.clone();
                         match unify(initial_type, type_.clone()) {
                             Ok(()) => {}
@@ -115,7 +169,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
 
                     // This variable was not defined in the Initial multi-pattern
                     _ => self.error(convert_unify_error(
-                        UnifyError::ExtraVarInAlternativePattern { name: name.into() },
+                        UnifyError::ExtraVarInAlternativePattern { name: name.clone() },
                         location,
                     )),
                 }
@@ -254,7 +308,61 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
             let pattern = self.unify(pattern, subject.type_(), subject_variable);
             typed_multi.push(pattern);
         }
+
+        self.register_variables();
+
         typed_multi
+    }
+
+    pub fn infer_single_pattern(
+        &mut self,
+        pattern: UntypedPattern,
+        subject: &TypedExpr,
+    ) -> TypedPattern {
+        let subject_variable = match subject {
+            TypedExpr::Var {
+                constructor:
+                    ValueConstructor {
+                        // Records should not be considered local variables
+                        // See: https://github.com/gleam-lang/gleam/issues/3861
+                        variant: ValueConstructorVariant::Record { .. },
+                        ..
+                    },
+                ..
+            } => None,
+            TypedExpr::Var { name, .. } => Some(name.clone()),
+            _ => None,
+        };
+
+        let typed_pattern = self.unify(pattern, subject.type_(), subject_variable);
+        self.register_variables();
+        typed_pattern
+    }
+
+    /// Register the variables bound in this pattern in the environment
+    fn register_variables(&mut self) {
+        for (name, variable) in std::mem::take(&mut self.variables) {
+            let was_used = variable.was_used();
+
+            let LocalVariable {
+                location,
+                origin,
+                type_,
+                usage: _,
+                scope: _,
+            } = variable;
+
+            // If this variable has already been referenced in another part of
+            // the pattern, we don't need to register it for usage tracking as
+            // it has already been used.
+            if !was_used {
+                self.environment
+                    .init_usage(name.clone(), origin.clone(), location, self.problems);
+            }
+
+            self.environment
+                .insert_local_variable(name, location, origin, type_);
+        }
     }
 
     fn infer_pattern_bit_array(
@@ -262,6 +370,12 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
         mut segments: Vec<UntypedPatternBitArraySegment>,
         location: SrcSpan,
     ) -> TypedPattern {
+        // Any variables from other parts of the pattern are no longer in scope.
+        // Only variables from the bit array pattern itself can be used.
+        for (_, variable) in self.variables.iter_mut() {
+            variable.scope = Scope::OtherPattern;
+        }
+
         let last_segment = segments.pop();
 
         let mut typed_segments: Vec<_> = segments
@@ -308,6 +422,8 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 _ => (),
             }
         }
+
+        let has_non_utf8_string_option = segment.has_utf16_option() || segment.has_utf32_option();
 
         let options: Vec<_> = segment
             .options
@@ -403,6 +519,11 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                     location: *location,
                 });
             }
+            Pattern::Assign { location, .. } if has_non_utf8_string_option => {
+                self.error(Error::NonUtf8StringAssignmentInBitArray {
+                    location: *location,
+                });
+            }
             _ => {}
         };
 
@@ -418,7 +539,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
     /// inferred type of the subject in order to determine what variables to insert
     /// into the environment (or to detect a type error).
     ///
-    pub fn unify(
+    fn unify(
         &mut self,
         pattern: UntypedPattern,
         type_: Arc<Type>,
@@ -468,21 +589,34 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
             }
 
             Pattern::VarUsage { name, location, .. } => {
-                let constructor = match self.environment.get_variable(&name) {
-                    Some(constructor) => constructor.clone(),
-                    None => {
-                        self.error(Error::UnknownVariable {
-                            location,
-                            name: name.clone(),
-                            variables: self.environment.local_value_names(),
-                            type_with_name_in_scope: self
-                                .environment
-                                .module_types
-                                .keys()
-                                .any(|type_| type_ == &name),
-                        });
-                        return Pattern::Invalid { location, type_ };
+                let constructor = match self.variables.get_mut(&name) {
+                    // If we've bound a variable in the current bit array pattern, we
+                    // want to use that.
+                    Some(variable) if variable.in_scope() => {
+                        variable.usage = Usage::UsedInPattern;
+                        ValueConstructor::local_variable(
+                            variable.location,
+                            variable.origin.clone(),
+                            variable.type_.clone(),
+                        )
                     }
+                    // Otherwise, we check the local scope.
+                    Some(_) | None => match self.environment.get_variable(&name) {
+                        Some(constructor) => constructor.clone(),
+                        None => {
+                            self.error(Error::UnknownVariable {
+                                location,
+                                name: name.clone(),
+                                variables: self.environment.local_value_names(),
+                                type_with_name_in_scope: self
+                                    .environment
+                                    .module_types
+                                    .keys()
+                                    .any(|type_| type_ == &name),
+                            });
+                            return Pattern::Invalid { location, type_ };
+                        }
+                    },
                 };
 
                 self.environment.increment_usage(&name);
@@ -515,7 +649,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 // The left hand side may assign a variable, which is the prefix of the string
                 if let Some((left, left_location)) = &left_side_assignment {
                     self.insert_variable(
-                        left.as_ref(),
+                        left,
                         string(),
                         *left_location,
                         VariableOrigin::AssignmentPattern,
@@ -526,7 +660,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                 match &right_side_assignment {
                     AssignName::Variable(right) => {
                         self.insert_variable(
-                            right.as_ref(),
+                            right,
                             string(),
                             right_location,
                             VariableOrigin::Variable(right.clone()),
