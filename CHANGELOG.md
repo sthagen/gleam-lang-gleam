@@ -198,6 +198,11 @@
   segments.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- When an import with unqualified types and values is unused the compiler will
+  now raise a single warning for the entire import rather than warning for each
+  individual item.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Build tool
 
 - The build tool now supports placing modules in a directory called `dev`,
@@ -422,6 +427,28 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The language server can now remove unused imported values and types:
+
+  ```gleam
+  import a_module.{type Unused, unused, used}
+
+  pub fn main() {
+    used
+  }
+  ```
+
+  Triggering the code action will remove all unused types and values:
+
+  ```gleam
+  import a_module.{used}
+
+  pub fn main() {
+    used
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 - Improved the formatting of `echo` when followed by long binary expressions.
@@ -531,4 +558,8 @@
 
 - Fixed a bug where using a variable from a separate pattern inside a bit array
   pattern would be allowed but generate invalid Erlang code.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the compiler would crash if duplicate variables were defined
+  in alternative patterns.
   ([Surya Rose](https://github.com/GearsDatapacks))
