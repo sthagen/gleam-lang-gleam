@@ -135,6 +135,7 @@ impl Printer<'_> {
                 source_url: source_links.url(*location),
                 opaque: *opaque,
             }),
+
             Definition::TypeAlias(TypeAlias {
                 publicity: Publicity::Public,
                 location,
@@ -157,6 +158,7 @@ impl Printer<'_> {
                 },
                 opaque: false,
             }),
+
             Definition::TypeAlias(_)
             | Definition::CustomType(_)
             | Definition::Function(_)
@@ -293,6 +295,11 @@ impl Printer<'_> {
         type_: &Type,
         parameters: &[(SrcSpan, EcoString)],
     ) -> Document<'a> {
+        // Do not expose information about non-public types (internal types)
+        if type_.is_non_public_named_type() {
+            return docvec![self.keyword("pub type "), self.title(name)];
+        }
+
         let parameters = if parameters.is_empty() {
             nil()
         } else {
@@ -389,9 +396,10 @@ impl Printer<'_> {
                 module,
                 name,
                 args,
+                publicity,
                 ..
             } => {
-                let name = self.named_type_name(package, module, name);
+                let name = self.named_type_name(publicity, package, module, name);
                 if args.is_empty() {
                     name
                 } else {
@@ -463,12 +471,30 @@ impl Printer<'_> {
         chars.into_iter().rev().collect()
     }
 
-    fn named_type_name(&self, package: &str, module: &str, name: &EcoString) -> Document<'static> {
+    fn named_type_name(
+        &self,
+        publicity: &Publicity,
+        package: &str,
+        module: &str,
+        name: &EcoString,
+    ) -> Document<'static> {
+        // Don't show where non-private types are defined (internal types!)
+        if !publicity.is_public() {
+            return self.comment("//internal");
+        }
+
+        // There's no documentation page for the prelude
         if package == PRELUDE_PACKAGE_NAME && module == PRELUDE_MODULE_NAME {
-            self.title(name)
-        } else if package == self.package && module == self.module {
-            self.link(eco_format!("#{name}"), self.title(name), None)
-        } else if package == self.package {
+            return self.title(name);
+        }
+
+        // Linking to a type within the same page
+        if package == self.package && module == self.module {
+            return self.link(eco_format!("#{name}"), self.title(name), None);
+        }
+
+        // Linking to a module within the package
+        if package == self.package {
             // If we are linking to the current package, we might be viewing the
             // documentation locally and so we need to generate a relative link.
 
@@ -515,33 +541,33 @@ impl Printer<'_> {
 
             let title = eco_format!("{module}.{{type {name}}}");
 
-            self.link(
+            return self.link(
                 eco_format!("{path}.html#{name}", path = path.join("/")),
                 qualified_name,
                 Some(title),
-            )
-        } else {
-            let module_name = module.split('/').next_back().unwrap_or(module);
-            let qualified_name = docvec![
-                self.variable(EcoString::from(module_name)),
-                ".",
-                self.title(name)
-            ];
-            let title = eco_format!("{module}.{{type {name}}}");
+            );
+        }
 
-            // We can't reliably link to documentation if the type is from a path
-            // or git dependency
-            match self.dependencies.get(package) {
-                Some(Dependency {
-                    kind: DependencyKind::Hex,
-                    version,
-                }) => self.link(
-                    eco_format!("https://hexdocs.pm/{package}/{version}/{module}.html#{name}"),
-                    qualified_name,
-                    Some(title),
-                ),
-                Some(_) | None => self.span_with_title(qualified_name, title),
-            }
+        let module_name = module.split('/').next_back().unwrap_or(module);
+        let qualified_name = docvec![
+            self.variable(EcoString::from(module_name)),
+            ".",
+            self.title(name)
+        ];
+        let title = eco_format!("{module}.{{type {name}}}");
+
+        // We can't reliably link to documentation if the type is from a path
+        // or git dependency
+        match self.dependencies.get(package) {
+            Some(Dependency {
+                kind: DependencyKind::Hex,
+                version,
+            }) => self.link(
+                eco_format!("https://hexdocs.pm/{package}/{version}/{module}.html#{name}"),
+                qualified_name,
+                Some(title),
+            ),
+            Some(_) | None => self.span_with_title(qualified_name, title),
         }
     }
 
@@ -589,34 +615,32 @@ impl Printer<'_> {
     }
 
     fn keyword<'a>(&self, keyword: impl Documentable<'a>) -> Document<'a> {
-        if !self.options.print_highlighting {
-            return keyword.to_doc();
-        }
+        self.colour_span(keyword, "keyword")
+    }
 
-        keyword.to_doc().surround(
-            zero_width_string(r#"<span class="hljs-keyword">"#.into()),
-            zero_width_string("</span>".into()),
-        )
+    fn comment<'a>(&self, name: impl Documentable<'a>) -> Document<'a> {
+        self.colour_span(name, "comment")
     }
 
     fn title<'a>(&self, name: impl Documentable<'a>) -> Document<'a> {
-        if !self.options.print_highlighting {
-            return name.to_doc();
-        }
-
-        name.to_doc().surround(
-            zero_width_string(r#"<span class="hljs-title">"#.into()),
-            zero_width_string("</span>".into()),
-        )
+        self.colour_span(name, "title")
     }
 
     fn variable<'a>(&self, name: impl Documentable<'a>) -> Document<'a> {
+        self.colour_span(name, "variable")
+    }
+
+    fn colour_span<'a>(
+        &self,
+        name: impl Documentable<'a>,
+        colour_class: &'static str,
+    ) -> Document<'a> {
         if !self.options.print_highlighting {
             return name.to_doc();
         }
 
         name.to_doc().surround(
-            zero_width_string(r#"<span class="hljs-variable">"#.into()),
+            zero_width_string(eco_format!(r#"<span class="hljs-{colour_class}">"#)),
             zero_width_string("</span>".into()),
         )
     }
