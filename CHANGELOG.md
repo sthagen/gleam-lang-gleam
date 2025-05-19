@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Language server
+
+- When using the "remove `echo`" code action, the language server will also
+  remove any literal expression being printed by `echo` statements. For example
+
+  ```gleam
+  pub fn main() {
+    echo "Before"
+    do_complex_stuff()
+    echo "After"
+    do_something_else()
+  }
+  ```
+
+  Will become:
+
+  ```gleam
+  pub fn main() {
+    do_complex_stuff()
+    do_something_else()
+  }
+  ```
+
+  Making it easier to get rid of debug printing messages once they're no longer
+  needed.
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+### Bug fixes
+
+- Fixed a bug where type constructors with many fields would not be formatted
+  properly in the generated documentation.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where fields name `x0` in records could cause invalid code to be
+  generated on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ## v1.11.0-rc1 - 2025-05-15
 
 ### Compiler
