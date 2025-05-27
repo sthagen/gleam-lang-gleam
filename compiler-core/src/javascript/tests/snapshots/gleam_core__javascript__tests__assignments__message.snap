@@ -15,15 +15,18 @@ pub fn unwrap_or_panic(value) {
 ----- COMPILED JAVASCRIPT
 import { Ok, makeError } from "../gleam.mjs";
 
+const FILEPATH = "src/module.gleam";
+
 export function unwrap_or_panic(value) {
   if (!(value instanceof Ok)) {
     throw makeError(
       "let_assert",
+      FILEPATH,
       "my/mod",
       3,
       "unwrap_or_panic",
       "Oops, there was an error",
-      { value: value, start: 35, pattern_start: 46, pattern_end: 55 }
+      { value: value, start: 35, end: 63, pattern_start: 46, pattern_end: 55 }
     )
   }
   let inner = value[0];

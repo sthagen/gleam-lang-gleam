@@ -20,6 +20,8 @@ fn go() {
 ----- COMPILED JAVASCRIPT
 import { CustomType as $CustomType, makeError } from "../gleam.mjs";
 
+const FILEPATH = "src/module.gleam";
+
 class Wibble extends $CustomType {
   constructor($0) {
     super();
@@ -38,11 +40,12 @@ function go() {
   let $ = new Wibble(1);
   throw makeError(
     "let_assert",
+    FILEPATH,
     "my/mod",
     8,
     "go",
     "Pattern match failed, no pattern matched the value.",
-    { value: $, start: 62, pattern_start: 73, pattern_end: 82 }
+    { value: $, start: 62, end: 94, pattern_start: 73, pattern_end: 82 }
   )
   
 }

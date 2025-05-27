@@ -15,16 +15,19 @@ pub fn main() {
 ----- COMPILED JAVASCRIPT
 import { makeError, toBitArray } from "../gleam.mjs";
 
+const FILEPATH = "src/module.gleam";
+
 export function main() {
   let $ = toBitArray([1]);
   if ($.bitSize !== 8 || $.byteAt(0) !== 1) {
     throw makeError(
       "let_assert",
+      FILEPATH,
       "my/mod",
       3,
       "main",
       "Pattern match failed, no pattern matched the value.",
-      { value: $, start: 18, pattern_start: 29, pattern_end: 39 }
+      { value: $, start: 18, end: 47, pattern_start: 29, pattern_end: 39 }
     )
   }
   let a = 1;

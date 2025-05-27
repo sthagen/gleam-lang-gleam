@@ -16,16 +16,19 @@ pub fn main() {
 ----- COMPILED JAVASCRIPT
 import { Error, makeError } from "../gleam.mjs";
 
+const FILEPATH = "src/module.gleam";
+
 export function main() {
   {
     let $ = new Error(undefined);
     throw makeError(
       "let_assert",
+      FILEPATH,
       "my/mod",
       4,
       "main",
       "Pattern match failed, no pattern matched the value.",
-      { value: $, start: 25, pattern_start: 36, pattern_end: 41 }
+      { value: $, start: 25, end: 54, pattern_start: 36, pattern_end: 41 }
     )
     return $;
   }

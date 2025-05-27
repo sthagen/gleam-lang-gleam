@@ -18,10 +18,13 @@ pub fn expect(value, message) {
 ----- COMPILED JAVASCRIPT
 import { Ok, makeError } from "../gleam.mjs";
 
+const FILEPATH = "src/module.gleam";
+
 export function expect(value, message) {
   if (!(value instanceof Ok)) {
     throw makeError(
       "let_assert",
+      FILEPATH,
       "my/mod",
       3,
       "expect",
@@ -33,7 +36,7 @@ export function expect(value, message) {
           return "No message provided";
         }
       })(),
-      { value: value, start: 35, pattern_start: 46, pattern_end: 55 }
+      { value: value, start: 35, end: 63, pattern_start: 46, pattern_end: 55 }
     )
   }
   let inner = value[0];

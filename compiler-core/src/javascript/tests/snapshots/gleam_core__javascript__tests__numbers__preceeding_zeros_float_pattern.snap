@@ -14,15 +14,18 @@ fn main(x) {
 ----- COMPILED JAVASCRIPT
 import { makeError } from "../gleam.mjs";
 
+const FILEPATH = "src/module.gleam";
+
 function main(x) {
   if (x !== 9_179.1) {
     throw makeError(
       "let_assert",
+      FILEPATH,
       "my/mod",
       3,
       "main",
       "Pattern match failed, no pattern matched the value.",
-      { value: x, start: 16, pattern_start: 27, pattern_end: 35 }
+      { value: x, start: 16, end: 39, pattern_start: 27, pattern_end: 35 }
     )
   }
   return x;

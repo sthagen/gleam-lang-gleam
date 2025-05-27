@@ -14,16 +14,19 @@ pub fn main() {
 ----- COMPILED JAVASCRIPT
 import { makeError } from "../gleam.mjs";
 
+const FILEPATH = "src/module.gleam";
+
 export function main() {
   let $ = "Game 1";
   if (!$.startsWith("Game ")) {
     throw makeError(
       "let_assert",
+      FILEPATH,
       "my/mod",
       3,
       "main",
       "Pattern match failed, no pattern matched the value.",
-      { value: $, start: 19, pattern_start: 30, pattern_end: 43 }
+      { value: $, start: 19, end: 54, pattern_start: 30, pattern_end: 43 }
     )
   }
   let id = $.slice(5);

@@ -15,16 +15,19 @@ fn go(x) {
 ----- COMPILED JAVASCRIPT
 import { makeError, bitArraySlice } from "../gleam.mjs";
 
+const FILEPATH = "src/module.gleam";
+
 function go(x) {
   let n = 16;
   if (x.bitSize !== n || n <= 0) {
     throw makeError(
       "let_assert",
+      FILEPATH,
       "my/mod",
       4,
       "go",
       "Pattern match failed, no pattern matched the value.",
-      { value: x, start: 27, pattern_start: 38, pattern_end: 56 }
+      { value: x, start: 27, end: 60, pattern_start: 38, pattern_end: 56 }
     )
   }
   let a = bitArraySlice(x, 0, n);
