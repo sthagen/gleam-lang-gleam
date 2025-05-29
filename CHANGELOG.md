@@ -50,6 +50,21 @@
   function name metadata.
   ([Louis Pilfold](https://github.com/lpil))
 
+- Fixed a bug where the missing patterns shown for an inexhaustive `case`
+  expression would include constructors of opaque types which were not available
+  in the current module, leading to invalid code.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the language server would offer completions for local
+  variables where the variables were not in scope, leading to invalid code being
+  produced if the completion was followed.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the compiler would crash when compiling `let assert`
+  statements which contained a bit array pattern inside a tuple pattern on the
+  JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ## v1.11.0-rc1 - 2025-05-15
 
 ### Compiler
