@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Bug fixes
+
+- Fixed a bug where using a pipe operator on the right-hand side of an `assert`
+  statement would generate invalid code on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the build tool would try and run a module whose main
+  function is private.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would sometime warn that an assertion was
+  unnecessary because it only asserted literal values, when that was not the case.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ## v1.11.0-rc2 - 2025-05-29
 
 ### Compiler
@@ -103,7 +119,7 @@
   improved to be more efficient and perform as little checks as possible.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The compiler now raises a warning when it can tell that an integer segment
+- The compiler now raises a warning when it can tell that an int segment
   with a literal value is going to be truncated. For example, if you wrote this:
 
   ```gleam
