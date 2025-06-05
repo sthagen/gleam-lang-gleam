@@ -27,14 +27,14 @@ use super::{
 #[derive(Clone, Copy)]
 pub struct PrintOptions {
     pub print_highlighting: bool,
-    pub print_links: bool,
+    pub print_html: bool,
 }
 
 impl PrintOptions {
     pub fn all() -> Self {
         Self {
             print_highlighting: true,
-            print_links: true,
+            print_html: true,
         }
     }
 }
@@ -295,11 +295,6 @@ impl Printer<'_> {
         type_: &Type,
         parameters: &[(SrcSpan, EcoString)],
     ) -> Document<'a> {
-        // Do not expose information about non-public types (internal types)
-        if type_.is_non_public_named_type() {
-            return docvec![self.keyword("pub type "), self.title(name)];
-        }
-
         let parameters = if parameters.is_empty() {
             nil()
         } else {
@@ -478,14 +473,14 @@ impl Printer<'_> {
         module: &str,
         name: &EcoString,
     ) -> Document<'static> {
-        // Don't show where non-private types are defined (internal types!)
-        if !publicity.is_public() {
-            return self.comment("//internal");
-        }
-
         // There's no documentation page for the prelude
         if package == PRELUDE_PACKAGE_NAME && module == PRELUDE_MODULE_NAME {
             return self.title(name);
+        }
+
+        // Internal types don't get linked
+        if !publicity.is_public() {
+            return docvec![self.comment("@internal ".to_doc()), self.title(name)];
         }
 
         // Linking to a type within the same page
@@ -651,7 +646,7 @@ impl Printer<'_> {
         name: impl Documentable<'a>,
         title: Option<EcoString>,
     ) -> Document<'a> {
-        if !self.options.print_links {
+        if !self.options.print_html {
             return name.to_doc();
         }
 
@@ -668,7 +663,7 @@ impl Printer<'_> {
     }
 
     fn span_with_title<'a>(&self, name: impl Documentable<'a>, title: EcoString) -> Document<'a> {
-        if !self.options.print_links {
+        if !self.options.print_html {
             return name.to_doc();
         }
 
