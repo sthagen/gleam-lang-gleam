@@ -12,6 +12,10 @@
 
 ### Bug fixes
 
+- Fixed a bug where the language server would not show type-related code action
+  for record fields in custom type definitions.
+  ([cysabi](https://github.com/cysabi))
+
 ## v1.11.1 - 2025-06-05
 
 ### Compiler
