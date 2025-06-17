@@ -1786,3 +1786,18 @@ fn assert_statement_without_expression() {
 fn assert_statement_followed_by_statement() {
     assert_error!("assert let a = 10");
 }
+
+#[test]
+fn special_error_for_pythonic_import() {
+    assert_module_error!("import gleam.io");
+}
+
+#[test]
+fn special_error_for_pythonic_neste_import() {
+    assert_module_error!("import one.two.three");
+}
+
+#[test]
+fn doesnt_issue_special_error_for_pythonic_import_if_slash() {
+    assert_module_error!("import one/two.three");
+}

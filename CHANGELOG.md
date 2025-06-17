@@ -2,7 +2,21 @@
 
 ## Unreleased
 
+### Build tool
+
+- Generated JavaScript functions, constants, and custom type constructors now
+  include any doc comment as a JSDoc comment, making it easier to use the
+  generated code and browse its documentation from JavaScript.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+## v1.11.0-rc1 - 2025-05-15
+
 ### Compiler
+
+- Generated JavaScript functions, constants, and custom type constructors now
+  include any doc comment as a JSDoc comment, making it easier to use the
+  generated code and browse its documentation from JavaScript.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The code generated for a `case` expression on the JavaScript target is now
   reduced in size in many cases.
@@ -20,6 +34,28 @@
   context for the error message are no longer highlighted with the same style as
   the source of the problem.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Gleam will now emit a helpful message when attempting to import modules using
+  `.` instead of `/`.
+
+  ```gleam
+  error: Syntax error
+    ┌─ /src/parse/error.gleam:1:11
+    │
+  1 │ import one.two.three
+    │           ^ I was expecting either `/` or `.{` here.
+
+  Perhaps you meant one of:
+
+      import one/two
+      import one.{item}
+  ```
+
+  ([Zij-IT](https://github.com/zij-it))
+
+- The compiler now emits a warning when a top-level constant or function declaration
+  shadows an imported name in the current module.
+  ([Aayush Tripathi](https://github.com/aayush-tripathi))
 
 ### Build tool
 
