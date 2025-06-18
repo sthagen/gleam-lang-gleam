@@ -2,15 +2,6 @@
 
 ## Unreleased
 
-### Build tool
-
-- Generated JavaScript functions, constants, and custom type constructors now
-  include any doc comment as a JSDoc comment, making it easier to use the
-  generated code and browse its documentation from JavaScript.
-  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
-
-## v1.11.0-rc1 - 2025-05-15
-
 ### Compiler
 
 - Generated JavaScript functions, constants, and custom type constructors now
@@ -53,9 +44,66 @@
 
   ([Zij-IT](https://github.com/zij-it))
 
-- The compiler now emits a warning when a top-level constant or function declaration
-  shadows an imported name in the current module.
+- The compiler now emits a warning when a top-level constant or function
+  declaration shadows an imported name in the current module.
   ([Aayush Tripathi](https://github.com/aayush-tripathi))
+
+- The compiler can now tell when an unknown variable might be referring to an
+  ignored variable and provide an helpful error message highlighting it. For
+  example, this piece of code:
+
+  ```gleam
+  pub fn go() {
+    let _x = 1
+    x + 1
+  }
+  ```
+
+  Now results in the following error:
+
+  ```
+  error: Unknown variable
+    ┌─ /src/one/two.gleam:4:3
+    │
+  3 │   let _x = 1
+    │       -- This value is discarded
+  4 │   x + 1
+    │   ^ So it is not in scope here.
+
+  Hint: Change `_x` to `x` or reference another variable
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- When using two spreads, trying to concatenate lists, the compiler will now
+  show a nicer error message. For example, this snippet of code:
+
+  ```gleam
+  pub fn main() -> Nil {
+    let xs = [1, 2, 3]
+    let ys = [5, 6, 7]
+    [1, ..xs, ..ys]
+  }
+  ```
+
+  Would result in the following error:
+
+  ```
+  error: Syntax error
+    ┌─ /src/parse/error.gleam:5:13
+    │
+  5 │   [1, ..xs, ..ys]
+    │       --    ^^ I wasn't expecting a second spread here
+    │       │
+    │       You're using a spread here
+
+  Lists are immutable and singly-linked, so to join two or more lists
+  all the elements of the lists would need to be copied into a new list.
+  This would be slow, so there is no built-in syntax for it.
+  ```
+
+  ([Carl Bordum Hansen](https://github.com/carlbordum)) and
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Build tool
 
@@ -92,6 +140,10 @@
 - Fixed a bug where the "Inline variable" code action would not be applied
   correctly to variables using label shorthand syntax.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the compiler would emit the same error twice for patterns
+  with the wrong number of labels.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ## v1.11.1 - 2025-06-05
 

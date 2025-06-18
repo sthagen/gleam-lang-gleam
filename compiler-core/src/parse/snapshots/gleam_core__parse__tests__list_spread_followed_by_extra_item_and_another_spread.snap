@@ -1,20 +1,21 @@
 ---
 source: compiler-core/src/parse/tests.rs
-expression: "\npub fn main() -> Nil {\n  let xs = [1, 2, 3]\n  [..xs, 3 + 3, 4]\n}\n"
+expression: "\npub fn main() -> Nil {\n  let xs = [1, 2, 3]\n  let ys = [5, 6, 7]\n  [..xs, 4, ..ys]\n}\n"
 ---
 ----- SOURCE CODE
 
 pub fn main() -> Nil {
   let xs = [1, 2, 3]
-  [..xs, 3 + 3, 4]
+  let ys = [5, 6, 7]
+  [..xs, 4, ..ys]
 }
 
 
 ----- ERROR
 error: Syntax error
-  ┌─ /src/parse/error.gleam:4:4
+  ┌─ /src/parse/error.gleam:5:4
   │
-4 │   [..xs, 3 + 3, 4]
+5 │   [..xs, 4, ..ys]
   │    ^^^^ I wasn't expecting elements after this
 
 Lists are immutable and singly-linked, so to append items to them

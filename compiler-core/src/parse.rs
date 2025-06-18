@@ -83,7 +83,7 @@ use num_bigint::BigInt;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::str::FromStr;
-use token::Token;
+pub use token::Token;
 use vec1::{Vec1, vec1};
 
 #[cfg(test)]
@@ -622,11 +622,36 @@ where
                         };
                     };
 
-                    if tail.is_some() && !elements_end_with_comma {
-                        self.warnings
-                            .push(DeprecatedSyntaxWarning::DeprecatedListPrepend {
-                                location: SrcSpan { start, end },
-                            });
+                    if tail.is_some() {
+                        if !elements_end_with_comma {
+                            self.warnings
+                                .push(DeprecatedSyntaxWarning::DeprecatedListPrepend {
+                                    location: SrcSpan { start, end },
+                                });
+                        }
+
+                        // Give a better error when there is two consecutive spreads
+                        // like `[..wibble, ..wabble, woo]`. However, if there's other
+                        // elements after the tail of the list
+                        if let Some((second_start, second_end)) = self.maybe_one(&Token::DotDot) {
+                            let _second_tail = self.parse_expression();
+
+                            if elements_after_tail.is_none()
+                                || elements_after_tail
+                                    .as_ref()
+                                    .is_some_and(|vec| vec.is_empty())
+                            {
+                                return parse_error(
+                                    ParseErrorType::ListSpreadWithAnotherSpread {
+                                        first_spread_location: SrcSpan { start, end },
+                                    },
+                                    SrcSpan {
+                                        start: second_start,
+                                        end: second_end,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
 
