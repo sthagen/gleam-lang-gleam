@@ -123,6 +123,11 @@
 
   ([Amjad Mohamed](https://github.com/andho))
 
+- Docs generator now strips trailing slashes from Gitea/Forgejo hosts so
+  sidebar "Repository" and "View Source" links never include `//`, and
+  single-line “View Source” anchors emit `#Lx` instead of `#Lx-x`.
+  ([Aayush Tripathi](https://github.com/aayush-tripathi))
+
 ### Language server
 
 ### Formatter
@@ -144,6 +149,10 @@
 - Fixed a bug where the compiler would emit the same error twice for patterns
   with the wrong number of labels.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would generate invalid code when the
+  "Extract variable" code action was used on a `use` expression.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.11.1 - 2025-06-05
 
