@@ -2,6 +2,109 @@
 
 ## Unreleased
 
+### Formatter
+
+- The formatter now allows more control over how lists are split. By adding a
+  trailing comma at the end of a list that can fit on a single line, the list
+  will be split on multiple lines:
+
+  ```gleam
+  pub fn my_favourite_pokemon() -> List(String) {
+    ["natu", "chimecho", "milotic",]
+  }
+  ```
+
+  Will be formatted as:
+
+  ```gleam
+  pub fn my_favourite_pokemon() -> List(String) {
+    [
+      "natu",
+      "chimecho",
+      "milotic",
+    ]
+  }
+  ```
+
+  By removing the trailing comma, the formatter will try and fit the list on a
+  single line again:
+
+  ```gleam
+  pub fn my_favourite_pokemon() -> List(String) {
+    [
+      "natu",
+      "chimecho",
+      "milotic"
+    ]
+  }
+  ```
+
+  Will be formatted back to a single line:
+
+  ```gleam
+  pub fn my_favourite_pokemon() -> List(String) {
+    ["natu", "chimecho", "milotic"]
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The formatter now allows more control over how lists are formatted.
+  If a list is split with multiple elements on the same line, removing the
+  trailing comma will make sure the formatter keeps each item on its own line:
+
+  ```gleam
+  pub fn my_favourite_pokemon() -> List(String) {
+    [
+      "This list was formatted", "keeping multiple elements on the same line",
+      "notice how the formatting changes by removing the trailing comma ->"
+    ]
+  }
+  ```
+
+  Is formatted as:
+
+  ```gleam
+  pub fn my_favourite_pokemon() -> List(String) {
+    [
+      "This list was formatted",
+      "keeping multiple elements on the same line",
+      "notice how the formatting changes by removing the trailing comma ->",
+    ]
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The formatter no longer removes empty lines between list items. In case an
+  empty line is added between list items they will all be split on multiple
+  lines. For example:
+
+  ```gleam
+  pub fn main() {
+    [
+      "natu", "xatu",
+
+      "chimeco"
+    ]
+  }
+  ```
+
+  Is formatted as:
+
+  ```gleam
+  pub fn main() {
+    [
+      "natu",
+      "xatu",
+
+      "chimeco",
+    ]
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Compiler
 
 - Generated JavaScript functions, constants, and custom type constructors now
@@ -105,6 +208,36 @@
   ([Carl Bordum Hansen](https://github.com/carlbordum)) and
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The error message one gets when calling a function with the wrong number of
+  arguments has been improved and now only suggests the relevant missing labels.
+  For example, this piece of code:
+
+  ```gleam
+  pub type Pokemon {
+    Pokemon(id: Int, name: String, moves: List(String))
+  }
+
+  pub fn best_pokemon() {
+    Pokemon(198, name: "murkrow")
+  }
+  ```
+
+  Would result in the following error, suggesting the missing labels:
+
+  ```txt
+  error: Incorrect arity
+    ┌─ /src/main.gleam:6:3
+    │
+  6 │   Pokemon(198, name: "murkrow")
+    │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected 3 arguments, got 2
+
+  This call accepts these additional labelled arguments:
+
+    - moves
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Build tool
 
 - `gleam update`, `gleam deps update`, and `gleam deps download` will now print
@@ -125,7 +258,7 @@
 
 - Docs generator now strips trailing slashes from Gitea/Forgejo hosts so
   sidebar "Repository" and "View Source" links never include `//`, and
-  single-line “View Source” anchors emit `#Lx` instead of `#Lx-x`.
+  single-line "View Source" anchors emit `#Lx` instead of `#Lx-x`.
   ([Aayush Tripathi](https://github.com/aayush-tripathi))
 
 ### Language server
@@ -152,6 +285,10 @@
 
 - Fixed a bug where the language server would generate invalid code when the
   "Extract variable" code action was used on a `use` expression.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the compiler would crash when using the `utf8_codepoint`
+  bit array segment on the JavaScript target.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.11.1 - 2025-06-05

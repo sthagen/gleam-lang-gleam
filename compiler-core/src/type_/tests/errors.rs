@@ -1,5 +1,6 @@
 use crate::{
-    assert_error, assert_internal_module_error, assert_module_error, assert_module_syntax_error,
+    assert_error, assert_internal_module_error, assert_js_module_error, assert_module_error,
+    assert_module_syntax_error,
 };
 
 #[test]
@@ -3204,6 +3205,65 @@ pub fn main() {
   case todo {
     Pokemon(name:) -> todo
   }
+}
+"
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/3884
+#[test]
+fn show_only_missing_labels() {
+    assert_module_error!(
+        "
+fn wibble(a a: Int, b b: Float, c c: String) {
+    todo
+}
+
+pub fn wobble() {
+    wibble(1, 2.0)
+}
+"
+    );
+}
+#[test]
+fn native_endianness_javascript_target() {
+    assert_js_module_error!(
+        "
+pub fn main() {
+  let assert <<a:native>> = <<10>>
+}
+"
+    );
+}
+
+#[test]
+fn utf8_codepoint_javascript_target() {
+    assert_js_module_error!(
+        "
+pub fn main() {
+  let assert <<a:utf8_codepoint>> = <<10>>
+}
+"
+    );
+}
+
+#[test]
+fn utf16_codepoint_javascript_target() {
+    assert_js_module_error!(
+        "
+pub fn main() {
+  let assert <<a:utf16_codepoint>> = <<10>>
+}
+"
+    );
+}
+
+#[test]
+fn utf32_codepoint_javascript_target() {
+    assert_js_module_error!(
+        "
+pub fn main() {
+  let assert <<a:utf32_codepoint>> = <<10>>
 }
 "
     );
