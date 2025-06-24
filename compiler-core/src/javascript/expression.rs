@@ -312,11 +312,11 @@ impl<'module, 'a> Generator<'module, 'a> {
 
             TypedExpr::RecordAccess { record, label, .. } => self.record_access(record, label),
             TypedExpr::RecordUpdate {
-                record,
+                record_assignment,
                 constructor,
                 args,
                 ..
-            } => self.record_update(record, constructor, args),
+            } => self.record_update(record_assignment, constructor, args),
 
             TypedExpr::Var {
                 name, constructor, ..
@@ -621,7 +621,11 @@ impl<'module, 'a> Generator<'module, 'a> {
                 | TypedExpr::Todo { .. }
                 | TypedExpr::Case { .. }
                 | TypedExpr::Pipeline { .. }
-                | TypedExpr::RecordUpdate { .. },
+                | TypedExpr::RecordUpdate {
+                    // Record updates that assign a variable generate multiple statements
+                    record_assignment: Some(_),
+                    ..
+                },
                 Position::NotTail(Ordering::Loose),
             ) => self.wrap_block(|this| this.expression(expression)),
             (
@@ -629,7 +633,11 @@ impl<'module, 'a> Generator<'module, 'a> {
                 | TypedExpr::Todo { .. }
                 | TypedExpr::Case { .. }
                 | TypedExpr::Pipeline { .. }
-                | TypedExpr::RecordUpdate { .. },
+                | TypedExpr::RecordUpdate {
+                    // Record updates that assign a variable generate multiple statements
+                    record_assignment: Some(_),
+                    ..
+                },
                 Position::NotTail(Ordering::Strict),
             ) => self.immediately_invoked_function_expression(expression, |this, expr| {
                 this.expression(expr)
@@ -1443,15 +1451,18 @@ impl<'module, 'a> Generator<'module, 'a> {
 
     fn record_update(
         &mut self,
-        record: &'a TypedAssignment,
+        record: &'a Option<Box<TypedAssignment>>,
         constructor: &'a TypedExpr,
         args: &'a [TypedCallArg],
     ) -> Output<'a> {
-        Ok(docvec![
-            self.not_in_tail_position(None, |this| this.assignment(record))?,
-            line(),
-            self.call(constructor, args)?,
-        ])
+        match record.as_ref() {
+            Some(record) => Ok(docvec![
+                self.not_in_tail_position(None, |this| this.assignment(record))?,
+                line(),
+                self.call(constructor, args)?,
+            ]),
+            None => self.call(constructor, args),
+        }
     }
 
     fn tuple_index(&mut self, tuple: &'a TypedExpr, index: u64) -> Output<'a> {

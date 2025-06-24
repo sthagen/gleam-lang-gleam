@@ -1291,6 +1291,13 @@ impl BinOp {
         }
     }
 
+    fn is_bool_operator(&self) -> bool {
+        match self {
+            BinOp::And | BinOp::Or => true,
+            _ => false,
+        }
+    }
+
     pub(crate) fn is_int_operator(&self) -> bool {
         match self {
             BinOp::LtInt
@@ -2981,6 +2988,18 @@ impl TypedUse {
             }
         }
         self.call.find_node(byte_index)
+    }
+
+    pub fn callback_arguments(&self) -> Option<&Vec<TypedArg>> {
+        let TypedExpr::Call { args, .. } = self.call.as_ref() else {
+            return None;
+        };
+        let callback = args.iter().last()?;
+        let TypedExpr::Fn { args, .. } = &callback.value else {
+            // The expression might be invalid so we have to return a None here
+            return None;
+        };
+        Some(args)
     }
 }
 

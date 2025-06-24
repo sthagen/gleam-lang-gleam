@@ -164,7 +164,9 @@ pub enum TypedExpr {
     RecordUpdate {
         location: SrcSpan,
         type_: Arc<Type>,
-        record: Box<TypedAssignment>,
+        /// If the record is an expression that is not a variable we will need to assign to a
+        /// variable so it can be referred multiple times.
+        record_assignment: Option<Box<TypedAssignment>>,
         constructor: Box<Self>,
         args: Vec<CallArg<Self>>,
     },
@@ -371,7 +373,7 @@ impl TypedExpr {
                 .or_else(|| self.self_if_contains_location(byte_index)),
 
             Self::RecordUpdate {
-                record,
+                record_assignment,
                 constructor,
                 args,
                 ..
@@ -379,7 +381,11 @@ impl TypedExpr {
                 .iter()
                 .filter(|arg| arg.implicit.is_none())
                 .find_map(|arg| arg.find_node(byte_index, constructor, args))
-                .or_else(|| record.find_node(byte_index))
+                .or_else(|| {
+                    record_assignment
+                        .as_ref()
+                        .and_then(|r| r.find_node(byte_index))
+                })
                 .or_else(|| self.self_if_contains_location(byte_index)),
         }
     }
@@ -509,11 +515,19 @@ impl TypedExpr {
                 .iter()
                 .find_map(|arg| arg.value.find_statement(byte_index)),
 
-            Self::RecordUpdate { record, args, .. } => args
+            Self::RecordUpdate {
+                record_assignment,
+                args,
+                ..
+            } => args
                 .iter()
                 .filter(|arg| arg.implicit.is_none())
                 .find_map(|arg| arg.find_statement(byte_index))
-                .or_else(|| record.value.find_statement(byte_index)),
+                .or_else(|| {
+                    record_assignment
+                        .as_ref()
+                        .and_then(|r| r.value.find_statement(byte_index))
+                }),
         }
     }
 
@@ -676,8 +690,7 @@ impl TypedExpr {
 
             // Calls are literals if they are records and all the arguemnts are also literals.
             Self::Call { fun, args, .. } => {
-                fun.is_record_constructor()
-                    && args.iter().all(|argument| argument.value.is_literal())
+                fun.is_record_builder() && args.iter().all(|argument| argument.value.is_literal())
             }
 
             // Variables are literals if they are record constructors that take no arguments.
@@ -694,14 +707,12 @@ impl TypedExpr {
         }
     }
 
-    pub fn is_known_value(&self) -> bool {
+    pub fn is_known_bool(&self) -> bool {
         match self {
-            TypedExpr::BinOp { left, right, .. } => left.is_known_value() && right.is_known_value(),
-
-            TypedExpr::NegateBool { value, .. } | TypedExpr::NegateInt { value, .. } => {
-                value.is_known_value()
-            }
-
+            TypedExpr::BinOp {
+                left, right, name, ..
+            } if name.is_bool_operator() => left.is_known_bool() && right.is_known_bool(),
+            TypedExpr::NegateBool { value, .. } => value.is_known_bool(),
             _ => self.is_literal(),
         }
     }
@@ -915,21 +926,9 @@ impl TypedExpr {
     }
 
     #[must_use]
-    pub fn is_record_constructor(&self) -> bool {
-        match self {
-            TypedExpr::Var {
-                constructor:
-                    ValueConstructor {
-                        variant: ValueConstructorVariant::Record { .. },
-                        ..
-                    },
-                ..
-            } => true,
-            _ => false,
-        }
-    }
-
-    #[must_use]
+    /// Returns true if the value is a literal record builder like
+    /// `Wibble(1, 2)`, `module.Wobble("a")`
+    ///
     pub fn is_record_builder(&self) -> bool {
         match self {
             TypedExpr::Call { fun, .. } => fun.is_record_builder(),
@@ -939,6 +938,28 @@ impl TypedExpr {
                 ..
             } => true,
             _ => false,
+        }
+    }
+
+    /// If the given expression is a literal record builder, this will return
+    /// index of the variant being built.
+    ///
+    pub fn variant_index(&self) -> Option<u16> {
+        match self {
+            TypedExpr::Call { fun, .. } => fun.variant_index(),
+            TypedExpr::Var {
+                constructor:
+                    ValueConstructor {
+                        variant: ValueConstructorVariant::Record { variant_index, .. },
+                        ..
+                    },
+                ..
+            }
+            | TypedExpr::ModuleSelect {
+                constructor: ModuleValueConstructor::Record { variant_index, .. },
+                ..
+            } => Some(*variant_index),
+            _ => None,
         }
     }
 

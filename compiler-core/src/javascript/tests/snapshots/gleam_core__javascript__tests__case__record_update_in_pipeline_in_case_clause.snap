@@ -43,18 +43,12 @@ function identity(x) {
 export function go(x) {
   let $ = x.wibble;
   if ($ === 1) {
-    let _block;
-    let _record = x;
-    _block = new Wibble(4, _record.wobble);
-    let _pipe = _block;
+    let _pipe = new Wibble(4, x.wobble);
     return identity(_pipe);
   } else {
     let $1 = x.wobble;
     if ($1 === 3) {
-      let _block;
-      let _record = x;
-      _block = new Wibble(_record.wibble, 10);
-      let _pipe = _block;
+      let _pipe = new Wibble(x.wibble, 10);
       return identity(_pipe);
     } else {
       throw makeError(

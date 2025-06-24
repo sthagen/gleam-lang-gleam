@@ -1948,19 +1948,22 @@ fn docs_args_call<'a>(
 }
 
 fn record_update<'a>(
-    record: &'a TypedAssignment,
+    record: &'a Option<Box<TypedAssignment>>,
     constructor: &'a TypedExpr,
     args: &'a [TypedCallArg],
     env: &mut Env<'a>,
 ) -> Document<'a> {
     let vars = env.current_scope_vars.clone();
 
-    let document = docvec![
-        assignment(record, env, Position::NotTail),
-        ",",
-        line(),
-        call(constructor, args, env)
-    ];
+    let document = match record.as_ref() {
+        Some(record) => docvec![
+            assignment(record, env, Position::NotTail),
+            ",",
+            line(),
+            call(constructor, args, env)
+        ],
+        None => call(constructor, args, env),
+    };
 
     env.current_scope_vars = vars;
 
@@ -1983,7 +1986,12 @@ fn maybe_block_expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Documen
 
 fn needs_begin_end_wrapping(expression: &TypedExpr) -> bool {
     match expression {
-        TypedExpr::RecordUpdate { .. } | TypedExpr::Pipeline { .. } => true,
+        // Record updates are 1 expression if there's no assignment, multiple otherwise.
+        TypedExpr::RecordUpdate {
+            record_assignment, ..
+        } => record_assignment.is_some(),
+
+        TypedExpr::Pipeline { .. } => true,
 
         TypedExpr::Int { .. }
         | TypedExpr::Float { .. }
@@ -2155,11 +2163,11 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
         TypedExpr::RecordAccess { record, index, .. } => tuple_index(record, index + 1, env),
 
         TypedExpr::RecordUpdate {
-            record,
+            record_assignment,
             constructor,
             args,
             ..
-        } => record_update(record, constructor, args, env),
+        } => record_update(record_assignment, constructor, args, env),
 
         TypedExpr::Case {
             subjects, clauses, ..
