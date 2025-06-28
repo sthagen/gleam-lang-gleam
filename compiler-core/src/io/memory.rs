@@ -291,8 +291,8 @@ impl FileSystemReader for InMemoryFileSystem {
             self.files
                 .deref()
                 .borrow()
-                .iter()
-                .map(|(file_path, _)| file_path.to_path_buf())
+                .keys()
+                .map(|file_path| file_path.to_path_buf())
                 .filter(|file_path| file_path.parent().is_some_and(|parent| path == parent))
                 .map(DirEntry::from_pathbuf)
                 .map(Ok),
