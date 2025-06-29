@@ -252,6 +252,10 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The "generate function" and "generate variant" code actions are now quickfixes,
+  allowing them to be more easily applied to code which is producing an error.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Formatter
 
 - The formatter now allows more control over how lists are split. By adding a
@@ -384,6 +388,10 @@
 - Fixed a bug where `==` and `!=` would return incorrect output for some
   JavaScript objects.
   ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where specific combinations of options in bit array segments would
+  not be allowed on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.11.1 - 2025-06-05
 
