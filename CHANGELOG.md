@@ -219,6 +219,10 @@
   single-line "View Source" anchors emit `#Lx` instead of `#Lx-x`.
   ([Aayush Tripathi](https://github.com/aayush-tripathi))
 
+- The build tool can now compile packages that will have already booted the
+  Erlang compiler application instead of failing.
+  ([Louis Pilfold](https://github.com/lpil))
+
 ### Language server
 
 - It is now possible to use the "Pattern match on variable" code action on
@@ -391,6 +395,10 @@
 
 - Fixed a bug where specific combinations of options in bit array segments would
   not be allowed on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where invalid code would be generated for `let assert` in some
+  cases on the JavaScript target.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.11.1 - 2025-06-05
