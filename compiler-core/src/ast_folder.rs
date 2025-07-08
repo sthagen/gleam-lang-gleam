@@ -5,10 +5,10 @@ use vec1::Vec1;
 use crate::{
     analyse::Inferred,
     ast::{
-        Assert, AssignName, Assignment, BinOp, CallArg, Constant, Definition, FunctionLiteralKind,
-        Pattern, RecordBeingUpdated, SrcSpan, Statement, TargetedDefinition, TodoKind, TypeAst,
-        TypeAstConstructor, TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, UntypedArg,
-        UntypedAssert, UntypedAssignment, UntypedClause, UntypedConstant,
+        Assert, AssignName, Assignment, BinOp, BitArraySize, CallArg, Constant, Definition,
+        FunctionLiteralKind, Pattern, RecordBeingUpdated, SrcSpan, Statement, TargetedDefinition,
+        TodoKind, TypeAst, TypeAstConstructor, TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar,
+        UntypedArg, UntypedAssert, UntypedAssignment, UntypedClause, UntypedConstant,
         UntypedConstantBitArraySegment, UntypedCustomType, UntypedDefinition, UntypedExpr,
         UntypedExprBitArraySegment, UntypedFunction, UntypedImport, UntypedModule,
         UntypedModuleConstant, UntypedPattern, UntypedPatternBitArraySegment,
@@ -330,8 +330,10 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
 
             UntypedExpr::Echo {
                 location,
+                keyword_end,
                 expression,
-            } => self.fold_echo(location, expression),
+                message,
+            } => self.fold_echo(location, keyword_end, expression, message),
 
             UntypedExpr::Panic { location, message } => self.fold_panic(location, message),
 
@@ -381,9 +383,13 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
             UntypedExpr::Echo {
                 location,
                 expression,
+                keyword_end,
+                message,
             } => UntypedExpr::Echo {
                 location,
+                keyword_end,
                 expression: expression.map(|expression| Box::new(self.fold_expr(*expression))),
+                message: message.map(|message| Box::new(self.fold_expr(*message))),
             },
 
             UntypedExpr::Block {
@@ -854,11 +860,15 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
     fn fold_echo(
         &mut self,
         location: SrcSpan,
+        keyword_end: u32,
         expression: Option<Box<UntypedExpr>>,
+        message: Option<Box<UntypedExpr>>,
     ) -> UntypedExpr {
         UntypedExpr::Echo {
             location,
+            keyword_end,
             expression,
+            message,
         }
     }
 
@@ -1193,12 +1203,7 @@ pub trait PatternFolder {
                 origin,
             } => self.fold_pattern_var(location, name, origin),
 
-            Pattern::VarUsage {
-                location,
-                name,
-                constructor: _,
-                type_: (),
-            } => self.fold_pattern_var_usage(location, name),
+            Pattern::BitArraySize(size) => self.fold_pattern_bit_array_size(size),
 
             Pattern::Assign {
                 name,
@@ -1298,8 +1303,57 @@ pub trait PatternFolder {
         }
     }
 
-    fn fold_pattern_var_usage(&mut self, location: SrcSpan, name: EcoString) -> UntypedPattern {
-        Pattern::VarUsage {
+    fn fold_pattern_bit_array_size(&mut self, size: BitArraySize<()>) -> UntypedPattern {
+        Pattern::BitArraySize(self.fold_bit_array_size(size))
+    }
+
+    fn fold_bit_array_size(&mut self, size: BitArraySize<()>) -> BitArraySize<()> {
+        match size {
+            BitArraySize::Int {
+                location,
+                value,
+                int_value,
+            } => self.fold_bit_array_size_int(location, value, int_value),
+            BitArraySize::Variable { location, name, .. } => {
+                self.fold_bit_array_size_variable(location, name)
+            }
+            BitArraySize::BinaryOperator {
+                location,
+                operator,
+                left,
+                right,
+            } => BitArraySize::BinaryOperator {
+                location,
+                operator,
+                left: Box::new(self.fold_bit_array_size(*left)),
+                right: Box::new(self.fold_bit_array_size(*right)),
+            },
+            BitArraySize::Block { location, inner } => BitArraySize::Block {
+                location,
+                inner: Box::new(self.fold_bit_array_size(*inner)),
+            },
+        }
+    }
+
+    fn fold_bit_array_size_int(
+        &mut self,
+        location: SrcSpan,
+        value: EcoString,
+        int_value: BigInt,
+    ) -> BitArraySize<()> {
+        BitArraySize::Int {
+            location,
+            value,
+            int_value,
+        }
+    }
+
+    fn fold_bit_array_size_variable(
+        &mut self,
+        location: SrcSpan,
+        name: EcoString,
+    ) -> BitArraySize<()> {
+        BitArraySize::Variable {
             location,
             name,
             constructor: None,
@@ -1413,7 +1467,7 @@ pub trait PatternFolder {
             | Pattern::Float { .. }
             | Pattern::String { .. }
             | Pattern::Discard { .. }
-            | Pattern::VarUsage { .. }
+            | Pattern::BitArraySize { .. }
             | Pattern::StringPrefix { .. }
             | Pattern::Invalid { .. } => pattern,
 

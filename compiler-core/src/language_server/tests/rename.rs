@@ -1350,3 +1350,161 @@ pub fn main() {
         find_position_of("second =")
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/4748
+#[test]
+fn rename_alternative_pattern() {
+    assert_rename!(
+        "
+pub fn main(x) {
+  case x {
+    #(wibble, [wobble]) | #(wobble, [wibble, _]) | #(_, [wibble, wobble, ..]) ->
+      wibble + wobble
+    _ -> 0
+  }
+}
+",
+        "new_name",
+        find_position_of("wibble")
+    );
+}
+
+#[test]
+fn rename_alternative_pattern_from_usage() {
+    assert_rename!(
+        "
+pub fn main(x) {
+  case x {
+    #(wibble, [wobble]) | #(wobble, [wibble, _]) | #(_, [wibble, wobble, ..]) ->
+      wibble + wobble
+    _ -> 0
+  }
+}
+",
+        "new_name",
+        find_position_of("wibble +")
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/4605
+#[test]
+fn rename_prelude_value() {
+    assert_rename!(
+        "
+pub fn main() {
+  Ok(10)
+}
+",
+        "Success",
+        find_position_of("Ok")
+    );
+}
+#[test]
+fn rename_prelude_type() {
+    assert_rename!(
+        "
+pub fn main() -> Result(Int, Nil) {
+  Ok(10)
+}
+",
+        "SuccessOrFailure",
+        find_position_of("Result")
+    );
+}
+
+#[test]
+fn rename_variable_with_alternative_pattern_with_same_name() {
+    assert_rename!(
+        "
+pub fn main(x) {
+  let some_var = 10
+
+  case x {
+    #(some_var, []) | #(_, [some_var]) ->
+      some_var
+    _ -> 0
+  }
+
+  some_var
+}
+",
+        "new_name",
+        find_position_of("some_var")
+    );
+}
+
+#[test]
+fn rename_prelude_value_with_prelude_already_imported() {
+    assert_rename!(
+        "
+import gleam
+
+pub fn main() {
+  Ok(gleam.Error(10))
+}
+",
+        "Success",
+        find_position_of("Ok")
+    );
+}
+
+#[test]
+fn rename_prelude_value_with_prelude_import_with_empty_braces() {
+    assert_rename!(
+        "
+import gleam.{}
+
+pub fn main() {
+  Ok(gleam.Error(10))
+}
+",
+        "Success",
+        find_position_of("Ok")
+    );
+}
+
+#[test]
+fn rename_prelude_value_with_other_prelude_value_imported() {
+    assert_rename!(
+        "
+import gleam.{Error}
+
+pub fn main() {
+  Ok(Error(10))
+}
+",
+        "Success",
+        find_position_of("Ok")
+    );
+}
+
+#[test]
+fn rename_prelude_type_with_prelude_value_imported_with_trailing_comma() {
+    assert_rename!(
+        "
+import gleam.{Error,}
+
+pub fn main() -> Result(Int, Nil) {
+  Error(10)
+}
+",
+        "OkOrError",
+        find_position_of("Result")
+    );
+}
+
+#[test]
+fn rename_prelude_value_with_other_module_imported() {
+    assert_rename!(
+        ("something", "pub type Something"),
+        "
+import something
+
+pub fn main() {
+  Ok(10)
+}
+",
+        "Success",
+        find_position_of("Ok")
+    );
+}

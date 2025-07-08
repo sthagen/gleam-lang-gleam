@@ -993,8 +993,8 @@ impl<'generator, 'module, 'a> Variables<'generator, 'module, 'a> {
                     }
                 }
 
-                BitArrayTest::VariableIsNotNegative { variable } => {
-                    docvec![self.local_var(variable.name()), " >= 0"]
+                BitArrayTest::ReadSizeIsNotNegative { size } => {
+                    docvec![self.read_size_to_doc(size), " >= 0"]
                 }
 
                 BitArrayTest::SegmentIsFiniteFloat {
@@ -1074,7 +1074,7 @@ impl<'generator, 'module, 'a> Variables<'generator, 'module, 'a> {
             }
 
             RuntimeCheck::Variant { match_, index, .. } => {
-                if variable.type_.is_result() {
+                if variable.type_.is_result() && match_.module().is_none() {
                     if *index == 0 {
                         self.expression_generator.tracker.ok_used = true;
                     } else {
@@ -1204,6 +1204,24 @@ impl<'generator, 'module, 'a> Variables<'generator, 'module, 'a> {
             pieces.push(variable.to_doc())
         }
 
+        for calculation in offset.calculations.iter() {
+            let left = self.offset_to_doc(&calculation.left, true);
+            let right = self.offset_to_doc(&calculation.right, true);
+
+            let calculation = self.expression_generator.bin_op_with_doc_operands(
+                calculation.operator.to_bin_op(),
+                left,
+                right,
+                &crate::type_::int(),
+            );
+
+            if parenthesise {
+                pieces.push(calculation.surround("(", ")"))
+            } else {
+                pieces.push(calculation)
+            }
+        }
+
         if pieces.len() > 1 && parenthesise {
             docvec!["(", join(pieces, " + ".to_doc()), ")"]
         } else {
@@ -1222,10 +1240,43 @@ impl<'generator, 'module, 'a> Variables<'generator, 'module, 'a> {
                 Some(if *unit == 1 {
                     variable.to_doc()
                 } else {
-                    docvec![variable, " * ", unit]
+                    docvec![variable, " * ", *unit as i64]
                 })
             }
             ReadSize::RemainingBits | ReadSize::RemainingBytes => None,
+
+            ReadSize::BinaryOperator {
+                left,
+                right,
+                operator,
+            } => {
+                let left = if self.read_size_must_be_wrapped(left) {
+                    self.read_size_to_doc(left)?.surround("(", ")")
+                } else {
+                    self.read_size_to_doc(left)?
+                };
+                let right = if self.read_size_must_be_wrapped(right) {
+                    self.read_size_to_doc(right)?.surround("(", ")")
+                } else {
+                    self.read_size_to_doc(right)?
+                };
+
+                Some(self.expression_generator.bin_op_with_doc_operands(
+                    operator.to_bin_op(),
+                    left,
+                    right,
+                    &crate::type_::int(),
+                ))
+            }
+        }
+    }
+
+    fn read_size_must_be_wrapped(&self, size: &ReadSize) -> bool {
+        match size {
+            ReadSize::ConstantBits(_) | ReadSize::RemainingBits | ReadSize::RemainingBytes => false,
+
+            ReadSize::VariableBits { unit, .. } => *unit != 1,
+            ReadSize::BinaryOperator { .. } => true,
         }
     }
 

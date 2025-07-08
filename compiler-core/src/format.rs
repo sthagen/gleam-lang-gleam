@@ -941,14 +941,7 @@ impl<'comments> Formatter<'comments> {
 
         let (keyword, message) = match kind {
             AssignmentKind::Let | AssignmentKind::Generated => ("let ", None),
-            AssignmentKind::Assert { message, .. } => (
-                "let assert ",
-                message.as_ref().map(|message| {
-                    break_("", " ")
-                        .nest(INDENT)
-                        .append("as ".to_doc().append(self.expr(message).group()))
-                }),
-            ),
+            AssignmentKind::Assert { message, .. } => ("let assert ", message.as_ref()),
         };
 
         let pattern = self.pattern(pattern);
@@ -961,9 +954,9 @@ impl<'comments> Formatter<'comments> {
             .to_doc()
             .append(pattern.append(annotation).group())
             .append(" =")
-            .append(self.assigned_value(value))
-            .append(message);
-        commented(doc, comments)
+            .append(self.assigned_value(value));
+
+        commented(self.append_as_message(doc, message), comments)
     }
 
     fn expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
@@ -972,22 +965,24 @@ impl<'comments> Formatter<'comments> {
         let document = match expr {
             UntypedExpr::Placeholder { .. } => panic!("Placeholders should not be formatted"),
 
+            UntypedExpr::Panic { message: None, .. } => "panic".to_doc(),
             UntypedExpr::Panic {
-                message: Some(m), ..
-            } => docvec!["panic as ", self.expr(m)],
-
-            UntypedExpr::Panic { .. } => "panic".to_doc(),
+                message: Some(message),
+                ..
+            } => docvec!["panic as ", self.expr(message)],
 
             UntypedExpr::Todo { message: None, .. } => "todo".to_doc(),
-
             UntypedExpr::Todo {
-                message: Some(l), ..
-            } => docvec!["todo as ", self.expr(l)],
+                message: Some(message),
+                ..
+            } => docvec!["todo as ", self.expr(message)],
 
             UntypedExpr::Echo {
                 expression,
                 location: _,
-            } => self.echo(expression),
+                keyword_end: _,
+                message,
+            } => self.echo(expression, message),
 
             UntypedExpr::PipeLine { expressions, .. } => self.pipeline(expressions, false),
 
@@ -2231,7 +2226,7 @@ impl<'comments> Formatter<'comments> {
 
             Pattern::Variable { name, .. } => name.to_doc(),
 
-            Pattern::VarUsage { name, .. } => name.to_doc(),
+            Pattern::BitArraySize(size) => self.bit_array_size(size),
 
             Pattern::Assign { name, pattern, .. } => {
                 self.pattern(pattern).append(" as ").append(name.as_str())
@@ -2293,6 +2288,34 @@ impl<'comments> Formatter<'comments> {
             Pattern::Invalid { .. } => panic!("invalid patterns can not be in an untyped ast"),
         };
         commented(doc, comments)
+    }
+
+    fn bit_array_size<'a>(&mut self, size: &'a BitArraySize<()>) -> Document<'a> {
+        match size {
+            BitArraySize::Int { value, .. } => self.int(value),
+            BitArraySize::Variable { name, .. } => name.to_doc(),
+            BitArraySize::BinaryOperator {
+                left,
+                right,
+                operator,
+                ..
+            } => {
+                let operator = match operator {
+                    IntOperator::Add => " + ",
+                    IntOperator::Subtract => " - ",
+                    IntOperator::Multiply => " * ",
+                    IntOperator::Divide => " / ",
+                    IntOperator::Remainder => " % ",
+                };
+
+                docvec![
+                    self.bit_array_size(left),
+                    operator,
+                    self.bit_array_size(right)
+                ]
+            }
+            BitArraySize::Block { inner, .. } => self.bit_array_size(inner).surround("{ ", " }"),
+        }
     }
 
     fn list_pattern<'a>(
@@ -2526,22 +2549,14 @@ impl<'comments> Formatter<'comments> {
     }
 
     fn assert<'a>(&mut self, assert: &'a UntypedAssert) -> Document<'a> {
-        let comments = self.pop_comments(assert.location.start);
-
-        let message = assert.message.as_ref().map(|message| {
-            break_("", " ")
-                .nest(INDENT)
-                .append("as ".to_doc().append(self.expr(message).group()))
-        });
-
         let expression = if assert.value.is_binop() || assert.value.is_pipeline() {
             self.expr(&assert.value).nest(INDENT)
         } else {
             self.expr(&assert.value)
         };
 
-        let document = docvec!["assert ", expression, message];
-        commented(document, comments)
+        let doc = self.append_as_message(expression, assert.message.as_ref());
+        docvec!["assert ", doc]
     }
 
     fn bit_array<'a>(
@@ -2820,9 +2835,29 @@ impl<'comments> Formatter<'comments> {
         Some(doc.force_break())
     }
 
-    fn echo<'a>(&mut self, expression: &'a Option<Box<UntypedExpr>>) -> Document<'a> {
+    fn append_as_message<'a>(
+        &mut self,
+        doc: Document<'a>,
+        message: Option<&'a UntypedExpr>,
+    ) -> Document<'a> {
+        let Some(message) = message else { return doc };
+
+        docvec![
+            doc.group(),
+            break_("", " ").nest(INDENT),
+            "as ",
+            self.expr(message).group().nest(INDENT)
+        ]
+        .group()
+    }
+
+    fn echo<'a>(
+        &mut self,
+        expression: &'a Option<Box<UntypedExpr>>,
+        message: &'a Option<Box<UntypedExpr>>,
+    ) -> Document<'a> {
         let Some(expression) = expression else {
-            return "echo".to_doc();
+            return self.append_as_message("echo".to_doc(), message.as_deref());
         };
 
         // When a binary expression gets broken on multiple lines we don't want
@@ -2844,10 +2879,12 @@ impl<'comments> Formatter<'comments> {
         // |> wibble
         // ```
         //
+        let doc = self.expr(expression);
         if expression.is_binop() || expression.is_pipeline() {
-            docvec!["echo ", self.expr(expression).nest(INDENT)]
+            let doc = self.append_as_message(doc.nest(INDENT), message.as_deref());
+            docvec!["echo ", doc]
         } else {
-            docvec!["echo ", self.expr(expression)]
+            docvec!["echo ", self.append_as_message(doc, message.as_deref())]
         }
     }
 }

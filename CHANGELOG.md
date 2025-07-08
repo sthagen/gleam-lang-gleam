@@ -4,6 +4,24 @@
 
 ### Compiler
 
+- It is now possible to add a custom message to be printed by `echo`, making it
+  easier to include additional context to be printed at runtime:
+
+  ```gleam
+  pub fn main() {
+    echo 11 as "lucky number"
+  }
+  ```
+
+  Will output to stderr:
+
+  ```txt
+  /src/module.gleam:2 lucky number
+  11
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Generated JavaScript functions, constants, and custom type constructors now
   include any doc comment as a JSDoc comment, making it easier to use the
   generated code and browse its documentation from JavaScript.
@@ -184,7 +202,6 @@
       ).
   ```
 
-
   Now this code will be generated instead:
 
   ```erlang
@@ -195,6 +212,19 @@
   ```
 
   ([Louis Pilfold](https://github.com/lpil))
+
+- The compiler now allows using bit array options to specify endianness when
+  construction or pattern matching on bit arrays.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Calculations are now allowed in the size options of bit array patterns. For
+  example, the following code is now valid:
+
+  ```gleam
+  let assert <<size, data:bytes-size(size / 8 - 1)>> = some_bit_array
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Build tool
 
@@ -222,6 +252,38 @@
 - The build tool can now compile packages that will have already booted the
   Erlang compiler application instead of failing.
   ([Louis Pilfold](https://github.com/lpil))
+
+- The build tool now also supports `.cjs` files placed in the `src`, `dev` or
+  `test` directories.
+
+  ([yoshi](https://github.com/yoshi-monster))
+
+- The build tool now produces better error messages when version resolution
+  fails. For example:
+
+  ```
+  $ gleam add wisp@1
+  Resolving versions
+  error: Dependency resolution failed
+
+  An error occurred while determining what dependency packages and
+  versions should be downloaded.
+  The error from the version resolver library was:
+
+  There's no compatible version of `gleam_otp`:
+    - You require wisp >= 1.0.0 and < 2.0.0
+      - wisp requires mist >= 1.2.0 and < 5.0.0
+      - mist requires gleam_otp >= 0.9.0 and < 1.0.0
+    - You require lustre >= 5.2.1 and < 6.0.0
+      - lustre requires gleam_otp >= 1.0.0 and < 2.0.0
+
+  There's no compatible version of `gleam_json`:
+    - You require wisp >= 1.0.0 and < 2.0.0
+      - wisp requires gleam_json >= 3.0.0 and < 4.0.0
+    - You require gleam_json >= 2.3.0 and < 3.0.0
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Language server
 
@@ -400,6 +462,26 @@
 - Fixed a bug where invalid code would be generated for `let assert` in some
   cases on the JavaScript target.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where using the prelude `Ok` and `Error` values in a qualified
+  fashion could cause a conflict with user-defined `Ok` and `Error` values when
+  generating code on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the "Import module" code action would suggest importing
+  internal modules from other packages.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the language server would not rename variables defined in
+  alternative patterns.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where trying to rename a type or value from the Gleam prelude would
+  result in invalid code.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the generated documentation would not be formatted properly.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ## v1.11.1 - 2025-06-05
 

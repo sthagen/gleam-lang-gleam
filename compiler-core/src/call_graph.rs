@@ -7,9 +7,9 @@ mod into_dependency_order_tests;
 use crate::{
     Result,
     ast::{
-        AssignName, AssignmentKind, BitArrayOption, ClauseGuard, Constant, Pattern, SrcSpan,
-        Statement, UntypedClauseGuard, UntypedExpr, UntypedFunction, UntypedModuleConstant,
-        UntypedPattern, UntypedStatement,
+        AssignName, AssignmentKind, BitArrayOption, BitArraySize, ClauseGuard, Constant, Pattern,
+        SrcSpan, Statement, UntypedClauseGuard, UntypedExpr, UntypedFunction,
+        UntypedModuleConstant, UntypedPattern, UntypedStatement,
     },
     type_::Error,
 };
@@ -197,9 +197,14 @@ impl<'a> CallGraphBuilder<'a> {
             UntypedExpr::Echo {
                 expression,
                 location: _,
+                keyword_end: _,
+                message,
             } => {
                 if let Some(expression) = expression {
                     self.expression(expression);
+                }
+                if let Some(message) = message {
+                    self.expression(message);
                 }
             }
 
@@ -354,8 +359,8 @@ impl<'a> CallGraphBuilder<'a> {
                 }
             }
 
-            Pattern::VarUsage { name, .. } => {
-                self.referenced(name);
+            Pattern::BitArraySize(size) => {
+                self.bit_array_size(size);
             }
 
             Pattern::Assign { name, pattern, .. } => {
@@ -377,6 +382,18 @@ impl<'a> CallGraphBuilder<'a> {
                     self.pattern(&segment.value);
                 }
             }
+        }
+    }
+
+    fn bit_array_size(&mut self, size: &'a BitArraySize<()>) {
+        match size {
+            BitArraySize::Int { .. } => {}
+            BitArraySize::Variable { name, .. } => self.referenced(name),
+            BitArraySize::BinaryOperator { left, right, .. } => {
+                self.bit_array_size(left);
+                self.bit_array_size(right);
+            }
+            BitArraySize::Block { inner, .. } => self.bit_array_size(inner),
         }
     }
 
