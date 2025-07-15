@@ -130,6 +130,7 @@ const FILL_UNUSED_FIELDS: &str = "Fill unused fields";
 const REMOVE_ALL_ECHOS_FROM_THIS_MODULE: &str = "Remove all `echo`s from this module";
 const WRAP_IN_BLOCK: &str = "Wrap in block";
 const GENERATE_VARIANT: &str = "Generate variant";
+const REMOVE_BLOCK: &str = "Remove block";
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range:expr $(,)?) => {
@@ -2950,6 +2951,24 @@ pub fn main() {
 }
 
 #[test]
+fn add_annotation_triggers_on_function_curly_brace() {
+    assert_code_action!(
+        ADD_ANNOTATION,
+        "pub fn main() { 1 }",
+        find_position_of("{").to_selection(),
+    );
+}
+
+#[test]
+fn add_annotation_triggers_on_empty_space_before_function_curly_brace() {
+    assert_code_action!(
+        ADD_ANNOTATION,
+        "pub fn main() { 1 }",
+        find_position_of(" ").nth_occurrence(3).to_selection(),
+    );
+}
+
+#[test]
 fn adding_annotations_prints_contextual_types4() {
     let src = r#"
 import wibble as wobble
@@ -5169,6 +5188,32 @@ fn extract_variable_does_not_extract_echo() {
   echo x
 }"#,
         find_position_of("echo").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_does_not_extract_assignment() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+  let x = 1
+}"#,
+        find_position_of("x").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_does_not_extract_record_variable_in_record_update() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        r#"
+type Wibble { Wibble(one: Int, two: Int) }
+
+pub fn main() {
+  let wibble = todo
+  Wibble(..wibble, one: 1)
+}"#,
+        find_position_of("wibble").nth_occurrence(2).to_selection()
     );
 }
 
@@ -8978,5 +9023,112 @@ pub fn main() {
             "pub fn some_internal_function() { todo }"
         ),
         find_position_of("internal").to_selection()
+    );
+}
+
+#[test]
+fn remove_block_1() {
+    assert_code_action!(
+        REMOVE_BLOCK,
+        "pub fn main() {
+    { 1 }
+}
+",
+        find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn remove_block_2() {
+    assert_code_action!(
+        REMOVE_BLOCK,
+        "pub fn main() {
+    { main() <> 2 }
+}
+",
+        find_position_of("}").to_selection()
+    );
+}
+
+#[test]
+fn remove_block_3() {
+    assert_code_action!(
+        REMOVE_BLOCK,
+        "pub fn main() {
+    case 1 {
+      _ -> { main() <> 2 }
+    }
+}
+",
+        find_position_of("{").nth_occurrence(3).to_selection()
+    );
+}
+
+#[test]
+fn remove_block_triggers_on_the_innermost_selected_block() {
+    assert_code_action!(
+        REMOVE_BLOCK,
+        "pub fn main(x) {
+    {
+      main({
+        1
+      })
+    }
+}
+",
+        find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn remove_block_does_not_unwrap_a_let_assignment() {
+    assert_no_code_actions!(
+        REMOVE_BLOCK,
+        "pub fn main(x) {
+    {
+      let a = 1
+    }
+}
+",
+        find_position_of("let").to_selection()
+    );
+}
+
+#[test]
+fn remove_block_unwraps_a_single_expression_in_a_binop() {
+    assert_code_action!(
+        REMOVE_BLOCK,
+        "pub fn main(x) {
+    { main(1) } * 3
+}
+",
+        find_position_of("main").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn remove_block_does_not_unwrap_a_binop() {
+    assert_no_code_actions!(
+        REMOVE_BLOCK,
+        "pub fn main(x) {
+    { 1 * 2 } + 3
+}
+",
+        find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn remove_block_does_not_unwrap_a_block_with_multiple_statements() {
+    assert_no_code_actions!(
+        REMOVE_BLOCK,
+        "pub fn main(x) {
+    {
+      main(1)
+      main(2)
+    }
+}
+",
+        find_position_of("1").to_selection()
     );
 }

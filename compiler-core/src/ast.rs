@@ -684,6 +684,7 @@ impl Publicity {
 /// ```
 pub struct Function<T, Expr> {
     pub location: SrcSpan,
+    pub body_start: Option<u32>,
     pub end_position: u32,
     pub name: Option<SpannedString>,
     pub arguments: Vec<Arg<T>>,
@@ -875,7 +876,11 @@ impl TypedDefinition {
                     return None;
                 }
 
-                if let Some(found) = function.body.iter().find_map(|s| s.find_node(byte_index)) {
+                if let Some(found) = function
+                    .body
+                    .iter()
+                    .find_map(|statement| statement.find_node(byte_index))
+                {
                     return Some(found);
                 }
 
@@ -896,12 +901,10 @@ impl TypedDefinition {
                 };
 
                 // Check if location is within the return annotation.
-                if let Some(l) = function
-                    .return_annotation
-                    .iter()
-                    .find_map(|a| a.find_node(byte_index, function.return_type.clone()))
-                {
-                    return Some(l);
+                if let Some(located) = function.return_annotation.iter().find_map(|annotation| {
+                    annotation.find_node(byte_index, function.return_type.clone())
+                }) {
+                    return Some(located);
                 };
 
                 // Note that the fn `.location` covers the function head, not
@@ -945,8 +948,8 @@ impl TypedDefinition {
 
             Definition::TypeAlias(alias) => {
                 // Check if location is within the type being aliased.
-                if let Some(l) = alias.type_ast.find_node(byte_index, alias.type_.clone()) {
-                    return Some(l);
+                if let Some(located) = alias.type_ast.find_node(byte_index, alias.type_.clone()) {
+                    return Some(located);
                 }
 
                 if alias.location.contains(byte_index) {
@@ -1424,9 +1427,14 @@ impl CallArg<TypedExpr> {
             // `TypedExpr::Fn{}.find_node()` except we do not return self as a
             // fallback.
             //
-            (Some(ImplicitCallArgOrigin::Use), TypedExpr::Fn { args, body, .. }) => args
+            (
+                Some(ImplicitCallArgOrigin::Use),
+                TypedExpr::Fn {
+                    arguments, body, ..
+                },
+            ) => arguments
                 .iter()
-                .find_map(|arg| arg.find_node(byte_index))
+                .find_map(|argument| argument.find_node(byte_index))
                 .or_else(|| body.iter().find_map(|s| s.find_node(byte_index))),
             // In all other cases we're happy with the default behaviour.
             //
@@ -3156,15 +3164,15 @@ impl TypedUse {
     }
 
     pub fn callback_arguments(&self) -> Option<&Vec<TypedArg>> {
-        let TypedExpr::Call { args, .. } = self.call.as_ref() else {
+        let TypedExpr::Call { arguments, .. } = self.call.as_ref() else {
             return None;
         };
-        let callback = args.iter().last()?;
-        let TypedExpr::Fn { args, .. } = &callback.value else {
+        let callback = arguments.iter().last()?;
+        let TypedExpr::Fn { arguments, .. } = &callback.value else {
             // The expression might be invalid so we have to return a None here
             return None;
         };
-        Some(args)
+        Some(arguments)
     }
 }
 

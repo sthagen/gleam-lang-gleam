@@ -214,7 +214,7 @@
   ([Louis Pilfold](https://github.com/lpil))
 
 - The compiler now allows using bit array options to specify endianness when
-  construction or pattern matching on bit arrays.
+  constructing or pattern matching on UTF codepoints in bit arrays.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 - Calculations are now allowed in the size options of bit array patterns. For
@@ -226,10 +226,14 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- On the Erlang target each generated module enables inlining from the Erlang
+  compiler.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Build tool
 
 - `gleam update`, `gleam deps update`, and `gleam deps download` will now print
-  a message when there are new major versions of packages available.
+  a message when there are new major versions of packages available. For example:
 
   ```text
    $ gleam update
@@ -244,8 +248,8 @@
 
   ([Amjad Mohamed](https://github.com/andho))
 
-- Docs generator now strips trailing slashes from Gitea/Forgejo hosts so
-  sidebar "Repository" and "View Source" links never include `//`, and
+- The documentation generator now strips trailing slashes from Gitea/Forgejo
+  hosts so sidebar "Repository" and "View Source" links never include `//`, and
   single-line "View Source" anchors emit `#Lx` instead of `#Lx-x`.
   ([Aayush Tripathi](https://github.com/aayush-tripathi))
 
@@ -255,7 +259,6 @@
 
 - The build tool now also supports `.cjs` files placed in the `src`, `dev` or
   `test` directories.
-
   ([yoshi](https://github.com/yoshi-monster))
 
 - The build tool now produces better error messages when version resolution
@@ -318,9 +321,46 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The "generate function" and "generate variant" code actions are now quickfixes,
-  allowing them to be more easily applied to code which is producing an error.
+- The "generate function" and "generate variant" code actions are now
+  quickfixes, allowing them to be more easily applied to code which is producing
+  an error.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The language server now offers a code action to remove needless blocks
+  wrapping a single expression. For example, in this code snippet:
+
+  ```gleam
+  case greeting {
+    User(name:) -> { "Hello, " <> name }
+    //             ^^^^^^^^^^^^^^^^^^^^^ Triggering the code action
+    //                                   with the cursor over this block.
+    Anonymous -> "Hello, stranger!"
+  }
+  ```
+
+  Would be turned into:
+
+  ```gleam
+  case greeting {
+    User(name:) -> "Hello, " <> name
+    Anonymous -> "Hello, stranger!"
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- It is now possible to trigger the "Add type annotation" code action anywhere
+  between the start of a function definition and the start of its body. For
+  example the action can trigger here while it previously wouldn't:
+
+  ```gleam
+  pub fn my_lucky_number() {
+    //                    ^^ The action can trigger here as well!
+    11
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Formatter
 
@@ -427,7 +467,7 @@
 
 ### Bug fixes
 
-- Fixed a bug where the language server would not show type-related code action
+- Fixed a bug where the language server would not show type-related code actions
   for record fields in custom type definitions.
   ([cysabi](https://github.com/cysabi))
 
@@ -476,12 +516,28 @@
   alternative patterns.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- Fixed a bug where trying to rename a type or value from the Gleam prelude would
-  result in invalid code.
+- Fixed a bug where trying to rename a type or value from the Gleam prelude
+  would result in invalid code.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 - Fixed a bug where the generated documentation would not be formatted properly.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server wouldn't allow you to jump to the
+  definition of a record from a record update expression.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would allow using the "extract variable"
+  code action on variables used in record updates.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where a record pattern with a spread `..` would not be formatted
+  properly.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where fields of custom types named `prototype` would not be properly
+  escaped on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.11.1 - 2025-06-05
 
