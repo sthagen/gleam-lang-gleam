@@ -443,3 +443,401 @@ pub fn go(x) {
 "
     );
 }
+
+#[test]
+fn case_building_simple_value_matched_by_pattern() {
+    assert_js!(
+        "pub fn go(x) {
+   case x {
+     1 -> 2
+     n -> n
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_list_matched_by_pattern() {
+    assert_js!(
+        "pub fn go(x) {
+   case x {
+     [] -> []
+     [a, b] -> [a, b]
+     [1, ..rest] -> [1, ..rest]
+     _ -> x
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_matched_by_pattern() {
+    assert_js!(
+        "pub fn go(x) {
+   case x {
+     Ok(1) -> Ok(1)
+     Ok(n) -> Ok(n)
+     Error(_) -> Error(Nil)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_with_select_matched_by_pattern() {
+    assert_js!(
+        "
+import gleam
+
+pub fn go(x) {
+   case x {
+     Ok(1) -> gleam.Ok(1)
+     _ -> Error(Nil)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_with_select_matched_by_pattern_2() {
+    assert_js!(
+        "
+import gleam
+
+pub fn go(x) {
+   case x {
+     gleam.Ok(1) -> gleam.Ok(1)
+     _ -> Error(Nil)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_with_select_matched_by_pattern_3() {
+    assert_js!(
+        "
+import gleam
+
+pub fn go(x) {
+   case x {
+     gleam.Ok(1) -> Ok(1)
+     _ -> Error(Nil)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_matched_string_1() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     "a" <> rest -> "a" <> rest
+     _ -> ""
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_string_2() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     "a" as a <> rest -> a <> rest
+     _ -> ""
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_value_wrapped_in_block() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     1 -> { 1 }
+     _ -> 2
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_value_alias() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     Ok(_) as a -> a
+     Error(Nil) -> Error(Nil)
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_value_alias_2() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     Ok(1) as a -> Ok(1)
+     Ok(_) -> Ok(2)
+     Error(Nil) -> Error(Nil)
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_value_alias_3() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     Ok(1 as a) -> Ok(a)
+     Ok(_) -> Ok(2)
+     Error(Nil) -> Error(Nil)
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_no_variant_record() {
+    assert_js!(
+        r#"
+pub fn go(x) {
+   case x {
+     Ok(Nil) -> Ok(Nil)
+     _ -> Error(Nil)
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_no_variant_record_2() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     Ok(gleam.Nil) -> Ok(Nil)
+     _ -> Error(Nil)
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_no_variant_record_3() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     Ok(Nil) -> Ok(gleam.Nil)
+     _ -> Error(Nil)
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_matched_no_variant_record_4() {
+    assert_js!(
+        r#"
+import gleam
+
+pub fn go(x) {
+   case x {
+     Ok(gleam.Nil) -> Ok(gleam.Nil)
+     _ -> Error(Nil)
+   }
+}"#
+    )
+}
+
+#[test]
+fn case_building_record_with_labels_matched_by_pattern_1() {
+    assert_js!(
+        "
+pub type Wibble {
+  Wibble(int: Int, string: String)
+  Wobble(Int)
+}
+
+pub fn go(x) {
+   case x {
+     Wibble(1, s) -> Wibble(1, s)
+     _ -> Wobble(1)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_with_labels_matched_by_pattern_2() {
+    assert_js!(
+        "
+pub type Wibble {
+  Wibble(int: Int, string: String)
+  Wobble(Int)
+}
+
+pub fn go(x) {
+   case x {
+     Wibble(string:, int:) -> Wibble(string:, int:)
+     _ -> Wobble(1)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_with_labels_matched_by_pattern_3() {
+    assert_js!(
+        "
+pub type Wibble {
+  Wibble(int: Int, string: String)
+  Wobble(Int)
+}
+
+pub fn go(x) {
+   case x {
+     // This should not be optimised away!
+     Wibble(string:, int:) -> Wibble(string:, int: 1)
+     _ -> Wobble(1)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_with_labels_matched_by_pattern_4() {
+    assert_js!(
+        "
+pub type Wibble {
+  Wibble(int: Int, string: String)
+  Wobble(Int)
+}
+
+pub fn go(x) {
+   case x {
+     Wibble(string:, int:) -> Wibble(int:, string:)
+     _ -> Wobble(1)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_with_labels_matched_by_pattern_5() {
+    assert_js!(
+        "
+pub type Wibble {
+  Wibble(int: Int, string: String)
+  Wobble(Int)
+}
+
+pub fn go(x) {
+   case x {
+     Wibble(string:, int: 1) -> Wibble(1, string:)
+     _ -> Wobble(1)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_building_record_with_labels_matched_by_pattern_6() {
+    assert_js!(
+        "
+pub type Wibble {
+  Wibble(int: Int, string: String)
+  Wobble(Int)
+}
+
+pub fn go(x) {
+   case x {
+     Wibble(1, string:) -> Wibble(string:, int: 1)
+     _ -> Wobble(1)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_with_multiple_subjects_building_simple_value_matched_by_pattern() {
+    assert_js!(
+        "pub fn go(x) {
+   case x, x + 1 {
+     1, _ -> 2
+     _, n -> n
+   }
+}"
+    )
+}
+
+#[test]
+fn case_with_multiple_subjects_building_list_matched_by_pattern() {
+    assert_js!(
+        "pub fn go(n, x) {
+   case n, x {
+     1, [] -> []
+     _, [a, b] -> [a, b]
+     3, [1, ..rest] -> [1, ..rest]
+     _, _ -> x
+   }
+}"
+    )
+}
+
+#[test]
+fn case_with_multiple_subjects_building_record_matched_by_pattern() {
+    assert_js!(
+        "pub fn go(x, y) {
+   case x, y {
+     Ok(1), Error(_) -> Ok(1)
+     Error(_), Ok(n) -> Ok(n)
+     _, _ -> Error(Nil)
+   }
+}"
+    )
+}
+
+#[test]
+fn case_with_multiple_subjects_building_same_value_as_two_subjects_one_is_picked() {
+    assert_js!(
+        "
+import gleam
+
+pub fn go(x, y) {
+   case x, y {
+     gleam.Ok(1), Ok(1) -> Ok(1)
+     _, Error(Nil) -> Error(Nil)
+     _, _ -> Error(Nil)
+   }
+}"
+    )
+}

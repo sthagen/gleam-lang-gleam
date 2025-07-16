@@ -1,15 +1,13 @@
 ---
 source: compiler-core/src/javascript/tests/numbers.rs
-expression: "\npub fn go() {\n  5 % 0 // => 0\n}\n"
+expression: "pub fn main() {\n  1 % 0\n}"
 ---
 ----- SOURCE CODE
-
-pub fn go() {
-  5 % 0 // => 0
+pub fn main() {
+  1 % 0
 }
 
-
 ----- COMPILED JAVASCRIPT
-export function go() {
+export function main() {
   return 0;
 }

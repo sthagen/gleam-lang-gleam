@@ -93,6 +93,38 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The code generated for pattern matching has been optimised on the JavaScript
+  target to reuse the matched variables when safe to do so. Take the following
+  snippet of Gleam code:
+
+  ```gleam
+  pub fn find_book() {
+    case ask_for_isbn() {
+      Ok(isbn) -> load_book(isbn)
+      Error(Nil) -> Error(Nil)
+    }
+  }
+  ```
+
+  Notice how in the `Error` case we're returning exactly the same value that is
+  being matched on! Now the compiler will generate the following JavaScript code
+  instead of allocating a new `Error` variant entirely:
+
+  ```js
+  export function find_book() {
+    let result = ask_for_isbn();
+    if (result instanceof Ok) {
+      let isbn = result[0];
+      return load_book(isbn);
+    } else {
+      // Previously this would have been: `return new Error(undefined);`!
+      return result;
+    }
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The compiler now raises a warning when performing a redundant comparison that
   it can tell is always going to succeed or fail. For example, this piece of
   code:
@@ -230,6 +262,14 @@
   compiler.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The code generated for floating point division on the JavaScript target has
+  been improved to avoid performing needless checks.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The code generated for division and modulo operators on the JavaScript target
+  has been improved to avoid performing needless checks.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Build tool
 
 - `gleam update`, `gleam deps update`, and `gleam deps download` will now print
@@ -268,10 +308,6 @@
   $ gleam add wisp@1
   Resolving versions
   error: Dependency resolution failed
-
-  An error occurred while determining what dependency packages and
-  versions should be downloaded.
-  The error from the version resolver library was:
 
   There's no compatible version of `gleam_otp`:
     - You require wisp >= 1.0.0 and < 2.0.0

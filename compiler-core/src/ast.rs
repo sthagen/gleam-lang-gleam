@@ -21,8 +21,9 @@ use crate::type_::expression::{Implementations, Purity};
 use crate::type_::printer::Names;
 use crate::type_::{
     self, Deprecation, HasType, ModuleValueConstructor, PatternConstructor, Type, TypedCallArg,
-    ValueConstructor, nil,
+    ValueConstructor, ValueConstructorVariant, nil,
 };
+use itertools::Itertools;
 use num_traits::Zero;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -1622,6 +1623,276 @@ impl TypedClause {
         };
 
         SrcSpan::new(start.unwrap_or_default(), end.unwrap_or_default())
+    }
+
+    /// If the branch is rebuilding exactly one of the matched subjects and
+    /// returning it, this will return the index of that subject.
+    ///
+    /// For example:
+    /// - `n -> n`, `1 -> 1`, `Ok(1) -> Ok(1)` all return `Some(0)`
+    /// - `"a", n -> n`, `n, m if n == m -> a` all return `Some(1)`
+    /// - `_ -> 1`, `Ok(1), _ -> Ok(2)` all return `None`
+    /// ```
+    ///
+    pub fn returned_subject(&self) -> Option<usize> {
+        // The pattern must not have any alternative patterns.
+        if !self.alternative_patterns.is_empty() {
+            return None;
+        }
+
+        self.pattern
+            .iter()
+            .find_position(|pattern| pattern_and_expression_are_the_same(pattern, &self.then))
+            .map(|(position, _)| position)
+    }
+}
+
+fn pattern_and_expression_are_the_same(pattern: &TypedPattern, expression: &TypedExpr) -> bool {
+    match (pattern, expression) {
+        // A pattern could be the same as a block if the block is wrapping just
+        // a single expression that is the same as the pattern itself!
+        (pattern, TypedExpr::Block { statements, .. }) if statements.len() == 1 => {
+            match statements.first() {
+                Statement::Assignment(_) | Statement::Use(_) | Statement::Assert(_) => false,
+                Statement::Expression(expression) => {
+                    pattern_and_expression_are_the_same(pattern, expression)
+                }
+            }
+        }
+        // If the block has many statements then it can never be the same as a
+        // pattern.
+        (_, TypedExpr::Block { .. }) => false,
+
+        // A pattern and an expression are the same if they're a simple variable
+        // with exactly the same name: `x -> x`, `a -> a`
+        (
+            TypedPattern::Variable {
+                name: pattern_var, ..
+            },
+            TypedExpr::Var { name: body_var, .. },
+        ) => pattern_var == body_var,
+        (TypedPattern::Variable { .. }, _) => false,
+
+        // Floats, Ints, and Strings are the same if they are exactly the same
+        // literal.
+        // `1 -> 1`
+        // `1.1 -> 1.1`
+        // `"wibble" -> "wibble"`
+        (
+            TypedPattern::Float {
+                value: pattern_value,
+                ..
+            },
+            TypedExpr::Float { value, .. },
+        ) => pattern_value == value,
+        (TypedPattern::Float { .. }, _) => false,
+
+        (
+            TypedPattern::Int {
+                int_value: pattern_value,
+                ..
+            },
+            TypedExpr::Int { int_value, .. },
+        ) => pattern_value == int_value,
+        (TypedPattern::Int { .. }, _) => false,
+
+        (
+            TypedPattern::String {
+                value: pattern_value,
+                ..
+            },
+            TypedExpr::String { value, .. },
+        ) => pattern_value == value,
+        (TypedPattern::String { .. }, _) => false,
+
+        // A string prefix is equivalent to building the string back:
+        // `"wibble" <> wobble -> "wibble" <> wobble`
+        // `"wibble" as a <> wobble -> a <> wobble`
+        (
+            TypedPattern::StringPrefix {
+                left_side_assignment,
+                left_side_string,
+                right_side_assignment,
+                ..
+            },
+            TypedExpr::BinOp {
+                name: BinOp::Concatenate,
+                left,
+                right,
+                ..
+            },
+        ) => {
+            let left_side_matches = match (left_side_assignment, left_side_string, left.as_ref()) {
+                (_, left_side_string, TypedExpr::String { value, .. }) => value == left_side_string,
+                (Some((left_side_name, _)), _, TypedExpr::Var { name, .. }) => {
+                    left_side_name == name
+                }
+                (_, _, _) => false,
+            };
+            let right_side_matches = match (right_side_assignment, right.as_ref()) {
+                (AssignName::Variable(right_side_name), TypedExpr::Var { name, .. }) => {
+                    name == right_side_name
+                }
+                (AssignName::Variable(_) | AssignName::Discard(_), _) => false,
+            };
+            left_side_matches && right_side_matches
+        }
+        (TypedPattern::StringPrefix { .. }, _) => false,
+
+        // Two tuples where each element is equivalent to the other:
+        // `#(a, 1, "wibble") -> #(a, 1, "wibble")`
+        // `#(a, b) -> #(a, b)`
+        (
+            TypedPattern::Tuple {
+                elements: pattern_elements,
+                ..
+            },
+            TypedExpr::Tuple { elements, .. },
+        ) => {
+            pattern_elements.len() == elements.len()
+                && pattern_elements
+                    .iter()
+                    .zip(elements)
+                    .all(|(pattern, expression)| {
+                        pattern_and_expression_are_the_same(pattern, expression)
+                    })
+        }
+        (TypedPattern::Tuple { .. }, _) => false,
+
+        // Two lists are the same if each element is equivalent to the other:
+        // `[] -> []`
+        // `[a, b] -> [a, b]`
+        // `[1, ..rest] -> [1, ..rest]`
+        (
+            TypedPattern::List {
+                elements: pattern_elements,
+                tail: pattern_tail,
+                ..
+            },
+            TypedExpr::List { elements, tail, .. },
+        ) => {
+            let tails_are_the_same = match (pattern_tail, tail) {
+                (None, None) => true,
+                (None, Some(_)) | (Some(_), None) => false,
+                (Some(pattern_tail), Some(tail)) => {
+                    pattern_and_expression_are_the_same(pattern_tail, tail)
+                }
+            };
+
+            tails_are_the_same
+                && pattern_elements.len() == elements.len()
+                && pattern_elements
+                    .iter()
+                    .zip(elements)
+                    .all(|(pattern, expression)| {
+                        pattern_and_expression_are_the_same(pattern, expression)
+                    })
+        }
+        (TypedPattern::List { .. }, _) => false,
+
+        // Two constructors are the same if the expression is building exactly
+        // the same value being matched on (regardless of qualification).
+        // `Ok(a) -> Ok(a)`
+        // `Ok(1) -> Ok(1)`
+        // `Wibble(a, b, c) -> Wibble(a, b, c)`
+        // `Ok(a) -> gleam.Ok(a)`
+        // `gleam.Ok(1) -> Ok(1)`
+        (
+            TypedPattern::Constructor {
+                constructor:
+                    Inferred::Known(PatternConstructor {
+                        module: pattern_module,
+                        name: pattern_name,
+                        ..
+                    }),
+                arguments: pattern_arguments,
+                spread: None,
+                ..
+            },
+            TypedExpr::Call { fun, arguments, .. },
+        ) => match fun.as_ref() {
+            TypedExpr::Var {
+                constructor:
+                    ValueConstructor {
+                        variant: ValueConstructorVariant::Record { name, module, .. },
+                        ..
+                    },
+                ..
+            }
+            | TypedExpr::ModuleSelect {
+                constructor: ModuleValueConstructor::Record { name, .. },
+                module_name: module,
+                ..
+            } => {
+                pattern_module == module
+                    && pattern_name == name
+                    && pattern_arguments.len() == arguments.len()
+                    && pattern_arguments
+                        .iter()
+                        .zip(arguments)
+                        .all(|(pattern, expression)| {
+                            pattern_and_expression_are_the_same(&pattern.value, &expression.value)
+                        })
+            }
+
+            _ => false,
+        },
+
+        // A pattern for a constructor with no arguments:
+        // `Nil -> Nil`
+        // `gleam.Nil -> Nil`
+        // `Nil -> gleam.Nil`
+        // `Wibble -> Wibble`
+        (
+            TypedPattern::Constructor {
+                constructor:
+                    Inferred::Known(PatternConstructor {
+                        module: pattern_module,
+                        name: pattern_name,
+                        ..
+                    }),
+                arguments: pattern_arguments,
+                spread: None,
+                ..
+            },
+            TypedExpr::Var {
+                constructor:
+                    ValueConstructor {
+                        variant: ValueConstructorVariant::Record { name, module, .. },
+                        ..
+                    },
+                ..
+            }
+            | TypedExpr::ModuleSelect {
+                constructor: ModuleValueConstructor::Record { name, .. },
+                module_name: module,
+                ..
+            },
+        ) => pattern_module == module && pattern_name == name && pattern_arguments.is_empty(),
+        (TypedPattern::Constructor { .. }, _) => false,
+
+        // An assignment is the same if the corresponding expression is a
+        // variable with the same name, or if the inner pattern is the same:
+        // `Ok(1) as a -> a`
+        // `Ok(1) as a -> Ok(1)`
+        (
+            TypedPattern::Assign {
+                name: pattern_name, ..
+            },
+            TypedExpr::Var { name, .. },
+        ) => pattern_name == name,
+        (TypedPattern::Assign { pattern, .. }, expression) => {
+            pattern_and_expression_are_the_same(pattern, expression)
+        }
+
+        // Bit arrays are trickier as they can use existing variables in their
+        // pattern and shadow existing variables so for now we just ignore
+        // those.
+        (TypedPattern::BitArray { .. } | TypedPattern::BitArraySize { .. }, _) => false,
+
+        // A discard is never the same as an expression, same goes for an
+        // invalid pattern: there's no way to check if it matches an expression!
+        (TypedPattern::Discard { .. } | TypedPattern::Invalid { .. }, _) => false,
     }
 }
 
