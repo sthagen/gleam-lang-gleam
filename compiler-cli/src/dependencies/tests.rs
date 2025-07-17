@@ -8,7 +8,7 @@ use pretty_assertions::assert_eq;
 use gleam_core::{
     Error,
     build::Runtime,
-    config::{DenoConfig, DenoFlag, Docs, ErlangConfig, JavaScriptConfig, Repository},
+    config::{DenoConfig, DenoFlag, Docs, ErlangConfig, JavaScriptConfig},
     manifest::{Base16Checksum, Manifest, ManifestPackage, ManifestPackageSource},
     requirement::Requirement,
 };
@@ -56,10 +56,10 @@ fn list_manifest_format() {
     list_manifest_packages(&mut buffer, manifest).unwrap();
     assert_eq!(
         std::str::from_utf8(&buffer).unwrap(),
-        r#"root 1.0.0
-aaa 0.4.2
-zzz 0.4.0
-"#
+        "root\t1.0.0
+aaa\t0.4.2
+zzz\t0.4.0
+"
     )
 }
 
@@ -1176,7 +1176,7 @@ fn package_config(
         documentation: Docs { pages: vec![] },
         dependencies,
         dev_dependencies,
-        repository: Repository::None,
+        repository: None,
         links: vec![],
         erlang: ErlangConfig {
             application_start_module: None,
