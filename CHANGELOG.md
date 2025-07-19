@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.12.0-rc1 - 2025-07-18
 
 ### Compiler
 
@@ -297,7 +297,7 @@
   Erlang compiler application instead of failing.
   ([Louis Pilfold](https://github.com/lpil))
 
-- `gleam docs list` now uses a tab rather than a space as a separator.
+- `gleam deps list` now uses a tab rather than a space as a separator.
   ([Louis Pilfold](https://github.com/lpil))
 
 - The build tool now also supports `.cjs` files placed in the `src`, `dev` or
@@ -328,7 +328,7 @@
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The `repository` section in `gleam.toml` now allows specifying the
-  `tag_prefix` property, which is prepended to the default tag.
+  `tag-prefix` property, which is prepended to the default tag.
   This makes it possible to have multiple packages with different versions in
   the same repository (together with `path`), without breaking links to source
   code in documentation.
