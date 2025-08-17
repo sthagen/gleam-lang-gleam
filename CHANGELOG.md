@@ -105,6 +105,10 @@
   relevant variable.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Renaming a variable from a label shorthand (`name:`) no longer includes the
+  colon in the rename dialog (`name:` -> `name`)
+  ([fruno](https://github.com/frunobulax-the-poodle))
+
 ### Formatter
 
 - The formatter now removes needless multiple negations that are safe to remove.
@@ -142,3 +146,11 @@
 - Fixed a bug where the compiler would crash if there was an invalid version
   requirement in a project's `gleam.toml`.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would suggest a discouraged project name as an
+  alternative to the reserved `gleam` name.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where Forgejo source URLs in the HTML documentation could be
+  incorrectly structured.
+  ([Louis Pilfold](https://github.com/lpil))
