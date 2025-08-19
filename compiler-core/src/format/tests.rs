@@ -4653,26 +4653,15 @@ fn do_not_remove_required_braces_case_guard() {
 }
 
 #[test]
-fn remove_braces_case_guard() {
-    assert_format_rewrite!(
-        "fn main() {
-  let is_enabled = False
-  let is_confirmed = False
-  let is_admin = True
-  case is_enabled, is_confirmed, is_admin {
-    is_enabled, is_confirmed, is_admin if { is_enabled && is_confirmed } || is_admin ->
-      Nil
-    _, _, _ -> Nil
-  }
-}
-",
+fn do_not_remove_braces_from_case_guard() {
+    assert_format!(
         "fn main() {
   let is_enabled = False
   let is_confirmed = False
   let is_admin = True
   case is_enabled, is_confirmed, is_admin {
     is_enabled, is_confirmed, is_admin
-      if is_enabled && is_confirmed || is_admin
+      if { is_enabled && is_confirmed } || is_admin
     -> Nil
     _, _, _ -> Nil
   }
@@ -4682,20 +4671,12 @@ fn remove_braces_case_guard() {
 }
 
 #[test]
-fn remove_braces_case_guard_2() {
-    assert_format_rewrite!(
+fn do_not_remove_braces_from_case_guard_2() {
+    assert_format!(
         "fn main() {
   let wibble = #(10, [0])
   case wibble {
     wibble if True && { wibble.0 == 10 } -> Nil
-    _ -> Nil
-  }
-}
-",
-        "fn main() {
-  let wibble = #(10, [0])
-  case wibble {
-    wibble if True && wibble.0 == 10 -> Nil
     _ -> Nil
   }
 }
@@ -6713,6 +6694,27 @@ fn assert_as_with_comment_before_the_as() {
   assert True as
     // A little comment explaining something
     "wibble"
+}
+"#
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/4664
+#[test]
+fn pattern_unused_discard() {
+    assert_format_rewrite!(
+        r#"pub fn main() {
+  let a = 10
+  let _ = case a {
+    _ as b -> b
+  }
+}
+"#,
+        r#"pub fn main() {
+  let a = 10
+  let _ = case a {
+    b -> b
+  }
 }
 "#
     );

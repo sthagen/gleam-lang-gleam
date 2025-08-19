@@ -3893,6 +3893,34 @@ and explain your usecase for this pattern, and how you would expect it to behave
                             extra_labels: vec![],
                         }),
                     },
+
+                    TypeError::SrcImportingDevDependency {
+                        location,
+                        importing_module,
+                        imported_module,
+                        package,
+                    } => Diagnostic {
+                        title: "App importing dev dependency".to_string(),
+                        text: wrap_format!(
+                            "The application module `{importing_module}` is \
+importing the module `{imported_module}`, but `{package}`, the package it \
+belongs to, is a dev dependency.
+
+Dev dependencies are not included in production builds so application \
+modules should not import them. Perhaps change `{package}` to a regular dependency."
+                        ),
+                        hint: None,
+                        level: Level::Error,
+                        location: Some(Location {
+                            label: Label {
+                                text: None,
+                                span: *location,
+                            },
+                            path: path.clone(),
+                            src: src.clone(),
+                            extra_labels: vec![],
+                        }),
+                    },
                 })
                 .collect_vec(),
 

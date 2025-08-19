@@ -2250,7 +2250,11 @@ impl<'comments> Formatter<'comments> {
             Pattern::BitArraySize(size) => self.bit_array_size(size),
 
             Pattern::Assign { name, pattern, .. } => {
-                self.pattern(pattern).append(" as ").append(name.as_str())
+                if pattern.is_discard() {
+                    name.to_doc()
+                } else {
+                    self.pattern(pattern).append(" as ").append(name.as_str())
+                }
             }
 
             Pattern::Discard { name, .. } => name.to_doc(),
@@ -2510,6 +2514,8 @@ impl<'comments> Formatter<'comments> {
             ClauseGuard::Constant(constant) => self.const_expr(constant),
 
             ClauseGuard::Not { expression, .. } => docvec!["!", self.clause_guard(expression)],
+
+            ClauseGuard::Block { value, .. } => wrap_block(self.clause_guard(value)).group(),
         }
     }
 

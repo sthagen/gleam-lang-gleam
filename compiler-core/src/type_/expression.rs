@@ -1827,7 +1827,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     /// Checks for inefficient usage of `list.length` for checking for the empty list.
     ///
-    /// If we find one of these usages, emit a warning to use `list.is_empty` instead.
+    /// If we find one of these usages, emit a warning to use comparison with empty list instead.
     fn check_for_inefficient_empty_list_check(
         &mut self,
         binop: BinOp,
@@ -1869,7 +1869,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         }
 
         // Check the kind of the empty list check so we know whether to recommend
-        // `list.is_empty` or `!list.is_empty` as a replacement.
+        // `== []` or `!= []` syntax as a replacement.
         let kind = match get_empty_list_check_kind(binop, left, right) {
             Some(kind) => kind,
             None => return,
@@ -2370,20 +2370,22 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             }
 
             ClauseGuard::FieldAccess {
-                location,
+                label_location,
                 label,
                 container,
                 index: _,
                 type_: (),
             } => match self.infer_clause_guard(*container.clone()) {
-                Ok(container) => self.infer_guard_record_access(container, label, location),
+                Ok(container) => self.infer_guard_record_access(container, label, label_location),
 
                 Err(err) => match *container {
                     ClauseGuard::Var { name, location, .. } => {
-                        self.infer_guard_module_access(name, label, location, err)
+                        self.infer_guard_module_access(name, label, location, label_location, err)
                     }
 
-                    _ => Err(Error::RecordAccessUnknownType { location }),
+                    _ => Err(Error::RecordAccessUnknownType {
+                        location: label_location,
+                    }),
                 },
             },
 
@@ -2798,6 +2800,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             ClauseGuard::Constant(constant) => {
                 Ok(ClauseGuard::Constant(self.infer_const(&None, constant)))
             }
+
+            ClauseGuard::Block { value, location } => {
+                let value = self.infer_clause_guard(*value)?;
+                Ok(ClauseGuard::Block {
+                    location,
+                    value: Box::new(value),
+                })
+            }
         }
     }
 
@@ -2820,7 +2830,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             container,
             label,
             index: Some(index),
-            location,
+            label_location: location,
             type_,
         })
     }
@@ -2829,11 +2839,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         &mut self,
         name: EcoString,
         label: EcoString,
-        location: SrcSpan,
+        module_location: SrcSpan,
+        label_location: SrcSpan,
         record_access_error: Error,
     ) -> Result<TypedClauseGuard, Error> {
         let module_access = self
-            .infer_module_access(&name, label, &location, location)
+            .infer_module_access(&name, label, &module_location, label_location)
             .and_then(|ma| match ma {
                 TypedExpr::ModuleSelect {
                     location,
@@ -2849,7 +2860,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             module_name.clone(),
                             label.clone(),
                             &label,
-                            location,
+                            label_location,
                             ReferenceKind::Qualified,
                         );
 
@@ -2866,7 +2877,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     _ => Err(Error::RecordAccessUnknownType { location }),
                 },
 
-                _ => Err(Error::RecordAccessUnknownType { location }),
+                _ => Err(Error::RecordAccessUnknownType {
+                    location: module_location,
+                }),
             });
 
         // If the name is in the environment, use the original error from
@@ -4769,10 +4782,11 @@ fn get_empty_list_check_kind<'a>(
         }
         (_, TypedExpr::Int { value, .. }) => match (binop, value.as_str()) {
             (BinOp::LtEqInt, "0" | "-0") | (BinOp::LtInt, "1") => Some(EmptyListCheckKind::Empty),
+            (BinOp::GtInt, "0" | "-0") => Some(EmptyListCheckKind::NonEmpty),
             _ => None,
         },
         (TypedExpr::Int { value, .. }, _) => match (binop, value.as_str()) {
-            (BinOp::GtEqInt, "0" | "-0") | (BinOp::GtInt, "1") => {
+            (BinOp::GtEqInt | BinOp::LtInt, "0" | "-0") | (BinOp::GtInt, "1") => {
                 Some(EmptyListCheckKind::NonEmpty)
             }
             _ => None,

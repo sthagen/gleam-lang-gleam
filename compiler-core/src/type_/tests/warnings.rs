@@ -678,6 +678,86 @@ fn prefer_list_is_empty_over_list_length_lt_1() {
     );
 }
 
+/// https://github.com/gleam-lang/gleam/issues/4861
+#[test]
+fn prefer_list_is_empty_over_list_length_gt_negative_0() {
+    assert_warning!(
+        (
+            "gleam_stdlib",
+            "gleam/list",
+            "pub fn length(_list: List(a)) -> Int { 0 }"
+        ),
+        r#"
+        import gleam/list
+
+        pub fn main() {
+            let a_list = []
+            let _ = list.length(a_list) > 0
+        }
+        "#
+    );
+}
+
+/// https://github.com/gleam-lang/gleam/issues/4861
+#[test]
+fn prefer_list_is_empty_over_negative_0_lt_list_length() {
+    assert_warning!(
+        (
+            "gleam_stdlib",
+            "gleam/list",
+            "pub fn length(_list: List(a)) -> Int { 0 }"
+        ),
+        r#"
+        import gleam/list
+
+        pub fn main() {
+            let a_list = []
+            let _ = 0 < list.length(a_list)
+        }
+        "#
+    );
+}
+
+/// https://github.com/gleam-lang/gleam/issues/4861
+#[test]
+fn prefer_list_is_empty_over_list_length_gt_0() {
+    assert_warning!(
+        (
+            "gleam_stdlib",
+            "gleam/list",
+            "pub fn length(_list: List(a)) -> Int { 0 }"
+        ),
+        r#"
+        import gleam/list
+
+        pub fn main() {
+            let a_list = []
+            let _ = list.length(a_list) > 0
+        }
+        "#
+    );
+}
+
+/// https://github.com/gleam-lang/gleam/issues/4861
+#[test]
+fn prefer_list_is_empty_over_0_lt_list_length() {
+    assert_warning!(
+        (
+            "gleam_stdlib",
+            "gleam/list",
+            "pub fn length(_list: List(a)) -> Int { 0 }"
+        ),
+        r#"
+        import gleam/list
+
+        pub fn main() {
+            let a_list = []
+            let _ = 0 < list.length(a_list)
+        }
+        "#
+    );
+}
+
 /// https://github.com/gleam-lang/gleam/issues/2067
 #[test]
 fn allow_list_length_eq_1() {
@@ -4207,6 +4287,19 @@ pub type Either {
 
 pub fn main() -> Bool {
   Left == Right(1)
+}
+"
+    );
+}
+
+#[test]
+fn unused_discard_pattern() {
+    assert_warning!(
+        "pub fn main() {
+  let a = 10
+  let _ = case a {
+    _ as b -> b
+  }
 }
 "
     );

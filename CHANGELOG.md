@@ -69,6 +69,54 @@
   spans.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Redundant `_ as x` patterns are now deprecated in favour of `x`.
+  ([eutampieri](https://github.com/eutampieri))
+
+- The compiler will now raise warning for inefficient use of `list.length()`
+  when trying to check is list empty via `0 < list.length(list)` or
+`list.length(list) > 0` as well as in other cases. For example, the following
+  code:
+
+  ```gleam
+  import gleam/list
+
+  pub fn main() {
+    let numbers = [1, 46]
+    let _ = 0 < list.length(numbers)
+    let _ = list.length(numbers) > 0
+  }
+  ```
+
+  Would result in following warnings:
+
+  ```
+  warning: Inefficient use of `list.length`
+    ┌─ /data/data/com.termux/files/home/test_gleam/src/test_gleam.gleam:5:13
+    │
+  5 │     let _ = 0 < list.length(numbers)
+    │             ^^^^^^^^^^^^^^^^^^^^^^^^
+
+  The `list.length` function has to iterate across the whole
+  list to calculate the length, which is wasteful if you only
+  need to know if the list is empty or not.
+
+  Hint: You can use `the_list != []` instead.
+
+  warning: Inefficient use of `list.length`
+    ┌─ /data/data/com.termux/files/home/test_gleam/src/test_gleam.gleam:6:13
+    │
+  6 │     let _ = list.length(numbers) > 0
+    │             ^^^^^^^^^^^^^^^^^^^^^^^^
+
+  The `list.length` function has to iterate across the whole
+  list to calculate the length, which is wasteful if you only
+  need to know if the list is empty or not.
+
+  Hint: You can use `the_list != []` instead.
+  ```
+
+  ([Andrey Kozhev](https://github.com/ankddev))
+
 ### Build tool
 
 - New projects are generated using OTP28 on GitHub Actions.
@@ -132,6 +180,12 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Redundant `_ as x` patterns are rewritten to `x`.
+  ([eutampieri](https://github.com/eutampieri))
+
+- The formatter no longer removes blocks from case clause guards.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Bug fixes
 
 - Fixed a bug where `echo` could crash on JavaScript if the module contains
@@ -154,3 +208,12 @@
 - Fixed a bug where Forgejo source URLs in the HTML documentation could be
   incorrectly structured.
   ([Louis Pilfold](https://github.com/lpil))
+
+- The compiler now emits an error when a module in the `src` directory imports
+  a dev dependency, while previously it would incorrectly let these
+  dependencies to be imported.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where renaming a constant which is referenced in another module
+  inside a guard would generate invalid code.
+  ([Surya Rose](https://github.com/GearsDatapacks))

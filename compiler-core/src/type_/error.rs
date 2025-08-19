@@ -648,6 +648,13 @@ pub enum Error {
     PrivateOpaqueType {
         location: SrcSpan,
     },
+
+    SrcImportingDevDependency {
+        importing_module: EcoString,
+        imported_module: EcoString,
+        package: EcoString,
+        location: SrcSpan,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -875,6 +882,11 @@ pub enum Warning {
     UnreachableCasePattern {
         location: SrcSpan,
         reason: UnreachablePatternReason,
+    },
+
+    UnusedDiscardPattern {
+        location: SrcSpan,
+        name: EcoString,
     },
 
     /// This happens when someone tries to write a case expression where one of
@@ -1212,7 +1224,8 @@ impl Error {
             | Error::StringConcatenationWithAddInt { location }
             | Error::DoubleVariableAssignmentInBitArray { location }
             | Error::NonUtf8StringAssignmentInBitArray { location }
-            | Error::PrivateOpaqueType { location } => location.start,
+            | Error::PrivateOpaqueType { location }
+            | Error::SrcImportingDevDependency { location, .. } => location.start,
             Error::UnknownLabels { unknown, .. } => {
                 unknown.iter().map(|(_, s)| s.start).min().unwrap_or(0)
             }
@@ -1279,6 +1292,7 @@ impl Warning {
             | Warning::AssertLiteralBool { location, .. }
             | Warning::BitArraySegmentTruncatedValue { location, .. }
             | Warning::TopLevelDefinitionShadowsImport { location, .. }
+            | Warning::UnusedDiscardPattern { location, .. }
             | Warning::ModuleImportedTwice {
                 second: location, ..
             }
