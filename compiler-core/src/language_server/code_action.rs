@@ -4444,6 +4444,7 @@ pub struct PatternMatchOnValue<'a, A> {
     module: &'a Module,
     params: &'a CodeActionParams,
     compiler: &'a LspProjectCompiler<A>,
+    pattern_variable_under_cursor: Option<(&'a EcoString, Arc<Type>)>,
     selected_value: Option<PatternMatchedValue<'a>>,
     edits: TextEdits<'a>,
 }
@@ -4453,6 +4454,7 @@ pub struct PatternMatchOnValue<'a, A> {
 /// print and format the corresponding pattern matching code; that's why you'll
 /// see `Range`s and `SrcSpan` besides the type of the thing being matched.
 ///
+#[derive(Clone)]
 pub enum PatternMatchedValue<'a> {
     FunctionArgument {
         /// The argument being pattern matched on.
@@ -4468,7 +4470,7 @@ pub enum PatternMatchedValue<'a> {
     },
     LetVariable {
         variable_name: &'a EcoString,
-        variable_type: &'a Arc<Type>,
+        variable_type: Arc<Type>,
         /// The location of the entire let assignment the variable is part of,
         /// so that we can add the pattern matching _after_ it.
         ///
@@ -4476,7 +4478,7 @@ pub enum PatternMatchedValue<'a> {
     },
     UseVariable {
         variable_name: &'a EcoString,
-        variable_type: &'a Arc<Type>,
+        variable_type: Arc<Type>,
         /// The location of the entire use expression the variable is part of,
         /// so that we can add the pattern matching _after_ it.
         ///
@@ -4499,6 +4501,7 @@ where
             params,
             compiler,
             selected_value: None,
+            pattern_variable_under_cursor: None,
             edits: TextEdits::new(line_numbers),
         }
     }
@@ -4506,7 +4509,7 @@ where
     pub fn code_actions(mut self) -> Vec<CodeAction> {
         self.visit_typed_module(&self.module.ast);
 
-        let action_title = match self.selected_value {
+        let action_title = match self.selected_value.clone() {
             Some(PatternMatchedValue::FunctionArgument {
                 arg,
                 first_statement: function_body,
@@ -4530,6 +4533,7 @@ where
                 self.match_on_let_variable(variable_name, variable_type, location);
                 "Pattern match on variable"
             }
+
             None => return vec![],
         };
 
@@ -4615,7 +4619,7 @@ where
     fn match_on_let_variable(
         &mut self,
         variable_name: &EcoString,
-        variable_type: &Arc<Type>,
+        variable_type: Arc<Type>,
         assignment_location: SrcSpan,
     ) {
         let Some(patterns) = self.type_to_destructure_patterns(variable_type.as_ref()) else {
@@ -4664,6 +4668,14 @@ where
         match type_ {
             Type::Fn { .. } => None,
             Type::Var { type_ } => self.type_var_to_destructure_patterns(&type_.borrow()),
+
+            // We special case lists, they don't have "regular" constructors
+            // like other types. Instead we always add the two branches covering
+            // the empty and non empty list.
+            Type::Named { .. } if type_.is_list() => {
+                Some(vec1!["[]".into(), "[first, ..rest]".into()])
+            }
+
             Type::Named {
                 module: type_module,
                 name: type_name,
@@ -4855,27 +4867,14 @@ where
     }
 
     fn visit_typed_assignment(&mut self, assignment: &'ast TypedAssignment) {
-        if let Pattern::Variable {
-            name,
-            location,
-            type_,
-            ..
-        } = &assignment.pattern
-        {
-            let variable_range = self.edits.src_span_to_lsp_range(*location);
-            if within(self.params.range, variable_range) {
-                self.selected_value = Some(PatternMatchedValue::LetVariable {
-                    variable_name: name,
-                    variable_type: type_,
-                    assignment_location: assignment.location,
-                });
-                // If we've found the variable to pattern match on, there's no
-                // point in keeping traversing the AST.
-                return;
-            }
-        }
-
         ast::visit::visit_typed_assignment(self, assignment);
+        if let Some((name, ref type_)) = self.pattern_variable_under_cursor {
+            self.selected_value = Some(PatternMatchedValue::LetVariable {
+                variable_name: name,
+                variable_type: type_.clone(),
+                assignment_location: assignment.location,
+            });
+        }
     }
 
     fn visit_typed_use(&mut self, use_: &'ast TypedUse) {
@@ -4902,7 +4901,7 @@ where
                 if within(self.params.range, variable_range) {
                     self.selected_value = Some(PatternMatchedValue::UseVariable {
                         variable_name: name,
-                        variable_type: type_,
+                        variable_type: type_.clone(),
                         use_location: use_.location,
                     });
                     // If we've found the variable to pattern match on, there's no
@@ -4913,6 +4912,47 @@ where
         }
 
         ast::visit::visit_typed_use(self, use_);
+    }
+
+    fn visit_typed_pattern_variable(
+        &mut self,
+        location: &'ast SrcSpan,
+        name: &'ast EcoString,
+        type_: &'ast Arc<Type>,
+        _origin: &'ast VariableOrigin,
+    ) {
+        if within(
+            self.params.range,
+            self.edits.src_span_to_lsp_range(*location),
+        ) {
+            self.pattern_variable_under_cursor = Some((name, type_.clone()));
+        }
+    }
+
+    fn visit_typed_pattern_string_prefix(
+        &mut self,
+        _location: &'ast SrcSpan,
+        _left_location: &'ast SrcSpan,
+        left_side_assignment: &'ast Option<(EcoString, SrcSpan)>,
+        right_location: &'ast SrcSpan,
+        _left_side_string: &'ast EcoString,
+        right_side_assignment: &'ast AssignName,
+    ) {
+        if let Some((name, location)) = left_side_assignment
+            && within(
+                self.params.range,
+                self.edits.src_span_to_lsp_range(*location),
+            )
+        {
+            self.pattern_variable_under_cursor = Some((name, type_::string()));
+        } else if let AssignName::Variable(name) = right_side_assignment
+            && within(
+                self.params.range,
+                self.edits.src_span_to_lsp_range(*right_location),
+            )
+        {
+            self.pattern_variable_under_cursor = Some((name, type_::string()));
+        }
     }
 }
 
