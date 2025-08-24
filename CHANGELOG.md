@@ -261,6 +261,14 @@
   dependencies to be imported.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- Erroneous extra fields in `gleam.toml` dependency specifications will no
+  longer be siltently ignored. An error is now returned highlighting the
+  problem instead.
+  ([Louis Pilfold](https://github.com/lpil))
+
 - Fixed a bug where renaming a constant which is referenced in another module
   inside a guard would generate invalid code.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where `echo .. as ..` message will be omitted in browser target.
+  ([Andrey Kozhev](https://github.com/ankddev))
