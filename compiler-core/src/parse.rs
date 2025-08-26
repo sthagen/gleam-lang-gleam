@@ -803,7 +803,7 @@ where
                 return parse_error(ParseErrorType::IfExpression, SrcSpan { start, end });
             }
 
-            // helpful error on possibly trying to group with ""
+            // Helpful error on possibly trying to group with "(".
             Some((start, Token::LeftParen, _)) => {
                 return parse_error(ParseErrorType::ExprLparStart, SrcSpan { start, end: start });
             }
@@ -1181,6 +1181,12 @@ where
                 self.advance();
                 Ok(Some(self.parse_assert(start)?))
             }
+
+            // Helpful error when trying to define a constant inside a function.
+            Some((start, Token::Const, end)) => parse_error(
+                ParseErrorType::ConstantInsideFunction,
+                SrcSpan { start, end },
+            ),
 
             token => {
                 self.tok0 = token;
