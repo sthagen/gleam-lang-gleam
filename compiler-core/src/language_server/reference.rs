@@ -354,28 +354,13 @@ pub enum VariableReferenceKind {
     LabelShorthand,
 }
 
-pub fn find_variable_references(
-    module: &TypedModule,
-    definition_location: SrcSpan,
-    name: EcoString,
-) -> HashSet<VariableReference> {
-    let mut finder = FindVariableReferences {
-        references: HashSet::new(),
-        definition_location,
-        alternative_variable: AlternativeVariable::Ignore,
-        name,
-    };
-    finder.visit_typed_module(module);
-    finder.references
-}
-
 /// How to treat variables defined in alternative patterns
 enum AlternativeVariable {
     Track,
     Ignore,
 }
 
-struct FindVariableReferences {
+pub struct FindVariableReferences {
     // Due to the structure of some AST nodes (for example, record updates),
     // when we traverse the AST it is possible to accidentally duplicate references.
     // To avoid this, we use a `HashSet` instead of a `Vec` here.
@@ -384,6 +369,27 @@ struct FindVariableReferences {
     definition_location: SrcSpan,
     alternative_variable: AlternativeVariable,
     name: EcoString,
+}
+
+impl FindVariableReferences {
+    pub fn new(variable_definition_location: SrcSpan, variable_name: EcoString) -> Self {
+        Self {
+            references: HashSet::new(),
+            definition_location: variable_definition_location,
+            alternative_variable: AlternativeVariable::Ignore,
+            name: variable_name,
+        }
+    }
+
+    pub fn find_in_module(mut self, module: &TypedModule) -> HashSet<VariableReference> {
+        self.visit_typed_module(module);
+        self.references
+    }
+
+    pub fn find(mut self, expression: &TypedExpr) -> HashSet<VariableReference> {
+        self.visit_typed_expr(expression);
+        self.references
+    }
 }
 
 impl<'ast> Visit<'ast> for FindVariableReferences {

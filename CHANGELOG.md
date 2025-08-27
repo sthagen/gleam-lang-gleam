@@ -234,6 +234,63 @@
   colon in the rename dialog (`name:` -> `name`)
   ([fruno](https://github.com/frunobulax-the-poodle))
 
+- The language server now offers a code action to collapse nested case
+  expressions. Take this example:
+
+  ```gleam
+  case user {
+    User(role: Admin, name:) ->
+      // Here the only thing we're doing is pattern matching on the
+      // `name` variable we've just defined in the outer pattern.
+      case name {
+        "Joe" -> "Hello, Joe!"
+        _ -> "Hello, stranger"
+      }
+
+    _ -> "You're not an admin!"
+  }
+  ```
+
+  We could simplify this case expression and reduce nesting like so:
+
+  ```gleam
+  case user {
+    User(role: Admin, name: "Joe") -> "Hello, Joe!"
+    User(role: Admin, name: _) -> "Hello, stranger"
+    _ -> "You're not an admin!"
+  }
+  ```
+
+  Now, if you hover over that pattern, the language server will offer the
+  "collapse nested case" action that will simplify your code like shown in the
+  example above.
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The "Add type annotations" and "Generate function" code actions now ignore type
+  variables defined in other functions, improving the generated code. For example:
+
+  ```gleam
+  fn something(a: a, b: b, c: c) -> d { todo }
+
+  fn pair(a, b) { #(a, b) }
+  ```
+
+  Previously, when triggering the "Add type annotations" code action on the
+  `pair` function, the language server would have generated:
+
+  ```gleam
+  fn pair(a: e, b: f) -> #(e, f) { #(a, b) }
+  ```
+
+  However in 1.13, it will now generate:
+
+  ```gleam
+  fn pair(a: a, b: b) -> #(a, b) { #(a, b) }
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Formatter
 
 - The formatter now removes needless multiple negations that are safe to remove.
@@ -305,4 +362,8 @@
 
 - Fixed a bug where renaming a variable used in a record update would produce
   invalid code in certain situations.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where adding `echo` to the subject of a `case` expression would
+  prevent variant inference from working correctly.
   ([Surya Rose](https://github.com/GearsDatapacks))
