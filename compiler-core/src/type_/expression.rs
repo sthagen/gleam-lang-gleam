@@ -5,13 +5,14 @@ use crate::{
     ast::{
         Arg, Assert, Assignment, AssignmentKind, BinOp, BitArrayOption, BitArraySegment,
         CAPTURE_VARIABLE, CallArg, Clause, ClauseGuard, Constant, FunctionLiteralKind, HasLocation,
-        ImplicitCallArgOrigin, Layer, RECORD_UPDATE_VARIABLE, RecordBeingUpdated, SrcSpan,
-        Statement, TodoKind, TypeAst, TypedArg, TypedAssert, TypedAssignment, TypedClause,
-        TypedClauseGuard, TypedConstant, TypedExpr, TypedMultiPattern, TypedStatement,
-        USE_ASSIGNMENT_VARIABLE, UntypedArg, UntypedAssert, UntypedAssignment, UntypedClause,
-        UntypedClauseGuard, UntypedConstant, UntypedConstantBitArraySegment, UntypedExpr,
-        UntypedExprBitArraySegment, UntypedMultiPattern, UntypedStatement, UntypedUse,
-        UntypedUseAssignment, Use, UseAssignment,
+        ImplicitCallArgOrigin, InvalidExpression, Layer, RECORD_UPDATE_VARIABLE,
+        RecordBeingUpdated, SrcSpan, Statement, TodoKind, TypeAst, TypedArg, TypedAssert,
+        TypedAssignment, TypedClause, TypedClauseGuard, TypedConstant, TypedExpr,
+        TypedMultiPattern, TypedStatement, USE_ASSIGNMENT_VARIABLE, UntypedArg, UntypedAssert,
+        UntypedAssignment, UntypedClause, UntypedClauseGuard, UntypedConstant,
+        UntypedConstantBitArraySegment, UntypedExpr, UntypedExprBitArraySegment,
+        UntypedMultiPattern, UntypedStatement, UntypedUse, UntypedUseAssignment, Use,
+        UseAssignment,
     },
     build::Target,
     exhaustiveness::{self, CompileCaseResult, CompiledCase, Reachability},
@@ -728,6 +729,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         TypedExpr::Invalid {
             location,
             type_: self.new_unbound_var(),
+            extra_information: None,
         }
     }
 
@@ -1419,12 +1421,46 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     constructor,
                 }
             }
-            // Module access was attempted but failed and it does not shadow an existing variable
+            // If module access failed because the module exists but that module does not export
+            // the referenced value, we return extra information about the invalid module select,
+            // so that we have information about the attempted module select and can use it, for
+            // example, in the "Generate function" code action to support other modules.
+            (
+                _,
+                Some((
+                    Err(Error::UnknownModuleValue {
+                        name,
+                        module_name,
+                        location,
+                        value_constructors,
+                        type_with_same_name,
+                        context,
+                    }),
+                    false,
+                )),
+            ) => {
+                self.problems.error(Error::UnknownModuleValue {
+                    name: name.clone(),
+                    module_name: module_name.clone(),
+                    location,
+                    value_constructors,
+                    type_with_same_name,
+                    context,
+                });
+                TypedExpr::Invalid {
+                    location,
+                    type_: self.new_unbound_var(),
+                    extra_information: Some(InvalidExpression::ModuleSelect { module_name, label }),
+                }
+            }
+            // If module access failed for some other reason, and no local variable shadows the
+            // module, we just return an invalid expression.
             (_, Some((Err(module_access_err), false))) => {
                 self.problems.error(module_access_err);
                 TypedExpr::Invalid {
                     location,
                     type_: self.new_unbound_var(),
+                    extra_information: None,
                 }
             }
             // In any other case use the record access for the error
@@ -1446,6 +1482,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     Err(_) => TypedExpr::Invalid {
                         location,
                         type_: self.new_unbound_var(),
+                        extra_information: None,
                     },
                 }
             }
@@ -4363,6 +4400,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 value: TypedExpr::Invalid {
                     location,
                     type_: self.new_unbound_var(),
+                    extra_information: None,
                 },
                 implicit,
                 location,
@@ -4543,6 +4581,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         end: body.last().location().end,
                     },
                     type_: body_typer.new_unbound_var(),
+                    extra_information: None,
                 }))
             };
 

@@ -242,6 +242,17 @@ pub enum DeprecatedSyntaxWarning {
         location: SrcSpan,
     },
 
+    /// If a guard has an empty clause :
+    /// ```gleam
+    /// case wibble {
+    ///     big if -> True
+    ///         ^^ This can be removed.
+    /// }
+    /// ```
+    DeprecatedEmptyClauseGuard {
+        location: SrcSpan,
+    },
+
     DeprecatedTargetShorthand {
         target: Target,
         location: SrcSpan,
@@ -355,7 +366,28 @@ To match on all possible lists, use the `_` catch-all pattern instead.",
                     extra_labels: vec![],
                 }),
             },
-
+            Warning::DeprecatedSyntax {
+                path,
+                src,
+                warning: DeprecatedSyntaxWarning::DeprecatedEmptyClauseGuard { location },
+            } => Diagnostic {
+                title: "Deprecated empty guard syntax".into(),
+                text: wrap(
+                    "This syntax for an empty guard is deprecated. \
+To have a clause without a guard, remove this.",
+                ),
+                hint: None,
+                level: diagnostic::Level::Warning,
+                location: Some(Location {
+                    label: diagnostic::Label {
+                        text: Some("This can be removed.".into()),
+                        span: *location,
+                    },
+                    path: path.clone(),
+                    src: src.clone(),
+                    extra_labels: vec![],
+                }),
+            },
             Warning::DeprecatedSyntax {
                 path,
                 src,
