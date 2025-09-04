@@ -4,6 +4,7 @@ use flate2::{Compression, write::GzEncoder};
 use gleam_core::{
     Error, Result,
     analyse::TargetSupport,
+    ast::{CallArg, Statement, TypedExpr, TypedFunction},
     build::{Codegen, Compile, Mode, Options, Package, Target},
     config::{GleamVersion, PackageConfig, SpdxLicense},
     docs::{Dependency, DependencyKind, DocContext},
@@ -46,6 +47,7 @@ pub fn command(paths: &ProjectPaths, replace: bool, i_am_sure: bool) -> Result<(
 
     check_for_name_squatting(&compile_result)?;
     check_for_multiple_top_level_modules(&compile_result, i_am_sure)?;
+    check_for_default_main(&compile_result)?;
 
     // Build HTML documentation
     let docs_tarball = fs::create_tar_archive(docs::build_documentation(
@@ -155,6 +157,61 @@ fn check_for_name_squatting(package: &Package) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+/// Checks if publishing packages contain default main functions.
+/// Main functions with documentation are considered intentional and allowed.
+fn check_for_default_main(package: &Package) -> Result<(), Error> {
+    let package_name = &package.config.name;
+
+    let has_default_main = package
+        .modules
+        .iter()
+        .flat_map(|m| m.ast.definitions.iter())
+        .filter_map(|d| d.main_function())
+        .any(|main| main.documentation.is_none() && is_default_main(main, package_name));
+
+    if has_default_main {
+        return Err(Error::CannotPublishWithDefaultMain {
+            package_name: package_name.clone(),
+        });
+    }
+
+    Ok(())
+}
+
+fn is_default_main(main: &TypedFunction, package_name: &EcoString) -> bool {
+    if main.body.len() != 1 {
+        return false;
+    }
+
+    let Statement::Expression(expression) = main.body.first() else {
+        return false;
+    };
+
+    if !expression.is_println() {
+        return false;
+    }
+
+    match expression {
+        TypedExpr::Call { arguments, .. } => {
+            if arguments.len() != 1 {
+                return false;
+            }
+
+            match arguments.first() {
+                Some(CallArg {
+                    value: TypedExpr::String { value, .. },
+                    ..
+                }) => {
+                    let default_argument = format!("Hello from {}!", &package_name);
+                    value == &default_argument
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }
 
 fn check_for_multiple_top_level_modules(package: &Package, i_am_sure: bool) -> Result<(), Error> {

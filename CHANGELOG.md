@@ -156,6 +156,10 @@
   of inline tables if they are missing.
   ([Andrey Kozhev](https://github.com/ankddev))
 
+- `gleam publish` now blocks publishing packages that contain the default main
+  function to prevent accidental publishing of unmodified template code.
+  ([Joohoon Cha](https://github.com/jcha0713))
+
 ### Language server
 
 - The "pattern match on variable" can now be triggered on lists. For example:
@@ -411,3 +415,11 @@
 
 - Fixed a bug where the compiler allowed to write a guard with an empty clause.
   ([Tristan-Mihai Radulescu](https://github.com/Courtcircuits))
+
+- Fixed a bug where switching from a hex dependency to a git dependency would
+  result in an error from the compiler.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would reference a redeclared variable in a let
+  assert message, instead of the original variable, on the Erlang target.
+  ([Danielle Maywood](https://github.com/DanielleMaywood))
