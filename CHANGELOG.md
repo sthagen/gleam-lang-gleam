@@ -184,8 +184,8 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The "pattern match on variable" can now be triggered on variables introduced
-  by other patterns. For example:
+- The "pattern match on variable" code action can now be triggered on variables
+  introduced by other patterns. For example:
 
   ```gleam
   pub fn main() {
@@ -203,6 +203,33 @@
     case role {
       Admin -> todo
       Member -> todo
+    }
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The "pattern match on variable" code action can now be triggered on variables
+  in case expressions. For example:
+
+  ```gleam
+  pub fn main() {
+    case find_user() {
+      Ok(user) -> todo
+      Error(_) -> todo
+    }
+  }
+  ```
+
+  Triggering the action over the `user` variable would result in the following
+  code:
+
+  ```gleam
+  pub fn main() {
+    case find_user() {
+      Ok(Admin) -> todo
+      Ok(Member) -> todo
+      Error(_) -> todo
     }
   }
   ```
@@ -304,8 +331,9 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- The "Add type annotations" and "Generate function" code actions now ignore type
-  variables defined in other functions, improving the generated code. For example:
+- The "Add type annotations" and "Generate function" code actions now ignore
+  type variables defined in other functions, improving the generated code.
+  For example:
 
   ```gleam
   fn something(a: a, b: b, c: c) -> d { todo }
@@ -327,6 +355,16 @@
   ```
 
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- You can now go to definition, rename, etc. from alternative patterns!
+  ```gleam
+  case wibble {
+    Wibble | Wobble -> 0
+    //         ^- Previously you could not trigger actions from here
+  }
+
+  ```
+  ([fruno](https://github.com/fruno-bulax))
 
 ### Formatter
 
@@ -359,8 +397,8 @@
 
 ### Bug fixes
 
-- Fixed a bug where literals using `\u{XXXX}` syntax in bit array pattern segments were not
-  translated to Erlang's `\x{XXXX}` syntax correctly.
+- Fixed a bug where literals using `\u{XXXX}` syntax in bit array pattern
+  segments were not translated to Erlang's `\x{XXXX}` syntax correctly.
   ([Benjamin Peinhardt](https://github.com/bcpeinhardt))
 
 - Fixed a bug where `echo` could crash on JavaScript if the module contains
@@ -423,3 +461,7 @@
 - Fixed a bug where the compiler would reference a redeclared variable in a let
   assert message, instead of the original variable, on the Erlang target.
   ([Danielle Maywood](https://github.com/DanielleMaywood))
+
+- Fixed a bug where the compiler would report an imported module as unused if it
+  were used by private functions only.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
