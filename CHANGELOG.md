@@ -147,6 +147,29 @@
   is now smaller in certain cases.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The compiler now shows a specific syntax error when trying to use an
+  angle-bracket syntax for generic types or function definitions:
+
+  ```txt
+  error: Syntax error
+    ┌─ /src/parse/error.gleam:2:12
+    │
+  2 │ type Either<a, b> {
+    │            ^ I was expecting `(` here.
+
+  Type parameters use lowercase names and are surrounded by parentheses.
+
+      type Either(a, b) {
+
+  See: https://tour.gleam.run/data-types/generic-custom-types/
+  ```
+
+  ([Aaron Christiansen](https://github.com/AaronC81))
+
+- Fault tolerance for analysis of labeled fields in constructor patterns has
+  been improved.
+  ([sobolevn](https://github.com/sobolevn))
+
 ### Build tool
 
 - New projects are generated using OTP28 on GitHub Actions.
@@ -161,6 +184,37 @@
   ([Joohoon Cha](https://github.com/jcha0713))
 
 ### Language server
+
+- The language server now offers a code action to remove all the unreachable
+  branches in a case expression. For example:
+
+  ```gleam
+  pub fn main() {
+    case find_user() {
+      Ok(user) -> todo
+      Ok(Admin) -> todo
+  //  ^^^^^^^^^ This branch is unreachable
+      Ok(User) -> todo
+  //  ^^^^^^^^ This branch is unreachable
+      Error(_) -> todo
+    }
+  }
+  ```
+
+  Hovering over one of the unreachable branches and triggering the code action
+  would remove all the unreachable branches:
+
+  ```gleam
+  pub fn main() {
+    case find_user() {
+      Ok(user) -> todo
+
+      Error(_) -> todo
+    }
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The "pattern match on variable" can now be triggered on lists. For example:
 
@@ -449,6 +503,10 @@
 
 - Fixed a bug where the compiler would suggest to use a discarded value defined
   in a different function.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the formatter would format a panic message adding more
+  nesting than necessary.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Fixed a bug where the compiler allowed to write a guard with an empty clause.
