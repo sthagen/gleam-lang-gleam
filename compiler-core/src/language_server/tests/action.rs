@@ -5567,6 +5567,52 @@ fn extract_variable_in_block() {
 }
 
 #[test]
+fn extract_variable_and_dont_shadow_existing_variable_in_operator() {
+    let src = "import gleam/int
+import random_import as int_2
+
+const int_3 = 3
+
+fn int_4() { 4 }
+
+fn isolated_scope() {
+    let int_6 = 6
+    int_6 + 1
+}
+
+pub fn main() {
+  let int_5 = 5
+  let result = int_5 + 6
+  result
+}
+";
+
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        TestProject::for_source(src)
+            .add_hex_module("gleam/int", "")
+            .add_hex_module("random_import", ""),
+        find_position_of("6").nth_occurrence(4).to_selection(),
+    );
+}
+
+#[test]
+fn extract_variable_and_dont_shadow_existing_variable_in_argument() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"fn wibble(a, b) {
+  a + b
+}
+
+fn main() {
+  let int = 1
+  wibble(int, 2)
+}"#,
+        find_position_of("2").to_selection()
+    );
+}
+
+#[test]
 fn extract_constant_from_call_argument_with_bit_array() {
     assert_code_action!(
         EXTRACT_CONSTANT,
@@ -9794,5 +9840,134 @@ fn remove_unreachable_branches_does_not_pop_up_if_all_branches_are_reachable() {
 }
 ",
         find_position_of("Ok(n)").to_selection()
+    );
+}
+
+#[test]
+fn add_type_annotations_public_alias_to_internal_type_aliased_module() {
+    let src = "
+import package as pkg
+
+pub fn main() {
+  pkg.make_wibble()
+}
+";
+
+    assert_code_action!(
+        ADD_ANNOTATION,
+        TestProject::for_source(src)
+            .add_package_module(
+                "package",
+                "package",
+                "
+import package/internal
+
+pub type Wibble = internal.Wibble
+
+pub fn make_wibble() {
+  internal.Wibble
+}
+"
+            )
+            .add_package_module("package", "package/internal", "pub type Wibble { Wibble }"),
+        find_position_of("main").to_selection(),
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/3898
+#[test]
+fn add_type_annotations_public_alias_to_internal_type() {
+    let src = "
+import package
+
+pub fn main() {
+  package.make_wibble()
+}
+";
+
+    assert_code_action!(
+        ADD_ANNOTATION,
+        TestProject::for_source(src)
+            .add_package_module(
+                "package",
+                "package",
+                "
+import package/internal
+
+pub type Wibble = internal.Wibble
+
+pub fn make_wibble() {
+  internal.Wibble
+}
+"
+            )
+            .add_package_module("package", "package/internal", "pub type Wibble { Wibble }"),
+        find_position_of("main").to_selection(),
+    );
+}
+
+#[test]
+fn add_type_annotations_public_alias_to_internal_generic_type() {
+    let src = "
+import package
+
+pub fn main() {
+  package.make_wibble(10)
+}
+";
+
+    assert_code_action!(
+        ADD_ANNOTATION,
+        TestProject::for_source(src)
+            .add_package_module(
+                "package",
+                "package",
+                "
+import package/internal
+
+pub type Wibble(a, b) = internal.Wibble(a, b)
+
+pub fn make_wibble(x) {
+  internal.Wibble(x)
+}
+"
+            )
+            .add_package_module(
+                "package",
+                "package/internal",
+                "pub type Wibble(a, b) { Wibble(a) }"
+            ),
+        find_position_of("main").to_selection(),
+    );
+}
+
+#[test]
+fn add_type_annotations_uses_internal_name_for_same_package() {
+    let src = "
+import thepackage/internal
+
+pub fn main() {
+  internal.Constructor
+}
+";
+
+    assert_code_action!(
+        ADD_ANNOTATION,
+        TestProject::for_source(src)
+            .add_module(
+                "thepackage/internal",
+                "
+pub type Internal { Constructor }
+"
+            )
+            .add_module(
+                "thepackage/external",
+                "
+import thepackage/internal
+
+pub type External = internal.Internal
+"
+            ),
+        find_position_of("main").to_selection(),
     );
 }
