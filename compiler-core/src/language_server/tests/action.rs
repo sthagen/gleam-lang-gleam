@@ -1970,6 +1970,51 @@ pub type Wibble { Wibble(arg1: Int, arg2: String) }
 }
 
 #[test]
+fn fill_in_labelled_args_works_with_pattern_and_no_parentheses() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub fn main() {
+  let assert Ok(Wibble) = Wibble(1, "2")
+}
+
+pub type Wibble { Wibble(arg1: Int, arg2: String) }
+ "#,
+        find_position_of("Wibble").select_until(find_position_of("Wibble").under_last_char()),
+    );
+}
+
+#[test]
+fn fill_in_labelled_args_works_with_pattern_and_parentheses() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub fn main() {
+  let assert Ok(Wibble()) = Wibble(1, "2")
+}
+
+pub type Wibble { Wibble(arg1: Int, arg2: String) }
+ "#,
+        find_position_of("Wibble").select_until(find_position_of("Wibble").under_last_char()),
+    );
+}
+
+#[test]
+fn fill_in_labelled_args_works_with_pattern_and_parentheses_with_spaces() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub fn main() {
+  let assert Ok(Wibble   ()) = Wibble(1, "2")
+}
+
+pub type Wibble { Wibble(arg1: Int, arg2: String) }
+ "#,
+        find_position_of("Wibble").select_until(find_position_of("Wibble").under_last_char()),
+    );
+}
+
+#[test]
 fn fill_in_labelled_args_works_with_pipes() {
     assert_code_action!(
         FILL_LABELS,
@@ -3459,6 +3504,57 @@ pub fn main(x) -> option.Option(wobble.Wibble) {
             .add_hex_module("option", "pub type Option(v) { Some(v) None }")
             .add_hex_module("wobble", "pub type Wibble { Wobble(Int) }"),
         find_position_of("wobble.").select_until(find_position_of("Wibble")),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_aliased_type() {
+    let src = r#"
+import wobble
+
+pub fn main(x) -> wobble.Wibble(a) {
+    todo
+}
+"#;
+    assert_code_action!(
+        "Unqualify wobble.Wibble",
+        TestProject::for_source(src).add_hex_module("wobble", "pub type Wibble(a) = List(a)"),
+        find_position_of("wobble.").select_until(find_position_of("Wibble")),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_aliased_type_with_multiple_imports() {
+    let src = r#"
+import other/wobble as other
+import wibble/wobble
+
+pub fn main(x) -> wobble.Wibble(a) {
+    todo
+}
+"#;
+    assert_code_action!(
+        "Unqualify wobble.Wibble",
+        TestProject::for_source(src)
+            .add_hex_module("wibble/wobble", "pub type Wibble(a) = List(a)")
+            .add_hex_module("other/wobble", "pub type Wibble(a) = List(a)"),
+        find_position_of("wobble.").select_until(find_position_of("Wibble")),
+    );
+}
+
+#[test]
+fn test_qualified_aliased_to_unqualified_aliased_type() {
+    let src = r#"
+import wobble as wob
+
+pub fn main(x) -> wob.Wibble(a) {
+    todo
+}
+"#;
+    assert_code_action!(
+        "Unqualify wob.Wibble",
+        TestProject::for_source(src).add_hex_module("wobble", "pub type Wibble(a) = List(a)"),
+        find_position_of("wob.").select_until(find_position_of("Wibble")),
     );
 }
 
