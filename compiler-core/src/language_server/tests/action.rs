@@ -1794,6 +1794,22 @@ pub fn main() {
 }
 
 #[test]
+fn test_convert_assert_does_not_appear_if_the_entire_module_is_selected() {
+    assert_no_code_actions!(
+        CONVERT_TO_CASE,
+        "
+pub type Wibble { Wibble(arg: Int, arg2: Float) }
+pub fn main() {
+  let assert Wibble(arg2:, ..) = Wibble(arg: 1, arg2: 1.0)
+  let assert Wibble(arg2:, ..) = Wibble(arg: 1, arg2: 1.0)
+}
+// end
+",
+        find_position_of("pub").select_until(find_position_of("// end")),
+    );
+}
+
+#[test]
 fn label_shorthand_action_works_on_labelled_call_args() {
     assert_code_action!(
         USE_LABEL_SHORTHAND_SYNTAX,
@@ -9268,6 +9284,36 @@ pub fn main() {
 }
   ",
         find_position_of("use").to_selection()
+    );
+}
+
+#[test]
+fn extract_variable_in_anonymous_fn_in_argument() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        "fn map(value, fn_over_value) { todo }
+
+pub fn main() {
+  1
+  |> Ok
+  |> map(fn(value) { value + 2 })
+}",
+        find_position_of("2").to_selection()
+    );
+}
+
+#[test]
+fn do_not_extract_top_level_variable_in_anonymous_fn_in_argument() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        "fn map(value, fn_over_value) { todo }
+
+pub fn main() {
+  1
+  |> Ok
+  |> map(fn(value) { value + 1 })
+}",
+        find_position_of("value").nth_occurrence(4).to_selection()
     );
 }
 

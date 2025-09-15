@@ -655,6 +655,14 @@ pub enum Error {
         package: EcoString,
         location: SrcSpan,
     },
+
+    /// This happens when a type has no type parameters (for example `Int`) but
+    /// it is being used as a constructor: `Int()`, `Bool(a, b)`.
+    ///
+    TypeUsedAsAConstructor {
+        location: SrcSpan,
+        name: EcoString,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1168,6 +1176,7 @@ impl Error {
             | Error::UnsafeRecordUpdate { location, .. }
             | Error::UnnecessarySpreadOperator { location, .. }
             | Error::IncorrectTypeArity { location, .. }
+            | Error::TypeUsedAsAConstructor { location, .. }
             | Error::CouldNotUnify { location, .. }
             | Error::RecursiveType { location, .. }
             | Error::DuplicateName {

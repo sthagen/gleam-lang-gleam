@@ -310,17 +310,19 @@ pub struct LetAssertToCase<'a> {
 
 impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
     fn visit_typed_assignment(&mut self, assignment: &'ast TypedAssignment) {
-        // To prevent weird behaviour when `let assert` statements are nested,
-        // we only check for the code action between the `let` and `=`.
-        let code_action_location =
-            SrcSpan::new(assignment.location.start, assignment.value.location().start);
-        let code_action_range =
-            src_span_to_lsp_range(code_action_location, self.edits.line_numbers);
-
+        let assignment_range = self.edits.src_span_to_lsp_range(assignment.location);
+        let assignment_start_range = self.edits.src_span_to_lsp_range(SrcSpan {
+            start: assignment.location.start,
+            end: assignment.value.location().start,
+        });
         self.visit_typed_expr(&assignment.value);
 
-        // Only offer the code action if the cursor is over the statement
-        if !overlaps(code_action_range, self.params.range) {
+        // Only offer the code action if the cursor is over the statement and
+        // to prevent weird behaviour when `let assert` statements are nested,
+        // we only check for the code action between the `let` and `=`.
+        if !(within(self.params.range, assignment_range)
+            && overlaps(self.params.range, assignment_start_range))
+        {
             return;
         }
 
@@ -353,7 +355,7 @@ impl<'ast> ast::visit::Visit<'ast> for LetAssertToCase<'_> {
                 .expect("Location must be valid")
         });
 
-        let range = src_span_to_lsp_range(assignment.location, self.edits.line_numbers);
+        let range = self.edits.src_span_to_lsp_range(assignment.location);
 
         // Figure out which variables are assigned in the pattern
         let variables = PatternVariableFinder::find_variables_in_pattern(&assignment.pattern);
@@ -2947,6 +2949,16 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
         }
 
         match expr {
+            TypedExpr::Fn {
+                kind: FunctionLiteralKind::Anonymous { .. },
+                ..
+            } => {
+                self.at_position(ExtractVariablePosition::TopLevelStatement, |this| {
+                    ast::visit::visit_typed_expr(this, expr);
+                });
+                return;
+            }
+
             // Expressions that don't make sense to extract
             TypedExpr::Panic { .. }
             | TypedExpr::Echo { .. }
@@ -5741,7 +5753,6 @@ impl<'ast, IO> ast::visit::Visit<'ast> for GenerateVariant<'ast, IO> {
         type_: &'ast Arc<Type>,
     ) {
         let pattern_range = src_span_to_lsp_range(*location, self.line_numbers);
-        // TODO)) Solo se il pattern non è valido!!!!!
         if within(self.params.range, pattern_range) {
             if labels_are_correct(arguments) {
                 self.try_save_variant_to_generate(

@@ -2229,6 +2229,29 @@ but {given} where provided."
                         }
                     }
 
+                    TypeError::TypeUsedAsAConstructor { location, name } => {
+                        let text = wrap_format!(
+                            "`{name}` is a type with no parameters, but here it's \
+being used as a type constructor."
+                        );
+
+                        Diagnostic {
+                            title: "Type used as a type constructor".into(),
+                            text,
+                            hint: None,
+                            level: Level::Error,
+                            location: Some(Location {
+                                label: Label {
+                                    text: Some("You can remove this".into()),
+                                    span: *location,
+                                },
+                                path: path.clone(),
+                                src: src.clone(),
+                                extra_labels: vec![],
+                            }),
+                        }
+                    }
+
                     TypeError::IncorrectArity {
                         labels,
                         location,

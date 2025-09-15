@@ -172,6 +172,11 @@
   is now smaller in certain cases.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- Writing a type name followed by `()` now emits an error during analysis
+  rather than parsing, so it no longer stops the compiler from reporting errors
+  further in the code.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The compiler now shows a specific syntax error when trying to use an
   angle-bracket syntax for generic types or function definitions:
 
@@ -218,6 +223,8 @@
   Hint: Maybe you meant to create a comment?
   Comments in Gleam start with `//`, not `#`
   ```
+
+  ([sobolevn](https://github.com/sobolevn))
 
 ### Build tool
 
@@ -540,6 +547,10 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The language server now offers the `convert to case` code action only if a
+  single `let assert` expression is selected.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 - The formatter now removes needless multiple negations that are safe to remove.
@@ -659,3 +670,7 @@
 - Fixed a bug where the language server would not fill in the missing labels of
   a pattern correctly, generating invalid code.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where invalid code was being generated when using the "Extract
+  variable" code action inside an anonymous function.
+  ([Matias Carlander](https://github.com/matiascr))
