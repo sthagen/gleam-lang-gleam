@@ -8297,3 +8297,117 @@ impl<'ast> ast::visit::Visit<'ast> for RemoveUnreachableBranches<'ast> {
         ast::visit::visit_typed_expr_case(self, location, type_, subjects, clauses, compiled_case);
     }
 }
+
+/// Code action to add labels to a constructor/call where all the labels where
+/// omitted.
+///
+pub struct AddOmittedLabels<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    arguments_and_omitted_labels: Option<Vec<CallArgumentWithOmittedLabel>>,
+}
+
+struct CallArgumentWithOmittedLabel {
+    location: SrcSpan,
+
+    /// If the argument has a label this will be the label we can use for it.
+    ///
+    omitted_label: Option<EcoString>,
+
+    /// If the argument is a variable that has the same name as the omitted label
+    /// and could use the shorthand syntax.
+    ///
+    can_use_shorthand_syntax: bool,
+}
+
+impl<'a> AddOmittedLabels<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            arguments_and_omitted_labels: None,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let Some(call_arguments) = self.arguments_and_omitted_labels else {
+            return vec![];
+        };
+
+        for call_argument in call_arguments {
+            let Some(label) = call_argument.omitted_label else {
+                continue;
+            };
+            if call_argument.can_use_shorthand_syntax {
+                self.edits.insert(call_argument.location.end, ":".into());
+            } else {
+                self.edits
+                    .insert(call_argument.location.start, format!("{label}: "))
+            }
+        }
+
+        let mut action = Vec::with_capacity(1);
+        CodeActionBuilder::new("Add omitted labels")
+            .kind(CodeActionKind::REFACTOR_REWRITE)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
+            .preferred(false)
+            .push_to(&mut action);
+        action
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for AddOmittedLabels<'ast> {
+    fn visit_typed_expr_call(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        fun: &'ast TypedExpr,
+        arguments: &'ast [TypedCallArg],
+    ) {
+        let called_function_range = self.edits.src_span_to_lsp_range(fun.location());
+        if !within(self.params.range, called_function_range) {
+            ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments);
+            return;
+        }
+
+        let Some(field_map) = fun.field_map() else {
+            ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments);
+            return;
+        };
+        let argument_index_to_label = field_map.indices_to_labels();
+
+        let mut omitted_labels = Vec::with_capacity(arguments.len());
+        for (index, argument) in arguments.iter().enumerate() {
+            // We can't apply this code action to calls where any of the
+            // arguments have a label explicitly provided.
+            if argument.label.is_some() {
+                return;
+            }
+
+            let label = argument_index_to_label
+                .get(&(index as u32))
+                .cloned()
+                .cloned();
+
+            let can_use_shorthand_syntax = match (&label, &argument.value) {
+                (Some(label), TypedExpr::Var { name, .. }) => name == label,
+                (Some(_) | None, _) => false,
+            };
+
+            omitted_labels.push(CallArgumentWithOmittedLabel {
+                location: argument.location,
+                omitted_label: label,
+                can_use_shorthand_syntax,
+            })
+        }
+        self.arguments_and_omitted_labels = Some(omitted_labels);
+    }
+}

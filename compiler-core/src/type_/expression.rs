@@ -4172,6 +4172,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         kind: CallKind,
     ) -> (TypedExpr, Vec<TypedCallArg>, Arc<Type>) {
         let mut labelled_arity_error = false;
+
         // Check to see if the function accepts labelled arguments
         let field_map = self
             .get_field_map(&fun)
@@ -4226,11 +4227,11 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // Extract the type of the fun, ensuring it actually is a function
         let (mut arguments_types, return_type) =
             match match_fun_type(fun.type_(), arguments.len(), self.environment) {
-                Ok(fun) => fun,
-                Err(e) => {
+                Ok(function) => function,
+                Err(error) => {
                     let converted_error =
-                        convert_not_fun_error(e.clone(), fun.location(), location, kind);
-                    match e {
+                        convert_not_fun_error(error.clone(), fun.location(), location, kind);
+                    match error {
                         // If the function was valid but had the wrong number of arguments passed.
                         // Then we keep the error but still want to continue analysing the arguments that were passed.
                         MatchFunTypeError::IncorrectArity {
@@ -4358,6 +4359,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 }
 
                 let value = self.infer_call_argument(value, type_.clone(), argument_kind);
+
                 CallArg {
                     label,
                     value,
