@@ -231,6 +231,10 @@
 - New projects are generated using OTP28 on GitHub Actions.
   ([Louis Pilfold](https://github.com/lpil))
 
+- The build tool now has a new `hex owner transfer` subcommand to transfer
+  ownership of existing packages.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - `gleam add` now adds `dependencies` and `dev-dependencies` as tables instead
   of inline tables if they are missing.
   ([Andrey Kozhev](https://github.com/ankddev))
@@ -268,6 +272,9 @@
   ```
 
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Support has been added for using Tangled as a repository.
+  ([Naomi Roberts](https://github.com/naomieow))
 
 ### Language server
 
@@ -703,3 +710,7 @@
 - Fixed a bug where invalid code was being generated when using the "Extract
   variable" code action inside an anonymous function.
   ([Matias Carlander](https://github.com/matiascr))
+
+- Fixed a bug where running `gleam update` would not properly update git
+  dependencies unless `gleam clean` was run first.
+  ([Surya Rose](https://github.com/GearsDatapacks))
