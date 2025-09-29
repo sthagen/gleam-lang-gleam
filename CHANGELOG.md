@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.13.0-rc1 - 2025-09-29
 
 ### Compiler
 
@@ -662,6 +662,48 @@
   single `let assert` expression is selected.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The language server now offers an "Extract function" code action to extract a
+  selected piece of code into a separate function. For example:
+
+  ```gleam
+  const head_byte_count = 256
+
+  pub fn get_head_of_file() {
+    let assert Ok(contents) = read_file()
+
+    case contents {
+  //^ Select from here
+      <<head:bytes-size(head_byte_count), _:bits>> -> Ok(head)
+      _ -> Error(Nil)
+    }
+  //^ Until here
+  }
+  ```
+
+  Would become:
+
+  ```gleam
+  const head_byte_count = 256
+
+  pub fn get_head_of_file() {
+    let assert Ok(contents) = read_file()
+
+    function(contents)
+  }
+
+  fn function(contents: BitArray) -> Result(BitArray, Nil) {
+    case contents {
+      <<head:bytes-size(head_byte_count), _:bits>> -> Ok(head)
+      _ -> Error(Nil)
+    }
+  }
+  ```
+
+  You can then use language server renaming to choose an appropriate name for
+  the new function.
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
 ### Formatter
 
 - The formatter now removes needless multiple negations that are safe to remove.
@@ -796,3 +838,6 @@
 - Fixed a bug where the compiler would produce wrong JavaScript code for binary
   pattern matching expressions using literal strings and byte segments.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the build tool would crash when trying to add transitive dependency.
+  ([Andrey Kozhev](https://github.com/ankddev))
