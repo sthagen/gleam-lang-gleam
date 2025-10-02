@@ -8623,10 +8623,11 @@ impl<'a> ExtractFunction<'a> {
                 statements,
                 location: full_location,
             }) => {
-                let location = SrcSpan::new(
-                    statements.first().location().start,
-                    statements.last().location().end,
-                );
+                let location = statements
+                    .first()
+                    .location()
+                    .merge(&statements.last().location());
+
                 self.extract_code_in_tail_position(
                     *full_location,
                     location,
@@ -8635,13 +8636,23 @@ impl<'a> ExtractFunction<'a> {
                     end,
                 )
             }
-            ExtractedValue::Expression(expression) => self.extract_code_in_tail_position(
-                expression.location(),
-                expression.location(),
-                expression.type_(),
-                extracted.parameters,
-                end,
-            ),
+            ExtractedValue::Expression(expression) => {
+                let expression_type = match expression {
+                    TypedExpr::Fn {
+                        type_,
+                        kind: FunctionLiteralKind::Use { .. },
+                        ..
+                    } => type_.fn_types().expect("use callback to be a function").1,
+                    _ => expression.type_(),
+                };
+                self.extract_code_in_tail_position(
+                    expression.location(),
+                    expression.location(),
+                    expression_type,
+                    extracted.parameters,
+                    end,
+                )
+            }
             ExtractedValue::Statements {
                 location,
                 position: StatementPosition::NotTail,
@@ -8981,11 +8992,19 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
     }
 
     fn visit_typed_statement(&mut self, statement: &'ast TypedStatement) {
-        let location = statement.location();
-        if self.can_extract(location) {
-            let position = if let Some(last_statement_location) = self.last_statement_location
-                && location == last_statement_location
-            {
+        let statement_location = statement.location();
+
+        if self.can_extract(statement_location) {
+            let is_in_tail_position =
+                self.last_statement_location
+                    .is_some_and(|last_statement_location| {
+                        last_statement_location == statement_location
+                    });
+
+            // A use is always eating up the entire block, if we're extracting it,
+            // it will be in tail position there and the extracted function should
+            // return its returned value.
+            let position = if statement.is_use() || is_in_tail_position {
                 StatementPosition::Tail {
                     type_: statement.type_(),
                 }
@@ -8996,7 +9015,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
             match &mut self.function {
                 None => {
                     self.function = Some(ExtractedFunction::new(ExtractedValue::Statements {
-                        location,
+                        location: statement_location,
                         position,
                     }));
                 }
@@ -9008,8 +9027,8 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                     ..
                 }) => {}
                 // If we are selecting multiple statements, this statement should
-                // be included within list, so we merge th spans to ensure it is
-                // included.
+                // be included within list, so we merge the spans to ensure it
+                // is included.
                 Some(ExtractedFunction {
                     value:
                         ExtractedValue::Statements {
@@ -9018,7 +9037,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                         },
                     ..
                 }) => {
-                    *location = location.merge(&statement.location());
+                    *location = location.merge(&statement_location);
                     *extracted_position = position;
                 }
             }

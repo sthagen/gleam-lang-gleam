@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Bug fixes
+
+- Fixed a bug where the "Extract function" code action would not properly
+  extract a `use` expression.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the "Extract function" code action would generate a function
+  with the wrong type when used on a use expression.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the error message for inexhaustive patterns could show
+  incorrect extra patterns in addition to the correct missing patterns.
+  ([Adi Salimgereyev](https://github.com/abs0luty))
+
 ## v1.13.0-rc1 - 2025-09-29
 
 ### Compiler
