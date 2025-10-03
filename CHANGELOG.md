@@ -16,6 +16,15 @@
   incorrect extra patterns in addition to the correct missing patterns.
   ([Adi Salimgereyev](https://github.com/abs0luty))
 
+- Fixed a bug where triggering the "Generate function" code action to generate
+  a function in a different module could cause the generated function to appear
+  in the middle of an existing function, resulting in invalid code.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the "turn into pipe" code action would not trigger inside
+  the final step of a pipeline.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ## v1.13.0-rc1 - 2025-09-29
 
 ### Compiler

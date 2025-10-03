@@ -8394,6 +8394,32 @@ pub fn main() {
 }
 
 #[test]
+fn convert_to_pipe_works_in_anonymous_function_inside_a_pipeline() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble |> wobble(fn() { woo(1) })
+}
+",
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_pipe_works_in_final_step_of_a_pipeline() {
+    assert_code_action!(
+        CONVERT_TO_PIPE,
+        "
+pub fn main() {
+  wibble |> wobble(woo(1))
+}
+",
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
 fn convert_to_pipe_with_function_call_with_labelled_arguments_inserts_hole() {
     assert_code_action!(
         CONVERT_TO_PIPE,
@@ -10635,5 +10661,28 @@ fn wibble(f: fn() -> Float) -> Float { f() }
         find_position_of("{")
             .nth_occurrence(3)
             .select_until(find_position_of("}"))
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/5036
+#[test]
+fn generate_function_in_other_module_correctly_appends() {
+    let src = "import module_breaker/another
+
+pub fn main() -> Nil {
+  another.function()
+}
+";
+
+    assert_code_action!(
+        GENERATE_FUNCTION,
+        TestProject::for_source(src).add_module(
+            "module_breaker/another",
+            "pub fn useless() {
+  Nil
+}
+"
+        ),
+        find_position_of("function").to_selection()
     );
 }
