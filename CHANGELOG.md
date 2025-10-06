@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.13.0-rc2 - 2025-10-06
 
 ### Bug fixes
 
@@ -23,6 +23,10 @@
 
 - Fixed a bug where the "turn into pipe" code action would not trigger inside
   the final step of a pipeline.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the "pattern match on variable" code action would crash when
+  used on a variable followed by a case expression.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ## v1.13.0-rc1 - 2025-09-29
