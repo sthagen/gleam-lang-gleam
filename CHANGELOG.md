@@ -210,7 +210,7 @@
   a constant inside a function. For example, the following code:
 
   ```gleam
-  pub fn deep_thought() {
+  pub fn deep_thought() -> Int {
     const the_answer = 42
     the_answer
   }
@@ -260,7 +260,7 @@
 
   ([Aaron Christiansen](https://github.com/AaronC81))
 
-- Fault tolerance for analysis of labeled fields in constructor patterns has
+- Fault tolerance for analysis of labeled fields in variant patterns has
   been improved.
   ([sobolevn](https://github.com/sobolevn))
 
@@ -310,11 +310,11 @@
   You can use the new API to use the `Person` type in FFI code:
 
   ```javascript
-  import * from "./person.mjs";
+  import {...} from "./person.mjs";
 
   // Constructing custom types
   let teacher = Person$Teacher("Joe Armstrong", "Computer Science");
-  let student = Person$Student("Louis Pilfold", 17);
+  let student = Person$Student("Louis Pilfold");
 
   let randomPerson = Math.random() > 0.5 ? teacher : student;
 
@@ -322,10 +322,10 @@
   let randomIsTeacher = Person$isTeacher(randomPerson);
 
   // Getting fields
-  let studentAge = Person$Student$age(student);
+  let teacherSubject = Person$Teacher$subject(teacher);
 
   // The `name` field is shared so can be accessed from either variant
-  let personNAme = Person$name(randomPerson);
+  let personName = Person$name(randomPerson);
   ```
 
   ([Surya Rose](https://github.com/GearsDatapacks))
