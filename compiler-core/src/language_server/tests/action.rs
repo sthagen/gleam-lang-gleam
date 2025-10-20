@@ -133,7 +133,7 @@ const GENERATE_VARIANT: &str = "Generate variant";
 const REMOVE_BLOCK: &str = "Remove block";
 const REMOVE_OPAQUE_FROM_PRIVATE_TYPE: &str = "Remove opaque from private type";
 const COLLAPSE_NESTED_CASE: &str = "Collapse nested case";
-const REMOVE_UNREACHABLE_BRANCHES: &str = "Remove unreachable branches";
+const REMOVE_UNREACHABLE_CLAUSES: &str = "Remove unreachable clauses";
 const ADD_OMITTED_LABELS: &str = "Add omitted labels";
 const EXTRACT_FUNCTION: &str = "Extract function";
 
@@ -8322,6 +8322,20 @@ pub fn main(x) {
 }
 
 #[test]
+fn inline_variable_when_over_let_keyword() {
+    assert_code_action!(
+        INLINE_VARIABLE,
+        r#"
+pub fn main() {
+  let x = 123
+  x + 1
+}
+"#,
+        find_position_of("let").to_selection()
+    );
+}
+
+#[test]
 fn no_code_action_to_inline_variable_used_multiple_times() {
     let src = r#"
 import gleam/io
@@ -10003,9 +10017,9 @@ pub fn main() {
 }
 
 #[test]
-fn remove_unreachable_branches() {
+fn remove_unreachable_clauses() {
     assert_code_action!(
-        REMOVE_UNREACHABLE_BRANCHES,
+        REMOVE_UNREACHABLE_CLAUSES,
         "pub fn main(x) {
   case x {
     Ok(n) -> 1
@@ -10022,7 +10036,7 @@ fn remove_unreachable_branches() {
 #[test]
 fn remove_unreachable_branches_does_not_pop_up_if_all_branches_are_reachable() {
     assert_no_code_actions!(
-        REMOVE_UNREACHABLE_BRANCHES,
+        REMOVE_UNREACHABLE_CLAUSES,
         "pub fn main(x) {
   case x {
     Ok(n) -> 1
@@ -10711,5 +10725,22 @@ pub fn main() -> Nil {
 "
         ),
         find_position_of("function").to_selection()
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/4904
+#[test]
+fn no_code_action_to_generate_function_on_unsupported_target() {
+    assert_no_code_actions!(
+        GENERATE_FUNCTION,
+        r#"
+pub fn main() {
+  wibble()
+}
+
+@external(javascript, "./ffi.mjs", "wibble")
+fn wibble() -> Nil
+"#,
+        find_position_of("wibble").to_selection()
     );
 }
