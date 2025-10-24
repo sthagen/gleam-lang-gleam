@@ -8,7 +8,7 @@ use crate::{
         PIPE_PRECEDENCE, Pattern, PatternUnusedArguments, PipelineAssignmentKind, Publicity,
         RecordConstructor, SrcSpan, TodoKind, TypedArg, TypedAssignment, TypedClauseGuard,
         TypedExpr, TypedModuleConstant, TypedPattern, TypedPipelineAssignment,
-        TypedRecordConstructor, TypedStatement, TypedUse, visit::Visit as _,
+        TypedRecordConstructor, TypedStatement, TypedTailPattern, TypedUse, visit::Visit as _,
     },
     build::{Located, Module},
     config::PackageConfig,
@@ -4436,7 +4436,7 @@ pub struct PatternMatchOnValue<'a, A> {
     module: &'a Module,
     params: &'a CodeActionParams,
     compiler: &'a LspProjectCompiler<A>,
-    pattern_variable_under_cursor: Option<(&'a EcoString, SrcSpan, Arc<Type>)>,
+    pattern_variable_under_cursor: Option<(&'a EcoString, PatternLocation, Arc<Type>)>,
     selected_value: Option<PatternMatchedValue<'a>>,
     edits: TextEdits<'a>,
 }
@@ -4478,8 +4478,24 @@ pub enum PatternMatchedValue<'a> {
     ///
     ClausePatternVariable {
         variable_type: Arc<Type>,
-        variable_location: SrcSpan,
+        variable_location: PatternLocation,
         clause_location: SrcSpan,
+        /// All the names in the clause that are already taken by pattern variables.
+        /// We need this to avoid generating invalid code were two pattern variables
+        /// have the same name.
+        ///
+        /// For example:
+        ///
+        /// ```gleam
+        /// case wibble {
+        ///   [first, ..rest] -> todo
+        ///    ^^^^^ When expanding `first` we can't add any variable pattern
+        ///          called `rest` as it would clash with the `rest` tail that is
+        ///          already there.
+        /// }
+        /// ```
+        ///
+        bound_variables: Vec<BoundVariable>,
     },
     UseVariable {
         variable_name: &'a EcoString,
@@ -4489,6 +4505,26 @@ pub enum PatternMatchedValue<'a> {
         ///
         use_location: SrcSpan,
     },
+}
+
+#[derive(Clone)]
+pub enum PatternLocation {
+    /// Any pattern that doesn't need any special handling.
+    ///
+    Regular { location: SrcSpan },
+    /// List tails need some care to not generate invalid syntax when pattern
+    /// matched on in case expressions.
+    ///
+    ListTail {
+        /// This location covers the entire list tail pattern, including the `..`
+        location: SrcSpan,
+    },
+}
+
+impl PatternLocation {
+    fn regular(location: SrcSpan) -> Self {
+        Self::Regular { location }
+    }
 }
 
 impl<'a, IO> PatternMatchOnValue<'a, IO> {
@@ -4540,8 +4576,14 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
                 variable_type,
                 variable_location,
                 clause_location,
+                bound_variables,
             }) => {
-                self.match_on_clause_variable(variable_type, variable_location, clause_location);
+                self.match_on_clause_variable(
+                    variable_type,
+                    variable_location,
+                    clause_location,
+                    &bound_variables,
+                );
                 "Pattern match on variable"
             }
 
@@ -4571,7 +4613,9 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
             return;
         };
 
-        let Some(patterns) = self.type_to_destructure_patterns(arg.type_.as_ref()) else {
+        let Some(patterns) =
+            self.type_to_destructure_patterns(arg.type_.as_ref(), &mut NameGenerator::new())
+        else {
             return;
         };
 
@@ -4633,7 +4677,9 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
         variable_type: Arc<Type>,
         assignment_location: SrcSpan,
     ) {
-        let Some(patterns) = self.type_to_destructure_patterns(variable_type.as_ref()) else {
+        let Some(patterns) =
+            self.type_to_destructure_patterns(variable_type.as_ref(), &mut NameGenerator::new())
+        else {
             return;
         };
 
@@ -4660,15 +4706,36 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
     fn match_on_clause_variable(
         &mut self,
         variable_type: Arc<Type>,
-        variable_location: SrcSpan,
+        variable_location: PatternLocation,
         clause_location: SrcSpan,
+        bound_variables: &[BoundVariable],
     ) {
-        let Some(patterns) = self.type_to_destructure_patterns(variable_type.as_ref()) else {
+        let mut names = NameGenerator::new();
+        names.reserve_bound_variables(bound_variables);
+
+        let patterns = if matches!(variable_location, PatternLocation::ListTail { .. }) {
+            // Here we're dealing with a special case: if someone wants to expand the tail
+            // of a list we can't just replace it with the usual list patterns `[]`, `[first, ..rest]`.
+            // That would result in invalid syntax. So we have to generate list patterns
+            // that have no square brackets.
+            let first = names.rename_to_avoid_shadowing("first".into());
+            let rest = names.rename_to_avoid_shadowing("rest".into());
+            vec1!["".into(), eco_format!("{first}, ..{rest}")]
+        } else if let Some(patterns) =
+            self.type_to_destructure_patterns(variable_type.as_ref(), &mut names)
+        {
+            patterns
+        } else {
             return;
         };
 
         let clause_range = self.edits.src_span_to_lsp_range(clause_location);
         let nesting = " ".repeat(clause_range.start.character as usize);
+
+        let variable_location = match variable_location {
+            PatternLocation::Regular { location } => location,
+            PatternLocation::ListTail { location } => location,
+        };
 
         let variable_start = (variable_location.start - clause_location.start) as usize;
         let variable_end =
@@ -4714,16 +4781,25 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
     /// the current module. So if the type comes from another module it must be
     /// public! Otherwise this function will return an empty vec.
     ///
-    fn type_to_destructure_patterns(&mut self, type_: &Type) -> Option<Vec1<EcoString>> {
+    fn type_to_destructure_patterns(
+        &mut self,
+        type_: &Type,
+        names: &mut NameGenerator,
+    ) -> Option<Vec1<EcoString>> {
         match type_ {
             Type::Fn { .. } => None,
-            Type::Var { type_ } => self.type_var_to_destructure_patterns(&type_.borrow()),
+            Type::Var { type_ } => self.type_var_to_destructure_patterns(&type_.borrow(), names),
 
             // We special case lists, they don't have "regular" constructors
             // like other types. Instead we always add the two clauses covering
             // the empty and non empty list.
             Type::Named { .. } if type_.is_list() => {
-                Some(vec1!["[]".into(), "[first, ..rest]".into()])
+                let first = names.rename_to_avoid_shadowing("first".into());
+                let rest = names.rename_to_avoid_shadowing("rest".into());
+                Some(vec1![
+                    EcoString::from("[]"),
+                    eco_format!("[{first}, ..{rest}]")
+                ])
             }
 
             Type::Named {
@@ -4731,30 +4807,43 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
                 name: type_name,
                 ..
             } => {
-                let patterns =
-                    get_type_constructors(self.compiler, &self.module.name, type_module, type_name)
-                        .iter()
-                        .filter_map(|c| self.record_constructor_to_destructure_pattern(c))
-                        .collect_vec();
+                let mut patterns = vec![];
+                let constructors =
+                    get_type_constructors(self.compiler, &self.module.name, type_module, type_name);
+                for constructor in constructors {
+                    let names_before = names.clone();
+                    if let Some(pattern) =
+                        self.record_constructor_to_destructure_pattern(constructor, names)
+                    {
+                        patterns.push(pattern);
+                    }
+                    *names = names_before;
+                }
 
                 Vec1::try_from_vec(patterns).ok()
             }
+
             // We don't want to suggest this action for empty tuple as it
             // doesn't make a lot of sense to match on those.
             Type::Tuple { elements } if elements.is_empty() => None,
-            Type::Tuple { elements } => Some(vec1![eco_format!(
-                "#({})",
-                (0..elements.len() as u32)
-                    .map(|i| format!("value_{i}"))
-                    .join(", ")
-            )]),
+            Type::Tuple { elements } => {
+                let elements = elements
+                    .iter()
+                    .map(|element| names.generate_name_from_type(element))
+                    .join(", ");
+                Some(vec1![eco_format!("#({elements})")])
+            }
         }
     }
 
-    fn type_var_to_destructure_patterns(&mut self, type_var: &TypeVar) -> Option<Vec1<EcoString>> {
+    fn type_var_to_destructure_patterns(
+        &mut self,
+        type_var: &TypeVar,
+        names: &mut NameGenerator,
+    ) -> Option<Vec1<EcoString>> {
         match type_var {
             TypeVar::Unbound { .. } | TypeVar::Generic { .. } => None,
-            TypeVar::Link { type_ } => self.type_to_destructure_patterns(type_),
+            TypeVar::Link { type_ } => self.type_to_destructure_patterns(type_, names),
         }
     }
 
@@ -4770,6 +4859,7 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
     fn record_constructor_to_destructure_pattern(
         &self,
         constructor: &ValueConstructor,
+        names: &mut NameGenerator,
     ) -> Option<EcoString> {
         let type_::ValueConstructorVariant::Record {
             name: constructor_name,
@@ -4798,11 +4888,10 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
             return None;
         };
 
-        let mut name_generator = NameGenerator::new();
         let index_to_label = match field_map {
             None => HashMap::new(),
             Some(field_map) => {
-                name_generator.reserve_all_labels(field_map);
+                names.reserve_all_labels(field_map);
 
                 field_map
                     .fields
@@ -4824,8 +4913,8 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
             .map(|i| match index_to_label.get(&i) {
                 Some(label) => eco_format!("{label}:"),
                 None => match arguments_types.get(i as usize) {
-                    None => name_generator.rename_to_avoid_shadowing(EcoString::from("value")),
-                    Some(type_) => name_generator.generate_name_from_type(type_),
+                    None => names.rename_to_avoid_shadowing(EcoString::from("value")),
+                    Some(type_) => names.generate_name_from_type(type_),
                 },
             })
             .join(", ");
@@ -4962,6 +5051,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
                 variable_type: type_,
                 variable_location,
                 clause_location: clause.location(),
+                bound_variables: clause.bound_variables().collect_vec(),
             });
         } else {
             self.visit_typed_expr(&clause.then);
@@ -5016,7 +5106,8 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
             self.params.range,
             self.edits.src_span_to_lsp_range(*location),
         ) {
-            self.pattern_variable_under_cursor = Some((name, *location, type_.clone()));
+            let location = PatternLocation::regular(*location);
+            self.pattern_variable_under_cursor = Some((name, location, type_.clone()));
         }
     }
 
@@ -5027,10 +5118,10 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
                 self.edits.src_span_to_lsp_range(arg.location),
             )
         {
-            let location = SrcSpan {
+            let location = PatternLocation::regular(SrcSpan {
                 start: arg.location.end,
                 end: arg.location.end,
-            };
+            });
             self.pattern_variable_under_cursor = Some((name, location, arg.value.type_()));
             return;
         }
@@ -5053,15 +5144,45 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
                 self.edits.src_span_to_lsp_range(*location),
             )
         {
-            self.pattern_variable_under_cursor = Some((name, *location, type_::string()));
+            let location = PatternLocation::regular(*location);
+            self.pattern_variable_under_cursor = Some((name, location, type_::string()));
         } else if let AssignName::Variable(name) = right_side_assignment
             && within(
                 self.params.range,
                 self.edits.src_span_to_lsp_range(*right_location),
             )
         {
-            self.pattern_variable_under_cursor = Some((name, *right_location, type_::string()));
+            let location = PatternLocation::regular(*right_location);
+            self.pattern_variable_under_cursor = Some((name, location, type_::string()));
         }
+    }
+
+    fn visit_typed_pattern_list(
+        &mut self,
+        location: &'ast SrcSpan,
+        elements: &'ast Vec<TypedPattern>,
+        tail: &'ast Option<Box<TypedTailPattern>>,
+        type_: &'ast Arc<Type>,
+    ) {
+        let (name, tail_location, tail_type) = if let Some(tail) = tail
+            && let Pattern::Variable { name, type_, .. } = &tail.pattern
+        {
+            (name, tail.location, type_)
+        } else {
+            ast::visit::visit_typed_pattern_list(self, location, elements, tail, type_);
+            return;
+        };
+
+        let tail_range = self.edits.src_span_to_lsp_range(tail_location);
+        if !within(self.params.range, tail_range) {
+            ast::visit::visit_typed_pattern_list(self, location, elements, tail, type_);
+            return;
+        }
+
+        let location = PatternLocation::ListTail {
+            location: tail_location,
+        };
+        self.pattern_variable_under_cursor = Some((name, location, tail_type.clone()))
     }
 }
 
@@ -5817,6 +5938,7 @@ fn labels_are_correct<A>(arguments: &[CallArg<A>]) -> bool {
     true
 }
 
+#[derive(Clone)]
 struct NameGenerator {
     used_names: HashSet<EcoString>,
 }
@@ -5927,6 +6049,12 @@ impl NameGenerator {
             .names
             .iter()
             .for_each(|name| self.add_used_name(name.clone()));
+    }
+
+    fn reserve_bound_variables(&mut self, bound_variables: &[BoundVariable]) {
+        for variable in bound_variables {
+            self.add_used_name(variable.name());
+        }
     }
 }
 

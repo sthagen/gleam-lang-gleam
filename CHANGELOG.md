@@ -8,9 +8,13 @@
   on the Erlang target.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- Analysis it now fault tolerant in the presence of errors in field definitions
+- Analysis is now fault tolerant in the presence of errors in field definitions
   of custom type variants.
   ([Adi Salimgereyev](https://github.com/abs0luty))
+
+- The compiler now emits a warning when a module contains no public definitions
+  and prevents publishing packages with empty modules to Hex.
+  ([Vitor Souza](https://github.com/vit0rr))
 
 ### Build tool
 
@@ -19,10 +23,19 @@
   going to run.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The `--invert` and `--package` options of `gleam deps tree` are now mutually
+  exclusive; if both options are given the command will fail. Previously,
+  `--invert` would be silently ignored if given together with `--package`.
+  ([Evan Silberman](https://github.com/silby))
+
 ### Language server
 
 - The "inline variable" code action can now trigger when used over the let
   keyword of a variable to inline.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The "pattern match on variable" code action can now pick better names when
+  used on tuples.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Formatter
@@ -45,3 +58,15 @@
 - Add a missing BitArray constructor return type in the prelude's TypeScript
   definitions.
   ([Richard Viney](https://github.com/richard-viney))
+
+- Fixed a bug where the BEAM would be shut down abruptly once the program had
+  successfully finished running.
+  ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where the "pattern match on variable" code action would generate
+  invalid code when applied on a list's tail.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the "pattern match on variable" code action would generate
+  invalid patterns by repeating a variable name already used in the same pattern.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
