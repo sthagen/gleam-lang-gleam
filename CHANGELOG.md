@@ -29,6 +29,11 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The lowercase bool pattern error is no longer a syntax error, but instead a
+  part of the analysis step. This allows the entire module to be analyzed, rather
+  than stopping at the syntax error.
+  ([mxtthias](https://github.com/mxtthias))
+
 ### Build tool
 
 - The help text displayed by `gleam dev --help`, `gleam test --help`, and
@@ -44,6 +49,18 @@
 - Update to latest Elixir API, so warning would not be shown when compiling
   Elixir file in a Gleam project.
   ([Andrey Kozhev](https://github.com/ankddev))
+
+- The build tool now has a new `gleam deps outdated` command that shows outdated
+  versions for dependencies. For example:
+  
+  ```bash
+  $ gleam deps outdated
+  Package Current Latest
+  wibble  v1.4.0  v1.4.1
+  wobble  v1.0.1  v2.3.0
+  ```
+
+  ([Vladislav Shakitskiy](https://github.com/vshakitskiy))
 
 ### Language server
 
@@ -91,3 +108,7 @@
 - Fixed a bug where the "pattern match on variable" code action would generate
   invalid patterns by repeating a variable name already used in the same pattern.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where useless comparison warnings for floats compared literal
+  strings, claiming for example that `1.0 == 1.` was always false.
+  ([fruno](https://github.com/fruno-bulax/))
