@@ -52,15 +52,20 @@
 
 - The build tool now has a new `gleam deps outdated` command that shows outdated
   versions for dependencies. For example:
-  
-  ```bash
+
+  ```sh
   $ gleam deps outdated
-  Package Current Latest
-  wibble  v1.4.0  v1.4.1
-  wobble  v1.0.1  v2.3.0
+  Package  Current  Latest
+  -------  -------  ------
+  wibble   1.4.0    1.4.1
+  wobble   1.0.1    2.3.0
   ```
 
   ([Vladislav Shakitskiy](https://github.com/vshakitskiy))
+
+- The format used for `gleam deps list` and the notice of available major
+  version upgrades has been improved.
+  ([Louis Pilfold](https://github.com/lpil))
 
 ### Language server
 
