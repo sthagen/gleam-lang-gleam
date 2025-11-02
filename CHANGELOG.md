@@ -29,6 +29,12 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The performance of `==` and `!=` has been improved for single-variant custom
+  types when compiling to JavaScript. This was done by generating comparison
+  code specific to the custom type rather than using the generic equality check
+  code.
+  ([Nafi](https://github.com/re-masashi))
+
 - The lowercase bool pattern error is no longer a syntax error, but instead a
   part of the analysis step. This allows the entire module to be analyzed, rather
   than stopping at the syntax error.
@@ -66,6 +72,36 @@
 - The format used for `gleam deps list` and the notice of available major
   version upgrades has been improved.
   ([Louis Pilfold](https://github.com/lpil))
+
+- `gleam new` now creates the project directory using the confirmed project
+  name when a suggested rename is accepted.
+  ([Adi Salimgereyev](https://github.com/abs0luty))
+
+- The build tool now provides better error message when trying to build Git
+  dependencies without Git installed. Previously, it would show this error:
+
+  ```text
+  error: Shell command failure
+
+  There was a problem when running the shell command `git`.
+
+  The error from the shell command library was:
+
+      Could not find the stdio stream
+  ```
+
+  Now it will show:
+
+  ```text
+  error: Program not found
+
+  The program `git` was not found. Is it installed?
+
+  Documentation for installing Git can be viewed here:
+  https://git-scm.com/book/en/v2/Getting-Started-Installing-Git
+  ```
+
+  ([Andrey Kozhev](https://github.com/ankddev))
 
 ### Language server
 
