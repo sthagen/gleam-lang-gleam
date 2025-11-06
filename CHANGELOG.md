@@ -4,6 +4,11 @@
 
 ### Compiler
 
+- Update error message that arises when calling `echo` on an atom that lacks a
+  gleam representation to use `atom.create("__struct__")` instead of
+  `atom.create_from_string("__struct__")`.
+  ([Patrick Dewey](https://github.com/ptdewey))
+
 - Patterns aliasing a string prefix have been optimised to generate faster code
   on the Erlang target.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
@@ -153,3 +158,8 @@
 - Fixed a bug where useless comparison warnings for floats compared literal
   strings, claiming for example that `1.0 == 1.` was always false.
   ([fruno](https://github.com/fruno-bulax/))
+
+- Fixed a bug where pattern variables in case clause guards would incorrectly
+  shadow outer scope variables in other branches when compiling to JavaScript.
+  ([Elias Haider](https://github.com/EliasDerHai))
+
