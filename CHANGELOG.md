@@ -34,6 +34,20 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- When matching the wrong number of subjects, the compiler now pinpoints the
+  error location instead of marking the entire branch.
+
+  ```
+  case wibble {
+    0, _ -> 1
+    ^^^^ Expected 1 patterns, got 2
+    0 |  -> 1
+      ^ I was expecting a pattern after this
+  }
+  ```
+
+  ([fruno](https://github.com/fruno-bulax/))
+
 - The performance of `==` and `!=` has been improved for single-variant custom
   types when compiling to JavaScript. This was done by generating comparison
   code specific to the custom type rather than using the generic equality check
@@ -50,6 +64,35 @@
   Float exhaustiveness checks also now correctly identify unreachable cases
   containing scientific notation or trailing zeros (i.e. `100` and `1e2`).
   ([ptdewey](https://github.com/ptdewey))
+
+- The compiler now emits a warning when a doc comment is not attached to a
+  definition due to a regular comment in between. For example, in the following
+  code:
+
+  ```gleam
+  /// This documentation is not attached
+  // This is not a doc comment
+  /// This is actual documentation
+  pub fn wibble() {
+    todo
+  }
+  ```
+
+  Will now produce the following warning:
+
+  ```txt
+    warning: Detached doc comment
+    ┌─ src/main.gleam:1:4
+    │
+  1 │ /// This documentation is not attached
+    │    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ This is not attached to a definition
+
+  This doc comment is followed by a regular comment so it is not attached to
+  any definition.
+  Hint: Move the comment above the doc comment
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Build tool
 
@@ -120,6 +163,10 @@
   keyword of a variable to inline.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The "add omitted labels" code action can now be used in function calls where
+  some of the labels have been provided already.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The "pattern match on variable" code action can now pick better names when
   used on tuples.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
@@ -147,6 +194,9 @@
 
 - Fixed a bug where the formatter would not remove the right number of double
   negations from literal integers.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a typo for the "Invalid number of patterns" error.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Add a missing BitArray constructor return type in the prelude's TypeScript
