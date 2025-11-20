@@ -47,7 +47,7 @@ In addition to the Rust code there are these components:
 The process for compiling Gleam modules within the compiler looks roughly like
 this:
 
-```text
+```txt
   Gleam source code       .cache binaries
           ▼                         ▼
 ┌────────────────────┐ ┌───────────────────────┐
@@ -83,11 +83,11 @@ this:
 └────────────────────┘
           │
           ▼
- Erlang or JavaScript 
+ Erlang or JavaScript
      source code
 ```
 
-## <a name='Testing'></a>Testing 
+## <a name='Testing'></a>Testing
 
 We like automated tests! They're a great way to verify that the compiler is
 doing what we expect it do as we make changes.
@@ -127,7 +127,7 @@ expected output when we make changes to the output format of the compiler or
 error messaging is time-consuming and very dull. With snapshot testing it takes
 seconds.
 
-```shell
+```sh
 # Run the tests
 make test
 

@@ -94,6 +94,25 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The [interference-based pruning](https://gleam.run/news/formalising-external-apis/#Improved-bit-array-exhaustiveness-checking)
+  from 1.13 has been extended to int segments!
+  Aside from the various performance improvements, this allows the compiler to
+  mark more branches as unreachable.
+  ```gleam
+  case bits {
+    <<"a">> -> 0
+    <<97>> -> 1
+    // ^- This branch is unreachable because it's equal to "a".
+
+    <<0b1:1, _:1>> -> 2
+    <<0b11:2>> -> 3
+    // ^- This branch is unreachable because the branch before it already covers it.
+
+    _ -> 99
+  }
+  ```
+  ([fruno](https://github.com/fruno-bulax/))
+
 ### Build tool
 
 - The help text displayed by `gleam dev --help`, `gleam test --help`, and
@@ -134,7 +153,7 @@
 - The build tool now provides better error message when trying to build Git
   dependencies without Git installed. Previously, it would show this error:
 
-  ```text
+  ```txt
   error: Shell command failure
 
   There was a problem when running the shell command `git`.
@@ -146,7 +165,7 @@
 
   Now it will show:
 
-  ```text
+  ```txt
   error: Program not found
 
   The program `git` was not found. Is it installed?
@@ -166,6 +185,11 @@
 - The "add omitted labels" code action can now be used in function calls where
   some of the labels have been provided already.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Grouping of related diagnostics should now work across more editors.
+  Warnings will display together with their hints and you no longer have
+  "go to next diagnostic" twice in a row. Zedlings rejoice!
+  ([fruno](https://github.com/fruno-bulax/))
 
 - The "pattern match on variable" code action can now pick better names when
   used on tuples.
@@ -199,6 +223,10 @@
 - Fixed a typo for the "Invalid number of patterns" error.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a stack overflow when type checking some case expressions with
+  thousands of branches.
+  ([fruno](https://github.com/fruno-bulax/))
+
 - Add a missing BitArray constructor return type in the prelude's TypeScript
   definitions.
   ([Richard Viney](https://github.com/richard-viney))
@@ -226,3 +254,14 @@
 - Fix invalid TypeScript definition being generated for variant constructors
   with long names that take no arguments.
   ([Richard Viney](https://github.com/richard-viney))
+
+- Fixed a bug where the formatter would remove the `@deprecated` attribute from
+  constants.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fix invalid JavaScript codegen in cases where underscores follow a decimal.
+  ([Patrick Dewey](https://github.com/ptdewey))
+
+- Typos in the error message shown when trying to install a non-existent package
+  have been fixed.
+  ([Ioan Clarke](https://github.com/ioanclarke))
