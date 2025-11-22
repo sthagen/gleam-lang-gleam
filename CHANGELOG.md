@@ -48,6 +48,11 @@
 
   ([fruno](https://github.com/fruno-bulax/))
 
+- Fixed two bugs that made gleam not update the manifest correctly, causing
+  it to hit hex for version resolution on every operation and quickly reach
+  request limits in large projects.
+  ([fruno](https://github.com/fruno-bulax/))
+
 - The performance of `==` and `!=` has been improved for single-variant custom
   types when compiling to JavaScript. This was done by generating comparison
   code specific to the custom type rather than using the generic equality check
@@ -226,6 +231,10 @@
 - Fixed a stack overflow when type checking some case expressions with
   thousands of branches.
   ([fruno](https://github.com/fruno-bulax/))
+
+- The "add omitted label" code action no longer adds labels to arguments
+  being piped in or the callbacks of `use`.
+  ([fruno](https://github.com/fruno-bulax))
 
 - Add a missing BitArray constructor return type in the prelude's TypeScript
   definitions.

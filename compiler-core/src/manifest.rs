@@ -215,6 +215,23 @@ pub enum ManifestPackageSource {
     Local { path: Utf8PathBuf }, // should be the canonical path
 }
 
+impl ManifestPackageSource {
+    pub fn kind(&self) -> ManifestPackageSourceKind {
+        match self {
+            ManifestPackageSource::Hex { .. } => ManifestPackageSourceKind::Hex,
+            ManifestPackageSource::Git { .. } => ManifestPackageSourceKind::Git,
+            ManifestPackageSource::Local { .. } => ManifestPackageSourceKind::Local,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ManifestPackageSourceKind {
+    Hex,
+    Git,
+    Local,
+}
+
 fn sorted_vec<S, T>(value: &[T], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -483,6 +500,12 @@ zzz = { version = "> 0.0.0" }
 #[derive(Debug)]
 pub struct Resolved {
     pub manifest: Manifest,
+    pub package_changes: PackageChanges,
+    pub requirements_changed: bool,
+}
+
+#[derive(Debug)]
+pub struct PackageChanges {
     pub added: Vec<(EcoString, Version)>,
     pub changed: Vec<Changed>,
     /// When updating git dependencies, it is possible to update to a newer commit
@@ -509,10 +532,7 @@ pub struct ChangedGit {
 
 impl Resolved {
     pub fn any_changes(&self) -> bool {
-        !self.added.is_empty()
-            || !self.changed.is_empty()
-            || !self.changed_git.is_empty()
-            || !self.removed.is_empty()
+        self.requirements_changed || self.package_changes.any_changes()
     }
 
     pub fn all_added(manifest: Manifest) -> Resolved {
@@ -523,29 +543,44 @@ impl Resolved {
             .collect();
         Self {
             manifest,
-            added,
-            changed: vec![],
-            changed_git: vec![],
-            removed: vec![],
+            requirements_changed: true,
+            package_changes: PackageChanges {
+                added,
+                changed: vec![],
+                changed_git: vec![],
+                removed: vec![],
+            },
         }
     }
 
     pub fn no_change(manifest: Manifest) -> Self {
         Self {
             manifest,
-            added: vec![],
-            changed: vec![],
-            changed_git: vec![],
-            removed: vec![],
+            requirements_changed: false,
+            package_changes: PackageChanges {
+                added: vec![],
+                changed: vec![],
+                changed_git: vec![],
+                removed: vec![],
+            },
         }
     }
+}
 
-    /// Create a `Resolved`, comparing the old and new versions of the manifest to work out
-    /// if resolution resulted in any changes.
-    pub fn with_updates(old: &Manifest, new: Manifest) -> Self {
+impl PackageChanges {
+    pub fn any_changes(&self) -> bool {
+        !self.added.is_empty()
+            || !self.changed.is_empty()
+            || !self.changed_git.is_empty()
+            || !self.removed.is_empty()
+    }
+
+    /// Compare the old and new versions of the manifest and determine the package changes
+    pub fn between_manifests(old: &Manifest, new: &Manifest) -> Self {
         let mut added = vec![];
         let mut changed = vec![];
         let mut changed_git = vec![];
+        let mut removed = vec![];
         let mut old: HashMap<_, _> = old
             .packages
             .iter()
@@ -554,6 +589,11 @@ impl Resolved {
 
         for new in &new.packages {
             match old.remove(&new.name) {
+                // If the kind of source changed, the packages bear essentially no connection
+                Some(old) if new.source.kind() != old.source.kind() => {
+                    removed.push(old.name.clone());
+                    added.push((new.name.clone(), new.version.clone()));
+                }
                 Some(old) if old.version == new.version => match (&old.source, &new.source) {
                     (
                         ManifestPackageSource::Git {
@@ -587,10 +627,9 @@ impl Resolved {
             }
         }
 
-        let removed = old.into_keys().cloned().collect();
+        removed.extend(old.into_keys().cloned());
 
         Self {
-            manifest: new,
             added,
             changed,
             changed_git,
@@ -599,76 +638,118 @@ impl Resolved {
     }
 }
 
-#[test]
-fn resolved_with_updated() {
-    use crate::manifest::{Base16Checksum, ManifestPackage, ManifestPackageSource};
+#[cfg(test)]
+mod manifest_update_tests {
+    use std::collections::HashMap;
 
-    let package = |name: &str, version| ManifestPackage {
-        name: EcoString::from(name),
-        version,
-        build_tools: vec![],
-        otp_app: None,
-        requirements: vec![],
-        source: ManifestPackageSource::Hex {
-            outer_checksum: Base16Checksum(vec![]),
-        },
-    };
+    use ecow::EcoString;
+    use hexpm::version::Version;
 
-    let old = Manifest {
-        requirements: HashMap::new(),
-        packages: vec![
-            package("unchanged1", Version::new(3, 0, 0)),
-            package("unchanged2", Version::new(0, 1, 0)),
-            package("changed1", Version::new(3, 0, 0)),
-            package("changed2", Version::new(0, 1, 0)),
-            package("removed1", Version::new(10, 0, 0)),
-            package("removed2", Version::new(20, 1, 0)),
-        ],
-    };
+    use crate::manifest::{Base16Checksum, ManifestPackage, ManifestPackageSource, PackageChanges};
+    use crate::manifest::{Changed, Manifest};
 
-    let new = Manifest {
-        requirements: HashMap::new(),
-        packages: vec![
-            package("new1", Version::new(1, 0, 0)),
-            package("new2", Version::new(2, 1, 0)),
-            package("unchanged1", Version::new(3, 0, 0)),
-            package("unchanged2", Version::new(0, 1, 0)),
-            package("changed1", Version::new(5, 0, 0)),
-            package("changed2", Version::new(3, 0, 0)),
-        ],
-    };
-
-    let mut resolved = Resolved::with_updates(&old, new);
-    resolved.added.sort();
-    resolved.changed.sort_by(|a, b| a.name.cmp(&b.name));
-    resolved.removed.sort();
-
-    assert_eq!(
-        resolved.added,
-        vec![
-            ("new1".into(), Version::new(1, 0, 0)),
-            ("new2".into(), Version::new(2, 1, 0)),
-        ]
-    );
-
-    assert_eq!(
-        resolved.changed,
-        vec![
-            Changed {
-                name: "changed1".into(),
-                old: Version::new(3, 0, 0),
-                new: Version::new(5, 0, 0)
+    #[test]
+    fn resolved_with_updated() {
+        let package = |name: &str, version| ManifestPackage {
+            name: EcoString::from(name),
+            version,
+            build_tools: vec![],
+            otp_app: None,
+            requirements: vec![],
+            source: ManifestPackageSource::Hex {
+                outer_checksum: Base16Checksum(vec![]),
             },
-            Changed {
-                name: "changed2".into(),
-                old: Version::new(0, 1, 0),
-                new: Version::new(3, 0, 0)
-            },
-        ]
-    );
+        };
 
-    assert_eq!(
-        resolved.removed,
-        vec![EcoString::from("removed1"), EcoString::from("removed2")]
-    );
+        let old = Manifest {
+            requirements: HashMap::new(),
+            packages: vec![
+                package("unchanged1", Version::new(3, 0, 0)),
+                package("unchanged2", Version::new(0, 1, 0)),
+                package("changed1", Version::new(3, 0, 0)),
+                package("changed2", Version::new(0, 1, 0)),
+                package("removed1", Version::new(10, 0, 0)),
+                package("removed2", Version::new(20, 1, 0)),
+            ],
+        };
+
+        let new = Manifest {
+            requirements: HashMap::new(),
+            packages: vec![
+                package("new1", Version::new(1, 0, 0)),
+                package("new2", Version::new(2, 1, 0)),
+                package("unchanged1", Version::new(3, 0, 0)),
+                package("unchanged2", Version::new(0, 1, 0)),
+                package("changed1", Version::new(5, 0, 0)),
+                package("changed2", Version::new(3, 0, 0)),
+            ],
+        };
+
+        let mut changes = PackageChanges::between_manifests(&old, &new);
+        changes.added.sort();
+        changes.changed.sort_by(|a, b| a.name.cmp(&b.name));
+        changes.removed.sort();
+
+        assert_eq!(
+            changes.added,
+            vec![
+                ("new1".into(), Version::new(1, 0, 0)),
+                ("new2".into(), Version::new(2, 1, 0)),
+            ]
+        );
+
+        assert_eq!(
+            changes.changed,
+            vec![
+                Changed {
+                    name: "changed1".into(),
+                    old: Version::new(3, 0, 0),
+                    new: Version::new(5, 0, 0)
+                },
+                Changed {
+                    name: "changed2".into(),
+                    old: Version::new(0, 1, 0),
+                    new: Version::new(3, 0, 0)
+                },
+            ]
+        );
+
+        assert_eq!(
+            changes.removed,
+            vec![EcoString::from("removed1"), EcoString::from("removed2")]
+        );
+    }
+
+    #[test]
+    fn resolved_with_source_type_change() {
+        let name = EcoString::from("wibble");
+        let version = Version::new(1, 0, 0);
+        let package = |source| ManifestPackage {
+            name: name.clone(),
+            version: version.clone(),
+            build_tools: vec![],
+            otp_app: None,
+            requirements: vec![],
+            source,
+        };
+
+        let old = Manifest {
+            requirements: HashMap::new(),
+            packages: vec![package(ManifestPackageSource::Local {
+                path: "wibble".into(),
+            })],
+        };
+
+        let new = Manifest {
+            requirements: HashMap::new(),
+            packages: vec![package(ManifestPackageSource::Hex {
+                outer_checksum: Base16Checksum(vec![]),
+            })],
+        };
+
+        let changes = PackageChanges::between_manifests(&old, &new);
+        assert!(changes.changed.is_empty());
+        assert_eq!(changes.removed, vec![name.clone()]);
+        assert_eq!(changes.added, vec![(name.clone(), version.clone())]);
+    }
 }
