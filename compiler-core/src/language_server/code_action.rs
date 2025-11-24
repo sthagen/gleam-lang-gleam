@@ -7,7 +7,7 @@ use crate::{
         CallArg, CustomType, FunctionLiteralKind, ImplicitCallArgOrigin, Import, InvalidExpression,
         PIPE_PRECEDENCE, Pattern, PatternUnusedArguments, PipelineAssignmentKind, Publicity,
         RecordConstructor, SrcSpan, TodoKind, TypedArg, TypedAssignment, TypedClauseGuard,
-        TypedExpr, TypedModuleConstant, TypedPattern, TypedPipelineAssignment,
+        TypedDefinitions, TypedExpr, TypedModuleConstant, TypedPattern, TypedPipelineAssignment,
         TypedRecordConstructor, TypedStatement, TypedTailPattern, TypedUse, visit::Visit as _,
     },
     build::{Located, Module},
@@ -1427,11 +1427,7 @@ impl<'a, IO> QualifiedToUnqualifiedImportFirstPass<'a, IO> {
     ) -> Option<&'a Import<EcoString>> {
         let mut matching_import = None;
 
-        for definition in &self.module.ast.definitions {
-            let ast::Definition::Import(import) = definition else {
-                continue;
-            };
-
+        for import in &self.module.ast.definitions.imports {
             if import.used_name().as_deref() == Some(module_name)
                 && let Some(module) = self.compiler.get_module_interface(&import.module)
             {
@@ -1831,25 +1827,26 @@ impl<'a> UnqualifiedToQualifiedImportFirstPass<'a> {
         module_name: &EcoString,
         constructor_name: &EcoString,
     ) {
-        self.unqualified_constructor =
-            self.module
-                .ast
-                .definitions
-                .iter()
-                .find_map(|definition| match definition {
-                    ast::Definition::Import(import) if import.module == *module_name => import
-                        .unqualified_values
-                        .iter()
-                        .find(|value| value.used_name() == constructor_name)
-                        .and_then(|value| {
-                            Some(UnqualifiedConstructor {
-                                constructor: value,
-                                module_name: import.used_name()?,
-                                layer: ast::Layer::Value,
-                            })
-                        }),
-                    _ => None,
-                })
+        self.unqualified_constructor = self
+            .module
+            .ast
+            .definitions
+            .imports
+            .iter()
+            .filter(|import| import.module == *module_name)
+            .find_map(|import| {
+                import
+                    .unqualified_values
+                    .iter()
+                    .find(|value| value.used_name() == constructor_name)
+                    .and_then(|value| {
+                        Some(UnqualifiedConstructor {
+                            constructor: value,
+                            module_name: import.used_name()?,
+                            layer: ast::Layer::Value,
+                        })
+                    })
+            })
     }
 
     fn get_module_import_from_type_constructor(&mut self, constructor_name: &EcoString) {
@@ -1857,23 +1854,21 @@ impl<'a> UnqualifiedToQualifiedImportFirstPass<'a> {
             self.module
                 .ast
                 .definitions
+                .imports
                 .iter()
-                .find_map(|definition| match definition {
-                    ast::Definition::Import(import) => {
-                        if let Some(ty) = import
-                            .unqualified_types
-                            .iter()
-                            .find(|ty| ty.used_name() == constructor_name)
-                        {
-                            return Some(UnqualifiedConstructor {
-                                constructor: ty,
-                                module_name: import.used_name()?,
-                                layer: ast::Layer::Type,
-                            });
-                        }
-                        None
+                .find_map(|import| {
+                    if let Some(ty) = import
+                        .unqualified_types
+                        .iter()
+                        .find(|ty| ty.used_name() == constructor_name)
+                    {
+                        return Some(UnqualifiedConstructor {
+                            constructor: ty,
+                            module_name: import.used_name()?,
+                            layer: ast::Layer::Type,
+                        });
                     }
-                    _ => None,
+                    None
                 })
     }
 }
@@ -2835,28 +2830,9 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
         // We reset the name generator to purge the variable names from other scopes.
         // We then add the reserve the constant names.
         self.name_generator = NameGenerator::new();
-        self.module
-            .ast
-            .definitions
-            .iter()
-            .for_each(|def| match def {
-                ast::Definition::ModuleConstant(constant) => {
-                    self.name_generator.add_used_name(constant.name.clone());
-                }
-                ast::Definition::Function(function) => {
-                    if let Some((_, function_name)) = &function.name {
-                        self.name_generator.add_used_name(function_name.clone());
-                    }
-                }
-                ast::Definition::Import(import) => {
-                    let module_name = match &import.used_name() {
-                        Some(used_name) => used_name.clone(),
-                        _ => import.module.clone(),
-                    };
-                    self.name_generator.add_used_name(module_name);
-                }
-                ast::Definition::TypeAlias(_) | ast::Definition::CustomType(_) => (),
-            });
+        self.name_generator
+            .reserve_module_value_names(&self.module.ast.definitions);
+
         ast::visit::visit_typed_function(self, fun);
     }
 
@@ -3191,21 +3167,15 @@ fn can_be_constant(
     module_constants: Option<&HashSet<&EcoString>>,
 ) -> bool {
     // We pass the `module_constants` on recursion to not compute them each time
-    let mc = match module_constants {
+    let module_constants = match module_constants {
+        Some(module_constants) => module_constants,
         None => &module
             .ast
             .definitions
+            .constants
             .iter()
-            .filter_map(|definition| match definition {
-                ast::Definition::ModuleConstant(module_constant) => Some(&module_constant.name),
-
-                ast::Definition::Function(_)
-                | ast::Definition::TypeAlias(_)
-                | ast::Definition::CustomType(_)
-                | ast::Definition::Import(_) => None,
-            })
+            .map(|constant| &constant.name)
             .collect(),
-        Some(mc) => mc,
     };
 
     match expr {
@@ -3213,7 +3183,7 @@ fn can_be_constant(
         TypedExpr::List { elements, tail, .. } => {
             elements
                 .iter()
-                .all(|element| can_be_constant(module, element, Some(mc)))
+                .all(|element| can_be_constant(module, element, Some(module_constants)))
                 && tail.is_none()
         }
 
@@ -3221,11 +3191,11 @@ fn can_be_constant(
         TypedExpr::BitArray { segments, .. } => {
             segments
                 .iter()
-                .all(|segment| can_be_constant(module, &segment.value, Some(mc)))
+                .all(|segment| can_be_constant(module, &segment.value, Some(module_constants)))
                 && segments.iter().all(|segment| {
                     segment.options.iter().all(|option| match option {
                         ast::BitArrayOption::Size { value, .. } => {
-                            can_be_constant(module, value, Some(mc))
+                            can_be_constant(module, value, Some(module_constants))
                         }
 
                         ast::BitArrayOption::Bytes { .. }
@@ -3251,7 +3221,7 @@ fn can_be_constant(
         // Attempt to extract whole tuple as long as it's comprised of only literals
         TypedExpr::Tuple { elements, .. } => elements
             .iter()
-            .all(|element| can_be_constant(module, element, Some(mc))),
+            .all(|element| can_be_constant(module, element, Some(module_constants))),
 
         // Extract literals directly
         TypedExpr::Int { .. } | TypedExpr::Float { .. } | TypedExpr::String { .. } => true,
@@ -3263,7 +3233,7 @@ fn can_be_constant(
             matches!(
                 constructor.variant,
                 type_::ValueConstructorVariant::Record { arity: 0, .. }
-            ) || mc.contains(name)
+            ) || module_constants.contains(name)
         }
 
         // Extract record types as long as arguments can be constant
@@ -3271,7 +3241,7 @@ fn can_be_constant(
             fun.is_record_builder()
                 && arguments
                     .iter()
-                    .all(|arg| can_be_constant(module, &arg.value, module_constants))
+                    .all(|arg| can_be_constant(module, &arg.value, Some(module_constants)))
         }
 
         // Extract concat binary operation if both sides can be constants
@@ -3279,8 +3249,8 @@ fn can_be_constant(
             name, left, right, ..
         } => {
             matches!(name, ast::BinOp::Concatenate)
-                && can_be_constant(module, left, Some(mc))
-                && can_be_constant(module, right, Some(mc))
+                && can_be_constant(module, left, Some(module_constants))
+                && can_be_constant(module, right, Some(module_constants))
         }
 
         TypedExpr::Block { .. }
@@ -3305,23 +3275,7 @@ fn can_be_constant(
 ///
 fn generate_new_name_for_constant(module: &Module, expr: &TypedExpr) -> EcoString {
     let mut name_generator = NameGenerator::new();
-    let already_taken_names = VariablesNames {
-        names: module
-            .ast
-            .definitions
-            .iter()
-            .filter_map(|definition| match definition {
-                ast::Definition::ModuleConstant(constant) => Some(constant.name.clone()),
-                ast::Definition::Function(function) => function.name.as_ref().map(|n| n.1.clone()),
-
-                ast::Definition::TypeAlias(_)
-                | ast::Definition::CustomType(_)
-                | ast::Definition::Import(_) => None,
-            })
-            .collect(),
-    };
-    name_generator.reserve_variable_names(already_taken_names);
-
+    name_generator.reserve_module_value_names(&module.ast.definitions);
     name_generator.generate_name_from_type(&expr.type_())
 }
 
@@ -5798,27 +5752,25 @@ impl<'a, IO> GenerateVariant<'a, IO> {
 
         let (module_name, type_name, _) = custom_type.named_type_information()?;
         let module = self.compiler.modules.get(&module_name)?;
-        let (end_position, type_braces) =
-            (module.ast.definitions.iter()).find_map(|definition| match definition {
-                ast::Definition::CustomType(custom_type) if custom_type.name == type_name => {
-                    // If there's already a variant with this name then we definitely
-                    // don't want to generate a new variant with the same name!
-                    let variant_with_this_name_already_exists = custom_type
-                        .constructors
-                        .iter()
-                        .map(|constructor| &constructor.name)
-                        .any(|existing_constructor_name| existing_constructor_name == name);
-                    if variant_with_this_name_already_exists {
-                        return None;
-                    }
-                    let type_braces = if custom_type.end_position == custom_type.location.end {
-                        TypeBraces::NoBraces
-                    } else {
-                        TypeBraces::HasBraces
-                    };
-                    Some((custom_type.end_position, type_braces))
+        let (end_position, type_braces) = (module.ast.definitions.custom_types.iter())
+            .filter(|custom_type| custom_type.name == type_name)
+            .find_map(|custom_type| {
+                // If there's already a variant with this name then we definitely
+                // don't want to generate a new variant with the same name!
+                let variant_with_this_name_already_exists = custom_type
+                    .constructors
+                    .iter()
+                    .map(|constructor| &constructor.name)
+                    .any(|existing_constructor_name| existing_constructor_name == name);
+                if variant_with_this_name_already_exists {
+                    return None;
                 }
-                _ => None,
+                let type_braces = if custom_type.end_position == custom_type.location.end {
+                    TypeBraces::NoBraces
+                } else {
+                    TypeBraces::HasBraces
+                };
+                Some((custom_type.end_position, type_braces))
             })?;
 
         Some(VariantToGenerate {
@@ -6030,6 +5982,29 @@ impl NameGenerator {
                 Some(self.rename_to_avoid_shadowing(name.clone()))
             }
             _ => None,
+        }
+    }
+
+    /// Given some typed definitions this reserves all the value names defined
+    /// by all the top level definitions. That is: all function names, constant
+    /// names, and imported modules names.
+    pub fn reserve_module_value_names(&mut self, definitions: &TypedDefinitions) {
+        for constant in &definitions.constants {
+            self.add_used_name(constant.name.clone());
+        }
+
+        for function in &definitions.functions {
+            if let Some((_, name)) = &function.name {
+                self.add_used_name(name.clone());
+            }
+        }
+
+        for import in &definitions.imports {
+            let module_name = match &import.used_name() {
+                Some(used_name) => used_name.clone(),
+                None => import.module.clone(),
+            };
+            self.add_used_name(module_name);
         }
     }
 
@@ -7577,7 +7552,6 @@ impl<'ast> ast::visit::Visit<'ast> for FixTruncatedBitArraySegment<'ast> {
 pub struct RemoveUnusedImports<'a> {
     module: &'a Module,
     params: &'a CodeActionParams,
-    imports: Vec<&'a Import<EcoString>>,
     edits: TextEdits<'a>,
 }
 
@@ -7608,7 +7582,6 @@ impl<'a> RemoveUnusedImports<'a> {
             module,
             params,
             edits: TextEdits::new(line_numbers),
-            imports: vec![],
         }
     }
 
@@ -7616,7 +7589,10 @@ impl<'a> RemoveUnusedImports<'a> {
     /// unqualified values it's importing. Sorted by SrcSpan location.
     ///
     fn imported_values(&self, import_location: SrcSpan) -> Vec<SrcSpan> {
-        self.imports
+        self.module
+            .ast
+            .definitions
+            .imports
             .iter()
             .find(|import| import.location.contains(import_location.start))
             .map(|import| {
@@ -7633,12 +7609,16 @@ impl<'a> RemoveUnusedImports<'a> {
     pub fn code_actions(mut self) -> Vec<CodeAction> {
         // If there's no import in the module then there can't be any unused
         // import to remove.
-        self.visit_typed_module(&self.module.ast);
-        if self.imports.is_empty() {
+        if self.module.ast.definitions.imports.is_empty() {
             return vec![];
         }
 
-        let unused_imports = (self.module.ast.type_info.warnings.iter())
+        let unused_imports = self
+            .module
+            .ast
+            .type_info
+            .warnings
+            .iter()
             .filter_map(|warning| match warning {
                 type_::Warning::UnusedImportedValue { location, .. } => {
                     Some(UnusedImport::ValueOrType(*location))
@@ -7765,19 +7745,6 @@ impl<'a> RemoveUnusedImports<'a> {
             .preferred(true)
             .push_to(&mut action);
         action
-    }
-}
-
-impl<'ast> ast::visit::Visit<'ast> for RemoveUnusedImports<'ast> {
-    fn visit_typed_module(&mut self, module: &'ast ast::TypedModule) {
-        self.imports = module
-            .definitions
-            .iter()
-            .filter_map(|definition| match definition {
-                ast::Definition::Import(import) => Some(import),
-                _ => None,
-            })
-            .collect_vec();
     }
 }
 
@@ -7949,20 +7916,6 @@ impl<'a> RemovePrivateOpaque<'a> {
 }
 
 impl<'ast> ast::visit::Visit<'ast> for RemovePrivateOpaque<'ast> {
-    fn visit_typed_definition(&mut self, def: &'ast ast::TypedDefinition) {
-        // This code action is only relevant for type definitions, so we don't
-        // waste any time visiting definitions that are not relevant.
-        match def {
-            ast::Definition::Function(_)
-            | ast::Definition::TypeAlias(_)
-            | ast::Definition::Import(_)
-            | ast::Definition::ModuleConstant(_) => (),
-            ast::Definition::CustomType(custom_type) => {
-                self.visit_typed_custom_type(custom_type);
-            }
-        }
-    }
-
     fn visit_typed_custom_type(&mut self, custom_type: &'ast ast::TypedCustomType) {
         let custom_type_range = self.edits.src_span_to_lsp_range(custom_type.location);
         if !within(self.params.range, custom_type_range) {
@@ -9281,5 +9234,253 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
         {
             self.register_referenced_variable(name, type_, *location, *definition_location);
         }
+    }
+}
+
+/// Code action to merge two identical branches together.
+///
+pub struct MergeCaseBranches<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    /// These are the positions of the patterns of all the consecutive branches
+    /// we've determined can be merged, for example if we're mergin the first
+    /// two branches here:
+    ///
+    /// ```gleam
+    ///   case wibble {
+    ///     1 -> todo
+    /// //  ^ this location here
+    ///     20 -> todo
+    /// //  ^^ and this location here
+    ///   _ -> todo
+    /// }
+    /// ```
+    ///
+    /// We need those to delete all the space between each consecutive pattern,
+    /// replacing it with the `|` for alternatives
+    ///
+    patterns_to_merge: Option<MergeableBranches>,
+}
+
+struct MergeableBranches {
+    /// The span of the body to keep when merging multiple branches. For
+    /// example:
+    ///
+    /// ```gleam
+    /// case n {
+    ///   // Imagine we're merging the first three branches together...
+    ///   1 -> todo
+    ///   2 -> n * 2
+    /// //     ^^^^^ This would be the location of the one body to keep
+    ///   3 -> todo
+    ///   _ -> todo
+    /// }
+    /// ```
+    ///
+    body_to_keep: SrcSpan,
+
+    /// The location body of the last of the branches that are going to be
+    /// merged; that is where we're going to place the code of the body to keep
+    /// once the action is done. For example:
+    ///
+    /// ```gleam
+    /// case n {
+    ///   // Imagine we're merging the first three branches together...
+    ///   1 -> todo
+    ///   2 -> n * 2
+    ///   3 -> todo
+    /// //     ^^^^ This would be the location of the final body
+    ///   _ -> todo
+    /// }
+    /// ```
+    ///
+    final_body: SrcSpan,
+
+    /// The span of the patterns whose branches are going to be merged. For
+    /// example:
+    ///
+    /// ```gleam
+    /// case n {
+    ///   // Imagine we're merging the first three branches together...
+    ///    1 -> todo
+    /// // ^
+    ///    2 -> n * 2
+    /// // ^
+    ///    3 -> todo
+    /// // ^ These would be the locations of the patterns
+    ///   _ -> todo
+    /// }
+    /// ```
+    ///
+    patterns_to_merge: Vec<SrcSpan>,
+}
+
+impl<'a> MergeCaseBranches<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            patterns_to_merge: None,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let Some(mergeable_branches) = self.patterns_to_merge else {
+            return vec![];
+        };
+
+        for (one, next) in mergeable_branches.patterns_to_merge.iter().tuple_windows() {
+            self.edits
+                .replace(SrcSpan::new(one.end, next.start), " | ".into());
+        }
+
+        self.edits.replace(
+            mergeable_branches.final_body,
+            code_at(self.module, mergeable_branches.body_to_keep).into(),
+        );
+
+        let mut action = Vec::with_capacity(1);
+        CodeActionBuilder::new("Merge case branches")
+            .kind(CodeActionKind::REFACTOR_REWRITE)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
+            .preferred(false)
+            .push_to(&mut action);
+        action
+    }
+
+    fn select_mergeable_branches(
+        &self,
+        clauses: &'a [ast::TypedClause],
+    ) -> Option<MergeableBranches> {
+        let mut clauses = clauses
+            .iter()
+            // We want to skip all the branches at the beginning of the case
+            // expression that the cursor is not hovering over. For example:
+            //
+            // ```gleam
+            // case wibble {
+            //   a -> 1   <- we want to skip this one here that is not selected
+            //   b -> 2
+            //     ^^^^   this is the selection
+            //   _ -> 3
+            //   ^^
+            // }
+            // ```
+            .skip_while(|clause| {
+                let clause_range = self.edits.src_span_to_lsp_range(clause.location);
+                !overlaps(self.params.range, clause_range)
+            })
+            // Then we only want to take the clauses that we're hovering over
+            // with our selection (even partially!)
+            // In the provious example they would be `b -> 2` and `_ -> 3`.
+            .take_while(|clause| {
+                let clause_range = self.edits.src_span_to_lsp_range(clause.location);
+                overlaps(self.params.range, clause_range)
+            });
+
+        let first_hovered_clause = clauses.next()?;
+
+        // This is the clause we're comparing all the others with. We need to
+        // make sure that all the clauses we're going to join can be merged with
+        // this one.
+        let mut reference_clause = first_hovered_clause;
+        let mut clause_patterns_to_merge = vec![reference_clause.pattern_location()];
+        let mut final_body = first_hovered_clause.then.location();
+
+        for clause in clauses {
+            // As soon as we find a clause that can't be merged with the current
+            // reference we know we're done looking for consecutive clauses to
+            // merge.
+            if !clauses_can_be_merged(reference_clause, clause) {
+                break;
+            }
+
+            clause_patterns_to_merge.push(clause.pattern_location());
+            final_body = clause.then.location();
+
+            // If the current reference is a `todo` expression, we want to use
+            // the newly found mergeable clause as the next reference. The
+            // reference clause is the one whose body will be kept around, so if
+            // we can we avoid keeping `todo`s
+            if reference_clause.then.is_todo_with_no_message() {
+                reference_clause = clause;
+            }
+        }
+
+        // We only offer the code action if we have found two or more clauses
+        // to merge.
+        if clause_patterns_to_merge.len() >= 2 {
+            Some(MergeableBranches {
+                final_body,
+                body_to_keep: reference_clause.then.location(),
+                patterns_to_merge: clause_patterns_to_merge,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+fn clauses_can_be_merged(one: &ast::TypedClause, other: &ast::TypedClause) -> bool {
+    // Two clauses cannot be merged if any of those has an if guard
+    if one.guard.is_some() || other.guard.is_some() {
+        return false;
+    }
+
+    // Two clauses can only be merged if they define the same variables,
+    // otherwise joining them would result in invalid code.
+    let variables_one = one
+        .bound_variables()
+        .map(|variable| variable.name())
+        .collect::<HashSet<_>>();
+
+    let variables_other = other
+        .bound_variables()
+        .map(|variable| variable.name())
+        .collect::<HashSet<_>>();
+
+    if variables_one != variables_other {
+        return false;
+    }
+
+    // Anything can be merged with a simple todo, or the two bodies must be
+    // syntactically equal.
+    one.then.is_todo_with_no_message()
+        || other.then.is_todo_with_no_message()
+        || one.then.syntactically_eq(&other.then)
+}
+
+impl<'ast> ast::visit::Visit<'ast> for MergeCaseBranches<'ast> {
+    fn visit_typed_expr_case(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        subjects: &'ast [TypedExpr],
+        clauses: &'ast [ast::TypedClause],
+        compiled_case: &'ast CompiledCase,
+    ) {
+        // We only trigger the code action if we are within a case expression,
+        // otherwise there's no point in exploring the expression any further.
+        let case_range = self.edits.src_span_to_lsp_range(*location);
+        if !within(self.params.range, case_range) {
+            return;
+        }
+
+        if let result @ Some(_) = self.select_mergeable_branches(clauses) {
+            self.patterns_to_merge = result
+        }
+
+        // We still need to visit the case expression in case we want to apply
+        // the code action to some case expression that is nested in one of its
+        // branches!
+        ast::visit::visit_typed_expr_case(self, location, type_, subjects, clauses, compiled_case);
     }
 }

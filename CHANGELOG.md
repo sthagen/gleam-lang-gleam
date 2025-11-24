@@ -40,7 +40,7 @@
   ```
   case wibble {
     0, _ -> 1
-    ^^^^ Expected 1 patterns, got 2
+    ^^^^ Expected 1 pattern, got 2
     0 |  -> 1
       ^ I was expecting a pattern after this
   }
@@ -60,8 +60,8 @@
   ([Nafi](https://github.com/re-masashi))
 
 - The lowercase bool pattern error is no longer a syntax error, but instead a
-  part of the analysis step. This allows the entire module to be analyzed, rather
-  than stopping at the syntax error.
+  part of the analysis step. This allows the entire module to be analyzed,
+  rather than stopping at the syntax error.
   ([mxtthias](https://github.com/mxtthias))
 
 - Exhaustiveness checks for ints and floats now correctly handle unreachable
@@ -103,6 +103,7 @@
   from 1.13 has been extended to int segments!
   Aside from the various performance improvements, this allows the compiler to
   mark more branches as unreachable.
+
   ```gleam
   case bits {
     <<"a">> -> 0
@@ -116,6 +117,7 @@
     _ -> 99
   }
   ```
+
   ([fruno](https://github.com/fruno-bulax/))
 
 ### Build tool
@@ -183,6 +185,31 @@
 
 ### Language server
 
+- The language server can now offer a code action to merge consecutive case
+  branches with the same body. For example:
+
+  ```gleam
+  case user {
+    Admin(name:, ..) -> todo
+  //^^^^^^^^^^^^^^^^^^^^^^^^
+    Guest(name:, ..) -> todo
+  //^^^^^^^^^^^^^^^^ Selecting these two branches you can
+  //                 trigger the "Merge case branches" code action
+    _ -> todo
+  }
+  ```
+
+  Triggering the code action would result in the following code:
+
+  ```gleam
+  case user {
+    Admin(name:, ..) | Guest(name:, ..) -> todo
+    _ -> todo
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The "inline variable" code action can now trigger when used over the let
   keyword of a variable to inline.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
@@ -212,6 +239,11 @@
   rename all its occurrences.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The compiler now reports an error for literal floats that are outside the
+  floating point representable range on both targets. Previously it would only
+  do that when compiling on the Erlang target.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Fixed a typo in the error message emitted when trying to run a module that
   does not have a main function.
   ([Louis Pilfold](https://github.com/lpil))
@@ -236,6 +268,11 @@
   being piped in or the callbacks of `use`.
   ([fruno](https://github.com/fruno-bulax))
 
+- Fixed a bug that caused the compiler to incorrectly optimise away runtime
+  size checks in bit array patterns on the javascript target if they used
+  calculations in the size of a segment (`_:size(wibble - wobble)`).
+  ([fruno](https://github.com/fruno-bulax/))
+
 - Add a missing BitArray constructor return type in the prelude's TypeScript
   definitions.
   ([Richard Viney](https://github.com/richard-viney))
@@ -249,7 +286,8 @@
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Fixed a bug where the "pattern match on variable" code action would generate
-  invalid patterns by repeating a variable name already used in the same pattern.
+  invalid patterns by repeating a variable name already used in the same
+  pattern.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Fixed a bug where useless comparison warnings for floats compared literal
@@ -274,3 +312,7 @@
 - Typos in the error message shown when trying to install a non-existent package
   have been fixed.
   ([Ioan Clarke](https://github.com/ioanclarke))
+
+- Fixed a bug where the compiler would generate invalid Erlang and TypeScript
+  code for unused opaque types referencing private types.
+  ([Surya Rose](https://github.com/GearsDatapacks))

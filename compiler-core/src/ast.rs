@@ -12,6 +12,7 @@ pub use self::untyped::{FunctionLiteralKind, UntypedExpr};
 pub use self::constant::{Constant, TypedConstant, UntypedConstant};
 
 use crate::analyse::Inferred;
+use crate::ast::typed::pairwise_all;
 use crate::bit_array;
 use crate::build::{ExpressionPosition, Located, Target, module_erlang_name};
 use crate::exhaustiveness::CompiledCase;
@@ -47,16 +48,15 @@ pub trait HasLocation {
     fn location(&self) -> SrcSpan;
 }
 
-pub type TypedModule = Module<type_::ModuleInterface, TypedDefinition>;
-
-pub type UntypedModule = Module<(), TargetedDefinition>;
+pub type UntypedModule = Module<(), Vec<TargetedDefinition>>;
+pub type TypedModule = Module<type_::ModuleInterface, TypedDefinitions>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module<Info, Definitions> {
     pub name: EcoString,
     pub documentation: Vec<EcoString>,
     pub type_info: Info,
-    pub definitions: Vec<Definitions>,
+    pub definitions: Definitions,
     pub names: Names,
     /// The source byte locations of definition that are unused.
     /// This is used in code generation to know when definitions can be safely omitted.
@@ -71,16 +71,52 @@ impl<Info, Definitions> Module<Info, Definitions> {
 
 impl TypedModule {
     pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
-        self.definitions
+        let TypedDefinitions {
+            imports,
+            constants,
+            custom_types,
+            type_aliases,
+            functions,
+        } = &self.definitions;
+
+        imports
             .iter()
-            .find_map(|definition| definition.find_node(byte_index))
+            .find_map(|import| import.find_node(byte_index))
+            .or_else(|| (constants.iter()).find_map(|constant| constant.find_node(byte_index)))
+            .or_else(|| (custom_types.iter()).find_map(|type_| type_.find_node(byte_index)))
+            .or_else(|| (type_aliases.iter()).find_map(|alias| alias.find_node(byte_index)))
+            .or_else(|| (functions.iter()).find_map(|function| function.find_node(byte_index)))
     }
 
     pub fn find_statement(&self, byte_index: u32) -> Option<&TypedStatement> {
+        // Statements can only be found inside a module function, there's no
+        // need to go over all the other module definitions.
         self.definitions
+            .functions
             .iter()
-            .find_map(|definition| definition.find_statement(byte_index))
+            .find_map(|function| function.find_statement(byte_index))
     }
+
+    pub fn definitions_len(&self) -> usize {
+        let TypedDefinitions {
+            imports,
+            constants,
+            custom_types,
+            type_aliases,
+            functions,
+        } = &self.definitions;
+
+        imports.len() + constants.len() + custom_types.len() + type_aliases.len() + functions.len()
+    }
+}
+
+#[derive(Debug)]
+pub struct TypedDefinitions {
+    pub imports: Vec<TypedImport>,
+    pub constants: Vec<TypedModuleConstant>,
+    pub custom_types: Vec<TypedCustomType>,
+    pub type_aliases: Vec<TypedTypeAlias>,
+    pub functions: Vec<TypedFunction>,
 }
 
 /// The `@target(erlang)` and `@target(javascript)` attributes can be used to
@@ -715,7 +751,81 @@ impl<T, E> Function<T, E> {
     }
 }
 
+impl TypedFunction {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        // Search for the corresponding node inside the function
+        // only if the index falls within the function's full location.
+        if !self.full_location().contains(byte_index) {
+            return None;
+        }
+
+        if let Some(found) = self
+            .body
+            .iter()
+            .find_map(|statement| statement.find_node(byte_index))
+        {
+            return Some(found);
+        }
+
+        if let Some(found_arg) = self
+            .arguments
+            .iter()
+            .find_map(|arg| arg.find_node(byte_index))
+        {
+            return Some(found_arg);
+        };
+
+        if let Some(found_statement) = self
+            .body
+            .iter()
+            .find(|statement| statement.location().contains(byte_index))
+        {
+            return Some(Located::Statement(found_statement));
+        };
+
+        // Check if location is within the return annotation.
+        if let Some(located) = self
+            .return_annotation
+            .iter()
+            .find_map(|annotation| annotation.find_node(byte_index, self.return_type.clone()))
+        {
+            return Some(located);
+        };
+
+        // Note that the fn `.location` covers the function head, not
+        // the entire statement.
+        if self.location.contains(byte_index) {
+            Some(Located::ModuleFunction(self))
+        } else if self.full_location().contains(byte_index) {
+            Some(Located::FunctionBody(self))
+        } else {
+            None
+        }
+    }
+
+    pub fn find_statement(&self, byte_index: u32) -> Option<&TypedStatement> {
+        if !self.full_location().contains(byte_index) {
+            return None;
+        }
+
+        self.body
+            .iter()
+            .find_map(|statement| statement.find_statement(byte_index))
+    }
+
+    pub fn main_function(&self) -> Option<&TypedFunction> {
+        if let Some((_, name)) = &self.name
+            && name == "main"
+        {
+            Some(self)
+        } else {
+            None
+        }
+    }
+}
+
 pub type UntypedImport = Import<()>;
+pub type TypedImport = Import<EcoString>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Import another Gleam module so the current module can use the types and
@@ -752,6 +862,46 @@ impl<T> Import<T> {
     }
 }
 
+impl TypedImport {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        if !self.location.contains(byte_index) {
+            return None;
+        }
+
+        if let Some(unqualified) = self
+            .unqualified_values
+            .iter()
+            .find(|unqualified_value| unqualified_value.location.contains(byte_index))
+        {
+            return Some(Located::UnqualifiedImport(
+                crate::build::UnqualifiedImport {
+                    name: &unqualified.name,
+                    module: &self.module,
+                    is_type: false,
+                    location: &unqualified.location,
+                },
+            ));
+        }
+
+        if let Some(unqualified) = self
+            .unqualified_types
+            .iter()
+            .find(|unqualified_value| unqualified_value.location.contains(byte_index))
+        {
+            return Some(Located::UnqualifiedImport(
+                crate::build::UnqualifiedImport {
+                    name: &unqualified.name,
+                    module: &self.module,
+                    is_type: true,
+                    location: &unqualified.location,
+                },
+            ));
+        }
+
+        Some(Located::ModuleImport(self))
+    }
+}
+
 pub type UntypedModuleConstant = ModuleConstant<(), ()>;
 pub type TypedModuleConstant = ModuleConstant<Arc<Type>, EcoString>;
 
@@ -777,6 +927,27 @@ pub struct ModuleConstant<T, ConstantRecordTag> {
     pub type_: T,
     pub deprecation: Deprecation,
     pub implementations: Implementations,
+}
+
+impl TypedModuleConstant {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        // Check if location is within the annotation.
+        if let Some(annotation) = &self.annotation
+            && let Some(located) = annotation.find_node(byte_index, self.type_.clone())
+        {
+            return Some(located);
+        }
+
+        if let Some(located) = self.value.find_node(byte_index) {
+            return Some(located);
+        }
+
+        if self.location.contains(byte_index) {
+            Some(Located::ModuleConstant(self))
+        } else {
+            None
+        }
+    }
 }
 
 pub type UntypedCustomType = CustomType<()>;
@@ -826,7 +997,38 @@ impl<T> CustomType<T> {
     }
 }
 
+impl TypedCustomType {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        // Check if location is within the type of one of the arguments of a constructor.
+        if let Some(constructor) = self
+            .constructors
+            .iter()
+            .find(|constructor| constructor.location.contains(byte_index))
+        {
+            if let Some(annotation) = constructor
+                .arguments
+                .iter()
+                .find(|arg| arg.location.contains(byte_index))
+                .and_then(|arg| arg.ast.find_node(byte_index, arg.type_.clone()))
+            {
+                return Some(annotation);
+            }
+
+            return Some(Located::VariantConstructorDefinition(constructor));
+        }
+
+        // Note that the custom type `.location` covers the function
+        // head, not the entire statement.
+        if self.full_location().contains(byte_index) {
+            Some(Located::ModuleCustomType(self))
+        } else {
+            None
+        }
+    }
+}
+
 pub type UntypedTypeAlias = TypeAlias<()>;
+pub type TypedTypeAlias = TypeAlias<Arc<Type>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A new name for an existing type
@@ -849,199 +1051,30 @@ pub struct TypeAlias<T> {
     pub deprecation: Deprecation,
 }
 
-pub type TypedDefinition = Definition<Arc<Type>, TypedExpr, EcoString, EcoString>;
+impl TypedTypeAlias {
+    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
+        // Check if location is within the type being aliased.
+        if let Some(located) = self.type_ast.find_node(byte_index, self.type_.clone()) {
+            return Some(located);
+        }
+
+        if self.location.contains(byte_index) {
+            Some(Located::ModuleTypeAlias(self))
+        } else {
+            None
+        }
+    }
+}
+
 pub type UntypedDefinition = Definition<(), UntypedExpr, (), ()>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Definition<T, Expr, ConstantRecordTag, PackageName> {
     Function(Function<T, Expr>),
-
     TypeAlias(TypeAlias<T>),
-
     CustomType(CustomType<T>),
-
     Import(Import<PackageName>),
-
     ModuleConstant(ModuleConstant<T, ConstantRecordTag>),
-}
-
-impl TypedDefinition {
-    pub fn main_function(&self) -> Option<&TypedFunction> {
-        match self {
-            Definition::Function(f) if f.name.as_ref().is_some_and(|(_, name)| name == "main") => {
-                Some(f)
-            }
-            _ => None,
-        }
-    }
-
-    pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
-        match self {
-            Definition::Function(function) => {
-                // Search for the corresponding node inside the function
-                // only if the index falls within the function's full location.
-                if !function.full_location().contains(byte_index) {
-                    return None;
-                }
-
-                if let Some(found) = function
-                    .body
-                    .iter()
-                    .find_map(|statement| statement.find_node(byte_index))
-                {
-                    return Some(found);
-                }
-
-                if let Some(found_arg) = function
-                    .arguments
-                    .iter()
-                    .find_map(|arg| arg.find_node(byte_index))
-                {
-                    return Some(found_arg);
-                };
-
-                if let Some(found_statement) = function
-                    .body
-                    .iter()
-                    .find(|statement| statement.location().contains(byte_index))
-                {
-                    return Some(Located::Statement(found_statement));
-                };
-
-                // Check if location is within the return annotation.
-                if let Some(located) = function.return_annotation.iter().find_map(|annotation| {
-                    annotation.find_node(byte_index, function.return_type.clone())
-                }) {
-                    return Some(located);
-                };
-
-                // Note that the fn `.location` covers the function head, not
-                // the entire statement.
-                if function.location.contains(byte_index) {
-                    Some(Located::ModuleStatement(self))
-                } else if function.full_location().contains(byte_index) {
-                    Some(Located::FunctionBody(function))
-                } else {
-                    None
-                }
-            }
-
-            Definition::CustomType(custom) => {
-                // Check if location is within the type of one of the arguments of a constructor.
-                if let Some(constructor) = custom
-                    .constructors
-                    .iter()
-                    .find(|constructor| constructor.location.contains(byte_index))
-                {
-                    if let Some(annotation) = constructor
-                        .arguments
-                        .iter()
-                        .find(|arg| arg.location.contains(byte_index))
-                        .and_then(|arg| arg.ast.find_node(byte_index, arg.type_.clone()))
-                    {
-                        return Some(annotation);
-                    }
-
-                    return Some(Located::VariantConstructorDefinition(constructor));
-                }
-
-                // Note that the custom type `.location` covers the function
-                // head, not the entire statement.
-                if custom.full_location().contains(byte_index) {
-                    Some(Located::ModuleStatement(self))
-                } else {
-                    None
-                }
-            }
-
-            Definition::TypeAlias(alias) => {
-                // Check if location is within the type being aliased.
-                if let Some(located) = alias.type_ast.find_node(byte_index, alias.type_.clone()) {
-                    return Some(located);
-                }
-
-                if alias.location.contains(byte_index) {
-                    Some(Located::ModuleStatement(self))
-                } else {
-                    None
-                }
-            }
-
-            Definition::ModuleConstant(constant) => {
-                // Check if location is within the annotation.
-                if let Some(annotation) = &constant.annotation
-                    && let Some(l) = annotation.find_node(byte_index, constant.type_.clone())
-                {
-                    return Some(l);
-                }
-
-                if let Some(located) = constant.value.find_node(byte_index) {
-                    return Some(located);
-                }
-
-                if constant.location.contains(byte_index) {
-                    Some(Located::ModuleStatement(self))
-                } else {
-                    None
-                }
-            }
-
-            Definition::Import(import) => {
-                if self.location().contains(byte_index) {
-                    if let Some(unqualified) = import
-                        .unqualified_values
-                        .iter()
-                        .find(|i| i.location.contains(byte_index))
-                    {
-                        return Some(Located::UnqualifiedImport(
-                            crate::build::UnqualifiedImport {
-                                name: &unqualified.name,
-                                module: &import.module,
-                                is_type: false,
-                                location: &unqualified.location,
-                            },
-                        ));
-                    }
-
-                    if let Some(unqualified) = import
-                        .unqualified_types
-                        .iter()
-                        .find(|i| i.location.contains(byte_index))
-                    {
-                        return Some(Located::UnqualifiedImport(
-                            crate::build::UnqualifiedImport {
-                                name: &unqualified.name,
-                                module: &import.module,
-                                is_type: true,
-                                location: &unqualified.location,
-                            },
-                        ));
-                    }
-
-                    Some(Located::ModuleStatement(self))
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    pub fn find_statement(&self, byte_index: u32) -> Option<&TypedStatement> {
-        match self {
-            Definition::Function(function) => {
-                if !function.full_location().contains(byte_index) {
-                    return None;
-                }
-
-                function
-                    .body
-                    .iter()
-                    .find_map(|statement| statement.find_statement(byte_index))
-            }
-
-            _ => None,
-        }
-    }
 }
 
 impl<A, B, C, E> Definition<A, B, C, E> {
@@ -1077,19 +1110,6 @@ impl<A, B, C, E> Definition<A, B, C, E> {
     #[must_use]
     pub fn is_custom_type(&self) -> bool {
         matches!(self, Self::CustomType(..))
-    }
-
-    pub fn put_doc(&mut self, new_doc: (u32, EcoString)) {
-        match self {
-            Definition::Import(Import { .. }) => (),
-
-            Definition::Function(Function { documentation, .. })
-            | Definition::TypeAlias(TypeAlias { documentation, .. })
-            | Definition::CustomType(CustomType { documentation, .. })
-            | Definition::ModuleConstant(ModuleConstant { documentation, .. }) => {
-                let _ = documentation.replace(new_doc);
-            }
-        }
     }
 
     pub fn get_doc(&self) -> Option<EcoString> {
@@ -1685,6 +1705,33 @@ impl TypedClause {
             .chain(&self.alternative_patterns)
             .flatten()
             .flat_map(|pattern| pattern.bound_variables())
+    }
+
+    fn syntactically_eq(&self, other: &Self) -> bool {
+        let patterns_are_equal = pairwise_all(&self.pattern, &other.pattern, |(one, other)| {
+            one.syntactically_eq(other)
+        });
+
+        let alternatives_are_equal = pairwise_all(
+            &self.alternative_patterns,
+            &other.alternative_patterns,
+            |(patterns_one, patterns_other)| {
+                pairwise_all(patterns_one, patterns_other, |(one, other)| -> bool {
+                    one.syntactically_eq(other)
+                })
+            },
+        );
+
+        let guards_are_equal = match (&self.guard, &other.guard) {
+            (None, None) => true,
+            (None, Some(_)) | (Some(_), None) => false,
+            (Some(one), Some(other)) => one.syntactically_eq(other),
+        };
+
+        patterns_are_equal
+            && alternatives_are_equal
+            && guards_are_equal
+            && self.then.syntactically_eq(&other.then)
     }
 }
 
@@ -2284,6 +2331,286 @@ impl TypedClauseGuard {
                 .union(right.referenced_variables()),
         }
     }
+
+    fn syntactically_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                ClauseGuard::Block { value, .. },
+                ClauseGuard::Block {
+                    value: other_value, ..
+                },
+            ) => value.syntactically_eq(other_value),
+            (ClauseGuard::Block { .. }, _) => false,
+
+            (
+                ClauseGuard::Equals { left, right, .. },
+                ClauseGuard::Equals {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::Equals { .. }, _) => false,
+
+            (
+                ClauseGuard::NotEquals { left, right, .. },
+                ClauseGuard::NotEquals {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::NotEquals { .. }, _) => false,
+
+            (
+                ClauseGuard::GtInt { left, right, .. },
+                ClauseGuard::GtInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::GtInt { .. }, _) => false,
+
+            (
+                ClauseGuard::GtEqInt { left, right, .. },
+                ClauseGuard::GtEqInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::GtEqInt { .. }, _) => false,
+
+            (
+                ClauseGuard::LtInt { left, right, .. },
+                ClauseGuard::LtInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::LtInt { .. }, _) => false,
+
+            (
+                ClauseGuard::LtEqInt { left, right, .. },
+                ClauseGuard::LtEqInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::LtEqInt { .. }, _) => false,
+
+            (
+                ClauseGuard::GtFloat { left, right, .. },
+                ClauseGuard::GtFloat {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::GtFloat { .. }, _) => false,
+
+            (
+                ClauseGuard::GtEqFloat { left, right, .. },
+                ClauseGuard::GtEqFloat {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::GtEqFloat { .. }, _) => false,
+
+            (
+                ClauseGuard::LtFloat { left, right, .. },
+                ClauseGuard::LtFloat {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::LtFloat { .. }, _) => false,
+
+            (
+                ClauseGuard::LtEqFloat { left, right, .. },
+                ClauseGuard::LtEqFloat {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::LtEqFloat { .. }, _) => false,
+
+            (
+                ClauseGuard::AddInt { left, right, .. },
+                ClauseGuard::AddInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::AddInt { .. }, _) => false,
+
+            (
+                ClauseGuard::AddFloat { left, right, .. },
+                ClauseGuard::AddFloat {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::AddFloat { .. }, _) => false,
+
+            (
+                ClauseGuard::SubInt { left, right, .. },
+                ClauseGuard::SubInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::SubInt { .. }, _) => false,
+
+            (
+                ClauseGuard::SubFloat { left, right, .. },
+                ClauseGuard::SubFloat {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::SubFloat { .. }, _) => false,
+
+            (
+                ClauseGuard::MultInt { left, right, .. },
+                ClauseGuard::MultInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::MultInt { .. }, _) => false,
+
+            (
+                ClauseGuard::MultFloat { left, right, .. },
+                ClauseGuard::MultFloat {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::MultFloat { .. }, _) => false,
+
+            (
+                ClauseGuard::DivInt { left, right, .. },
+                ClauseGuard::DivInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::DivInt { .. }, _) => false,
+
+            (
+                ClauseGuard::DivFloat { left, right, .. },
+                ClauseGuard::DivFloat {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::DivFloat { .. }, _) => false,
+
+            (
+                ClauseGuard::RemainderInt { left, right, .. },
+                ClauseGuard::RemainderInt {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::RemainderInt { .. }, _) => false,
+
+            (
+                ClauseGuard::Or { left, right, .. },
+                ClauseGuard::Or {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::Or { .. }, _) => false,
+
+            (
+                ClauseGuard::And { left, right, .. },
+                ClauseGuard::And {
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => left.syntactically_eq(other_left) && right.syntactically_eq(other_right),
+            (ClauseGuard::And { .. }, _) => false,
+
+            (
+                ClauseGuard::Not { expression, .. },
+                ClauseGuard::Not {
+                    expression: other_expression,
+                    ..
+                },
+            ) => expression.syntactically_eq(other_expression),
+            (ClauseGuard::Not { .. }, _) => false,
+
+            (
+                ClauseGuard::Var { name, .. },
+                ClauseGuard::Var {
+                    name: other_name, ..
+                },
+            ) => name == other_name,
+            (ClauseGuard::Var { .. }, _) => false,
+
+            (
+                ClauseGuard::TupleIndex { index, tuple, .. },
+                ClauseGuard::TupleIndex {
+                    index: other_index,
+                    tuple: other_tuple,
+                    ..
+                },
+            ) => index == other_index && tuple.syntactically_eq(other_tuple),
+            (ClauseGuard::TupleIndex { .. }, _) => false,
+
+            (
+                ClauseGuard::FieldAccess {
+                    label, container, ..
+                },
+                ClauseGuard::FieldAccess {
+                    label: other_label,
+                    container: other_container,
+                    ..
+                },
+            ) => label == other_label && container.syntactically_eq(other_container),
+            (ClauseGuard::FieldAccess { .. }, _) => false,
+
+            (
+                ClauseGuard::ModuleSelect {
+                    label,
+                    module_alias,
+                    ..
+                },
+                ClauseGuard::ModuleSelect {
+                    label: other_label,
+                    module_alias: other_module_alias,
+                    ..
+                },
+            ) => label == other_label && module_alias == other_module_alias,
+            (ClauseGuard::ModuleSelect { .. }, _) => false,
+
+            (ClauseGuard::Constant(one), ClauseGuard::Constant(other)) => {
+                one.syntactically_eq(other)
+            }
+            (ClauseGuard::Constant(_), _) => false,
+        }
+    }
 }
 
 #[derive(
@@ -2520,6 +2847,51 @@ impl<T> BitArraySize<T> {
             BitArraySize::Variable { .. } | BitArraySize::BinaryOperator { .. } => false,
         }
     }
+
+    fn syntactically_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (BitArraySize::Int { int_value: n, .. }, BitArraySize::Int { int_value: m, .. }) => {
+                n == m
+            }
+            (BitArraySize::Int { .. }, _) => false,
+
+            (
+                BitArraySize::Variable { name, .. },
+                BitArraySize::Variable {
+                    name: other_name, ..
+                },
+            ) => name == other_name,
+            (BitArraySize::Variable { .. }, _) => false,
+
+            (
+                BitArraySize::BinaryOperator {
+                    operator,
+                    left,
+                    right,
+                    ..
+                },
+                BitArraySize::BinaryOperator {
+                    operator: other_operator,
+                    left: other_left,
+                    right: other_right,
+                    ..
+                },
+            ) => {
+                operator == other_operator
+                    && left.syntactically_eq(other_left)
+                    && right.syntactically_eq(other_right)
+            }
+            (BitArraySize::BinaryOperator { .. }, _) => false,
+
+            (
+                BitArraySize::Block { inner, .. },
+                BitArraySize::Block {
+                    inner: other_inner, ..
+                },
+            ) => inner.syntactically_eq(other_inner),
+            (BitArraySize::Block { .. }, _) => false,
+        }
+    }
 }
 
 pub type TypedTailPattern = TailPattern<Arc<Type>>;
@@ -2618,6 +2990,163 @@ impl<A> Pattern<A> {
     #[must_use]
     pub fn is_string(&self) -> bool {
         matches!(self, Self::String { .. })
+    }
+}
+
+impl TypedPattern {
+    fn syntactically_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Pattern::Int { int_value: n, .. }, Pattern::Int { int_value: m, .. }) => n == m,
+            (Pattern::Int { .. }, _) => false,
+
+            (Pattern::Float { float_value: n, .. }, Pattern::Float { float_value: m, .. }) => {
+                n == m
+            }
+            (Pattern::Float { .. }, _) => false,
+
+            (
+                Pattern::String { value, .. },
+                Pattern::String {
+                    value: other_value, ..
+                },
+            ) => value == other_value,
+            (Pattern::String { .. }, _) => false,
+
+            (
+                Pattern::Variable { name, .. },
+                Pattern::Variable {
+                    name: other_name, ..
+                },
+            ) => name == other_name,
+            (Pattern::Variable { .. }, _) => false,
+
+            (Pattern::BitArraySize(one), Pattern::BitArraySize(other)) => {
+                one.syntactically_eq(other)
+            }
+            (Pattern::BitArraySize(..), _) => false,
+
+            (
+                Pattern::Assign { name, pattern, .. },
+                Pattern::Assign {
+                    name: other_name,
+                    pattern: other_pattern,
+                    ..
+                },
+            ) => name == other_name && pattern.syntactically_eq(other_pattern),
+            (Pattern::Assign { .. }, _) => false,
+
+            (
+                Pattern::Discard { name, .. },
+                Pattern::Discard {
+                    name: other_name, ..
+                },
+            ) => name == other_name,
+            (Pattern::Discard { .. }, _) => false,
+
+            (
+                Pattern::List { elements, tail, .. },
+                Pattern::List {
+                    elements: other_elements,
+                    tail: other_tail,
+                    ..
+                },
+            ) => {
+                let tails_are_equal = match (tail, other_tail) {
+                    (None, None) => true,
+                    (None, Some(_)) | (Some(_), None) => false,
+                    (Some(one), Some(other)) => one.pattern.syntactically_eq(&other.pattern),
+                };
+                tails_are_equal
+                    && pairwise_all(elements, other_elements, |(one, other)| {
+                        one.syntactically_eq(other)
+                    })
+            }
+            (Pattern::List { .. }, _) => false,
+
+            (
+                Pattern::Constructor {
+                    name,
+                    arguments,
+                    module,
+                    ..
+                },
+                Pattern::Constructor {
+                    name: other_name,
+                    arguments: other_arguments,
+                    module: other_module,
+                    ..
+                },
+            ) => {
+                let modules_are_equal = match (module, other_module) {
+                    (None, None) => true,
+                    (None, Some(_)) | (Some(_), None) => false,
+                    (Some((one, _)), Some((other, _))) => one == other,
+                };
+                modules_are_equal
+                    && name == other_name
+                    && pairwise_all(arguments, other_arguments, |(one, other)| {
+                        one.label == other.label && one.value.syntactically_eq(&other.value)
+                    })
+            }
+            (Pattern::Constructor { .. }, _) => false,
+
+            (
+                Pattern::Tuple { elements, .. },
+                Pattern::Tuple {
+                    elements: other_elements,
+                    ..
+                },
+            ) => pairwise_all(elements, other_elements, |(one, other)| {
+                one.syntactically_eq(other)
+            }),
+            (Pattern::Tuple { .. }, _) => false,
+
+            (
+                Pattern::BitArray { segments, .. },
+                Pattern::BitArray {
+                    segments: other_segments,
+                    ..
+                },
+            ) => pairwise_all(segments, other_segments, |(one, other)| {
+                one.syntactically_eq(other)
+            }),
+            (Pattern::BitArray { .. }, _) => false,
+
+            (
+                Pattern::StringPrefix {
+                    left_side_assignment,
+                    left_side_string,
+                    right_side_assignment,
+                    ..
+                },
+                Pattern::StringPrefix {
+                    left_side_assignment: other_left_side_assignment,
+                    left_side_string: other_left_side_string,
+                    right_side_assignment: other_right_side_assignment,
+                    ..
+                },
+            ) => {
+                let left_side_assignments_are_equal =
+                    match (left_side_assignment, other_left_side_assignment) {
+                        (None, None) => true,
+                        (None, Some(_)) | (Some(_), None) => false,
+                        (Some((one, _)), Some((other, _))) => one == other,
+                    };
+                let right_side_assignments_are_equal =
+                    match (right_side_assignment, other_right_side_assignment) {
+                        (AssignName::Variable(one), AssignName::Variable(other)) => one == other,
+                        (AssignName::Variable(_), AssignName::Discard(_)) => false,
+                        (AssignName::Discard(one), AssignName::Discard(other)) => one == other,
+                        (AssignName::Discard(_), AssignName::Variable(_)) => false,
+                    };
+                left_side_string == other_left_side_string
+                    && left_side_assignments_are_equal
+                    && right_side_assignments_are_equal
+            }
+            (Pattern::StringPrefix { .. }, _) => false,
+
+            (Pattern::Invalid { .. }, _) => false,
+        }
     }
 }
 
@@ -3129,6 +3658,15 @@ impl TypedExprBitArraySegment {
     pub fn find_node(&self, byte_index: u32) -> Option<Located<'_>> {
         self.value.find_node(byte_index)
     }
+
+    fn syntactically_eq(&self, other: &Self) -> bool {
+        self.value.syntactically_eq(&other.value)
+            && pairwise_all(&self.options, &other.options, |(option, other_option)| {
+                option.syntactically_eq(other_option, |size, other_size| {
+                    size.syntactically_eq(other_size)
+                })
+            })
+    }
 }
 
 impl<TypedValue> BitArraySegment<TypedValue, Arc<Type>>
@@ -3214,6 +3752,15 @@ impl TypedPatternBitArraySegment {
                 .find_map(|option| option.find_node(byte_index))
         })
     }
+
+    fn syntactically_eq(&self, other: &Self) -> bool {
+        self.value.syntactically_eq(&other.value)
+            && pairwise_all(&self.options, &other.options, |(option, other_option)| {
+                option.syntactically_eq(other_option, |size, other_size| {
+                    size.syntactically_eq(other_size)
+                })
+            })
+    }
 }
 
 impl TypedConstantBitArraySegment {
@@ -3223,6 +3770,15 @@ impl TypedConstantBitArraySegment {
                 .iter()
                 .find_map(|option| option.find_node(byte_index))
         })
+    }
+
+    fn syntactically_eq(&self, other: &Self) -> bool {
+        self.value.syntactically_eq(&other.value)
+            && pairwise_all(&self.options, &other.options, |(option, other_option)| {
+                option.syntactically_eq(other_option, |size, other_size| {
+                    size.syntactically_eq(other_size)
+                })
+            })
     }
 }
 
@@ -3374,6 +3930,75 @@ impl<A> BitArrayOption<A> {
             | BitArrayOption::Native { .. }
             | BitArrayOption::Size { .. }
             | BitArrayOption::Unit { .. } => false,
+        }
+    }
+
+    fn syntactically_eq(&self, other: &Self, compare_sizes: impl Fn(&A, &A) -> bool) -> bool {
+        match (self, other) {
+            (BitArrayOption::Bytes { .. }, BitArrayOption::Bytes { .. }) => true,
+            (BitArrayOption::Bytes { .. }, _) => false,
+
+            (BitArrayOption::Int { .. }, BitArrayOption::Int { .. }) => true,
+            (BitArrayOption::Int { .. }, _) => false,
+
+            (BitArrayOption::Float { .. }, BitArrayOption::Float { .. }) => true,
+            (BitArrayOption::Float { .. }, _) => false,
+
+            (BitArrayOption::Bits { .. }, BitArrayOption::Bits { .. }) => true,
+            (BitArrayOption::Bits { .. }, _) => false,
+
+            (BitArrayOption::Utf8 { .. }, BitArrayOption::Utf8 { .. }) => true,
+            (BitArrayOption::Utf8 { .. }, _) => false,
+
+            (BitArrayOption::Utf16 { .. }, BitArrayOption::Utf16 { .. }) => true,
+            (BitArrayOption::Utf16 { .. }, _) => false,
+
+            (BitArrayOption::Utf32 { .. }, BitArrayOption::Utf32 { .. }) => true,
+            (BitArrayOption::Utf32 { .. }, _) => false,
+
+            (BitArrayOption::Utf8Codepoint { .. }, BitArrayOption::Utf8Codepoint { .. }) => true,
+            (BitArrayOption::Utf8Codepoint { .. }, _) => false,
+
+            (BitArrayOption::Utf16Codepoint { .. }, BitArrayOption::Utf16Codepoint { .. }) => true,
+            (BitArrayOption::Utf16Codepoint { .. }, _) => false,
+
+            (BitArrayOption::Utf32Codepoint { .. }, BitArrayOption::Utf32Codepoint { .. }) => true,
+            (BitArrayOption::Utf32Codepoint { .. }, _) => false,
+
+            (BitArrayOption::Signed { .. }, BitArrayOption::Signed { .. }) => true,
+            (BitArrayOption::Signed { .. }, _) => false,
+
+            (BitArrayOption::Unsigned { .. }, BitArrayOption::Unsigned { .. }) => true,
+            (BitArrayOption::Unsigned { .. }, _) => false,
+
+            (BitArrayOption::Big { .. }, BitArrayOption::Big { .. }) => true,
+            (BitArrayOption::Big { .. }, _) => false,
+
+            (BitArrayOption::Little { .. }, BitArrayOption::Little { .. }) => true,
+            (BitArrayOption::Little { .. }, _) => false,
+
+            (BitArrayOption::Native { .. }, BitArrayOption::Native { .. }) => true,
+            (BitArrayOption::Native { .. }, _) => false,
+
+            (
+                BitArrayOption::Unit { value, .. },
+                BitArrayOption::Unit {
+                    value: other_value, ..
+                },
+            ) => value == other_value,
+            (BitArrayOption::Unit { .. }, _) => false,
+
+            (
+                BitArrayOption::Size {
+                    value, short_form, ..
+                },
+                BitArrayOption::Size {
+                    value: other_value,
+                    short_form: other_short_form,
+                    ..
+                },
+            ) => short_form == other_short_form && compare_sizes(value, other_value),
+            (BitArrayOption::Size { .. }, _) => false,
         }
     }
 }
@@ -3766,6 +4391,34 @@ impl TypedStatement {
             Statement::Use(Use { call, .. }) => call.is_pure_value_constructor(),
             // Assert statements by definition are not pure
             Statement::Assert(_) => false,
+        }
+    }
+
+    fn syntactically_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Statement::Expression(one), Statement::Expression(other)) => {
+                one.syntactically_eq(other)
+            }
+            (Statement::Expression(_), _) => false,
+
+            (Statement::Assignment(one), Statement::Assignment(other)) => {
+                one.pattern.syntactically_eq(&other.pattern)
+                    && one.value.syntactically_eq(&other.value)
+            }
+            (Statement::Assignment(_), _) => false,
+
+            (Statement::Use(one), Statement::Use(other)) => one.call.syntactically_eq(&other.call),
+            (Statement::Use(_), _) => false,
+
+            (Statement::Assert(one), Statement::Assert(other)) => {
+                let messages_are_equal = match (&one.message, &other.message) {
+                    (None, None) => true,
+                    (None, Some(_)) | (Some(_), None) => false,
+                    (Some(one), Some(other)) => one.syntactically_eq(other),
+                };
+                messages_are_equal && one.value.syntactically_eq(&other.value)
+            }
+            (Statement::Assert(_), _) => false,
         }
     }
 }
