@@ -5168,6 +5168,10 @@ enum StaticComparison {
 }
 
 fn static_compare(one: &TypedExpr, other: &TypedExpr) -> StaticComparison {
+    if one.is_record_constructor_function() && other.is_record_constructor_function() {
+        return StaticComparison::CantTell;
+    }
+
     match (one, other) {
         (
             TypedExpr::Var {
