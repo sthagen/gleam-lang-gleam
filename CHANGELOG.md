@@ -1,16 +1,31 @@
 # Changelog
 
-## Unreleased
+## v1.14.0-rc2 - 2025-12-19
+
+### Bug fixes
+
+- Fixed a bug where the formatter would remove `@external` attributes from
+  custom types.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where updating records with unlabelled fields would result in
+  invalid code.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+## v1.14.0-rc1 - 2025-12-15
 
 ### Compiler
 
-- Update error message that arises when calling `echo` on an atom that lacks a
-  gleam representation to use `atom.create("__struct__")` instead of
-  `atom.create_from_string("__struct__")`.
+- The output of `echo` when printing atoms has been updated to use
+  `atom.create("...")` instead of `atom.create_from_string("...")`.
   ([Patrick Dewey](https://github.com/ptdewey))
 
 - Patterns aliasing a string prefix have been optimised to generate faster code
   on the Erlang target.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Type inference for constants is now fault tolerant, meaning the compiler won't
+  stop at the first error as it is typing constants.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Analysis is now fault tolerant in the presence of errors in field definitions
@@ -21,10 +36,10 @@
   and prevents publishing packages with empty modules to Hex.
   ([Vitor Souza](https://github.com/vit0rr))
 
-- The `@external` annotation is now supported for types with no constructors. It
-  allows users to point an external type definition to a specific Erlang or
-  TypeScript type. For example, the `dict.Dict` type from the standard library
-  can now be written as the following:
+- The `@external` annotation is now supported for external types. It allows
+  users to point an external type definition to a specific Erlang or TypeScript
+  type. For example, the `dict.Dict` type from the standard library can now be
+  written as the following:
 
   ```gleam
   @external(erlang, "erlang", "map")
@@ -48,13 +63,14 @@
 
   ([fruno](https://github.com/fruno-bulax/))
 
-- Fixed two bugs that made gleam not update the manifest correctly, causing
-  it to hit hex for version resolution on every operation and quickly reach
-  request limits in large projects.
+- Missing patterns in error messages and the "Add missing patterns" code action
+  are no longer sorted lexicographically. Instead, they now consider the order
+  in which variants were defined. As programmers often group "related" variants
+  together, this should mean less reshuffling after inserting missing patterns!
   ([fruno](https://github.com/fruno-bulax/))
 
-- The performance of `==` and `!=` has been improved for single-variant custom
-  types when compiling to JavaScript. This was done by generating comparison
+- The performance of `==` and `!=` has been improved for fieldless custom type
+  variants when compiling to JavaScript. This was done by generating comparison
   code specific to the custom type rather than using the generic equality check
   code.
   ([Nafi](https://github.com/re-masashi))
@@ -136,14 +152,30 @@
   Previously compiler produced false-positive redundant comparison warning, which
   is now removed:
 
-  ```
-  warning: Redundant comparison
-    ┌─ ...
-    │
-  6 │   echo Wobble == Wobble
-    │        ^^^^^^^^^^^^^^^^ This is always `True`
+  ([Adi Salimgereyev](https://github.com/abs0luty))
 
-  This comparison is redundant since it always succeeds.
+- Record update syntax can now be used in constant definitions. For example:
+
+  ```gleam
+  pub const base_http_config = HttpConfig(
+    host: "0.0.0.0",
+    port: 8080,
+    use_tls: False,
+    log_level: Info,
+  )
+
+  pub const dev_http_config = HttpConfig(
+    ..base_http_config,
+    port: 4000,
+    log_level: Debug,
+  )
+
+  pub const prod_http_config = HttpConfig(
+    ..base_http_config,
+    port: 80,
+    use_tls: True,
+    log_level: Warn,
+  )
   ```
 
   ([Adi Salimgereyev](https://github.com/abs0luty))
@@ -160,8 +192,8 @@
   `--invert` would be silently ignored if given together with `--package`.
   ([Evan Silberman](https://github.com/silby))
 
-- Update to latest Elixir API, so warning would not be shown when compiling
-  Elixir file in a Gleam project.
+- Updated to use the latest Elixir API, so a warning would not be shown when
+  compiling Elixir file in a Gleam project.
   ([Andrey Kozhev](https://github.com/ankddev))
 
 - The build tool now has a new `gleam deps outdated` command that shows outdated
@@ -213,8 +245,8 @@
 
 ### Language server
 
-- The language server can now offer a code action to merge consecutive case
-  branches with the same body. For example:
+- The language server can now offer a code action to merge case clauses with
+  the same body. For example:
 
   ```gleam
   case user {
@@ -263,12 +295,16 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The "inline variable" code action can now trigger when used over the let
+- The "inline variable" code action can now trigger when used over the `let`
   keyword of a variable to inline.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The "add omitted labels" code action can now be used in function calls where
   some of the labels have been provided already.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The "generate function" code action can now trigger when used over constant
+  values as well.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Grouping of related diagnostics should now work across more editors.
@@ -284,9 +320,57 @@
   error message instead of silently doing nothing.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- When providing autocomplete suggestions, the language server will now
+  prioritise values which match the expected type of the value being completed.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The language server now offers code action to add type annotations to all
+  functions and constants. For example,
+
+  ```gleam
+  pub const answer = 42
+
+  pub fn add(x, y) {
+    x + y
+  }
+
+  pub fn add_one(thing) {
+    //     ^ Triggering "Annotate all top level definitions" code action here
+    let result = add(thing, 1)
+    result
+  }
+  ```
+
+  Triggering the "Annotate all top level definitions" code action over
+  the name of function `add_one` would result in following code:
+
+  ```gleam
+  pub const answer: Int = 42
+
+  pub fn add(x: Int, y: Int) -> Int {
+    x + y
+  }
+
+  pub fn add_one(thing: Int) -> Int {
+    let result = add(thing, 1)
+    result
+  }
+  ```
+
+  ([Andrey Kozhev](https://github.com/ankddev))
+
+- Qualify and unqualify code actions can now trigger when used over constant
+  values as well.
+  ([Vladislav Shakitskiy](https://github.com/vshakitskiy))
+
 ### Formatter
 
 ### Bug fixes
+
+- Fixed two bugs that made gleam not update the manifest correctly, causing
+  it to hit hex for version resolution on every operation and quickly reach
+  request limits in large projects.
+  ([fruno](https://github.com/fruno-bulax/))
 
 - Fixed a bug where renaming a variable from an alternative pattern would not
   rename all its occurrences.
@@ -343,6 +427,10 @@
   pattern.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a bug where the "generate function" code action would pop up for
+  variants.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Fixed a bug where useless comparison warnings for floats compared literal
   strings, claiming for example that `1.0 == 1.` was always false.
   ([fruno](https://github.com/fruno-bulax/))
@@ -359,7 +447,8 @@
   constants.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
-- Fix invalid JavaScript codegen in cases where underscores follow a decimal.
+- Fixed a bug where invalid code would be generated on the JavaScript target in
+  cases where an underscore followed the decimal point in a float literal.
   ([Patrick Dewey](https://github.com/ptdewey))
 
 - Typos in the error message shown when trying to install a non-existent package
@@ -373,3 +462,20 @@
 - Fixed a bug where the type checker would allow invalid programs when a large
   group of functions were all mutually recursive.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The compiler now provides a clearer error message when a function's return type
+  is mistakenly declared using `:` instead of `->`.
+  ([Gurvir Singh](https://github.com/baraich))
+
+- Fixed a bug where the data generated for searching documentation was in the
+  wrong format, preventing it from being used by Hexdocs search.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the "collapse nested case" code action would produce invalid
+  code on a list tail pattern.
+  ([Matias Carlander](https://github.com/matiascr))
+
+- Fixed two bugs that made gleam not update the manifest correctly, causing
+  it to hit hex for version resolution on every operation and quickly reach
+  request limits in large projects.
+  ([fruno](https://github.com/fruno-bulax/))

@@ -116,10 +116,15 @@ struct AccessorsMap {
   sharedAccessors @1 :List(Property(RecordAccessor));
   variantSpecificAccessors @2 :List(VariantSpecificAccessors);
   publicity @3 :Publicity;
+  positionalAccessors @4 :List(PositionalAccessors);
 }
 
 struct VariantSpecificAccessors {
   accessors @0 :List(Property(RecordAccessor));
+}
+
+struct PositionalAccessors {
+  accessors @0 :List(Type);
 }
 
 struct RecordAccessor {
@@ -263,7 +268,12 @@ struct Constant {
     int @0 :Text;
     float @1 :Text;
     string @2 :Text;
-    tuple @3 :List(Constant);
+
+
+    tuple :group {
+      elements @3 :List(Constant);
+      type @16 :Type;
+    }
 
     list :group {
       elements @4 :List(Constant);

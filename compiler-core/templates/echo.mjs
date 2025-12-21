@@ -31,9 +31,12 @@ class Echo$Inspector {
     try {
       // We can only check if an object is a stdlib Dict if it is one of the
       // project's dependencies.
-      // The `Dict` class is the default export of `stdlib/dict.mjs`
-      // that we import as `$stdlib$dict`.
-      return value instanceof $stdlib$dict.default;
+      // We import the public gleam/dict module, so to check if something is a
+      // dict we compare the `constructor` field on the object with that of a
+      // new dict.
+      const empty_dict = $stdlib$dict.new$();
+      const dict_class = empty_dict.constructor;
+      return value instanceof dict_class;
     } catch {
       // If stdlib is not one of the project's dependencies then `$stdlib$dict`
       // will not have been imported and the check will throw an exception meaning
@@ -115,10 +118,11 @@ class Echo$Inspector {
     let body = "dict.from_list([";
     let first = true;
 
-    let key_value_pairs = [];
-    map.forEach((value, key) => {
-      key_value_pairs.push([key, value]);
+    let key_value_pairs = $stdlib$dict.fold(map, [], (pairs, key, value) => {
+      pairs.push([key, value]);
+      return pairs;
     });
+
     key_value_pairs.sort();
     key_value_pairs.forEach(([key, value]) => {
       if (!first) body = body + ", ";

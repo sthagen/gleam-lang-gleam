@@ -184,13 +184,7 @@ pub fn generate_html<IO: FileSystemReader>(
             content: Content::Text(temp.render().expect("Page template rendering")),
         });
 
-        search_items.push(SearchItem {
-            type_: SearchItemType::Page,
-            parent_title: config.name.to_string(),
-            title: config.name.to_string(),
-            content: escape_html_content(content),
-            reference: page.path.to_string(),
-        })
+        search_items.push(search_item_for_page(&config.name, &page.path, content))
     }
 
     // Generate module documentation pages
@@ -203,7 +197,7 @@ pub fn generate_html<IO: FileSystemReader>(
 
         let documentation_content = module.ast.documentation.iter().join("\n");
         let rendered_documentation =
-            render_markdown(&documentation_content.clone(), MarkdownSource::Comment);
+            render_markdown(&documentation_content, MarkdownSource::Comment);
 
         let mut printer = Printer::new(
             module.ast.type_info.package.clone(),
@@ -215,60 +209,14 @@ pub fn generate_html<IO: FileSystemReader>(
         let types = printer.type_definitions(&source_links, &module.ast.definitions);
         let values = printer.value_definitions(&source_links, &module.ast.definitions);
 
-        types.iter().for_each(|type_| {
-            let constructors = type_
-                .constructors
-                .iter()
-                .map(|constructor| {
-                    let arguments = constructor
-                        .arguments
-                        .iter()
-                        .map(|argument| format!("{}\n{}", argument.name, argument.doc))
-                        .join("\n");
+        types
+            .iter()
+            .for_each(|type_| search_items.push(search_item_for_type(&module.name, type_)));
+        values
+            .iter()
+            .for_each(|value| search_items.push(search_item_for_value(&module.name, value)));
 
-                    format!(
-                        "{}\n{}\n{}",
-                        constructor.definition, constructor.text_documentation, arguments
-                    )
-                })
-                .join("\n");
-
-            search_items.push(SearchItem {
-                type_: SearchItemType::Type,
-                parent_title: module.name.to_string(),
-                title: type_.name.to_string(),
-                content: format!(
-                    "{}\n{}\n{}\n{}",
-                    type_.definition,
-                    type_.text_documentation,
-                    constructors,
-                    import_synonyms(&module.name, type_.name)
-                ),
-                reference: format!("{}.html#{}", module.name, type_.name),
-            })
-        });
-        values.iter().for_each(|constant| {
-            search_items.push(SearchItem {
-                type_: SearchItemType::Value,
-                parent_title: module.name.to_string(),
-                title: constant.name.to_string(),
-                content: format!(
-                    "{}\n{}\n{}",
-                    constant.definition,
-                    constant.text_documentation,
-                    import_synonyms(&module.name, constant.name)
-                ),
-                reference: format!("{}.html#{}", module.name, constant.name),
-            })
-        });
-
-        search_items.push(SearchItem {
-            type_: SearchItemType::Module,
-            parent_title: module.name.to_string(),
-            title: module.name.to_string(),
-            content: documentation_content,
-            reference: format!("{}.html", module.name),
-        });
+        search_items.push(search_item_for_module(module));
 
         let page_title = format!("{} · {} · v{}", name, config.name, config.version);
         let page_meta_description = "";
@@ -368,7 +316,7 @@ pub fn generate_html<IO: FileSystemReader>(
         ),
     });
 
-    // lunr.min.js, search_data.json and index.js
+    // lunr.min.js, search-data.json and index.js
 
     files.push(OutputFile {
         path: Utf8PathBuf::from("js/lunr.min.js"),
@@ -382,7 +330,7 @@ pub fn generate_html<IO: FileSystemReader>(
     .expect("search index serialization");
 
     files.push(OutputFile {
-        path: Utf8PathBuf::from("search_data.json"),
+        path: Utf8PathBuf::from("search-data.json"),
         content: Content::Text(search_data_json.to_string()),
     });
 
@@ -470,6 +418,74 @@ pub fn generate_html<IO: FileSystemReader>(
     files
 }
 
+fn search_item_for_page(package: &str, path: &str, content: String) -> SearchItem {
+    SearchItem {
+        type_: SearchItemType::Page,
+        parent_title: package.to_string(),
+        title: package.to_string(),
+        content,
+        reference: path.to_string(),
+    }
+}
+
+fn search_item_for_type(module: &str, type_: &TypeDefinition<'_>) -> SearchItem {
+    let constructors = type_
+        .constructors
+        .iter()
+        .map(|constructor| {
+            let arguments = constructor
+                .arguments
+                .iter()
+                .map(|argument| format!("{}\n{}", argument.name, argument.text_documentation))
+                .join("\n");
+
+            format!(
+                "{}\n{}\n{}",
+                constructor.raw_definition, constructor.text_documentation, arguments
+            )
+        })
+        .join("\n");
+
+    SearchItem {
+        type_: SearchItemType::Type,
+        parent_title: module.to_string(),
+        title: type_.name.to_string(),
+        content: format!(
+            "{}\n{}\n{}\n{}",
+            type_.raw_definition,
+            type_.text_documentation,
+            constructors,
+            import_synonyms(module, type_.name)
+        ),
+        reference: format!("{}.html#{}", module, type_.name),
+    }
+}
+
+fn search_item_for_value(module: &str, value: &DocsValues<'_>) -> SearchItem {
+    SearchItem {
+        type_: SearchItemType::Value,
+        parent_title: module.to_string(),
+        title: value.name.to_string(),
+        content: format!(
+            "{}\n{}\n{}",
+            value.raw_definition,
+            value.text_documentation,
+            import_synonyms(module, value.name)
+        ),
+        reference: format!("{}.html#{}", module, value.name),
+    }
+}
+
+fn search_item_for_module(module: &Module) -> SearchItem {
+    SearchItem {
+        type_: SearchItemType::Module,
+        parent_title: module.name.to_string(),
+        title: module.name.to_string(),
+        content: module.ast.documentation.iter().join("\n"),
+        reference: format!("{}.html", module.name),
+    }
+}
+
 pub fn generate_json_package_interface(
     path: Utf8PathBuf,
     package: &Package,
@@ -525,22 +541,6 @@ fn page_unnest_test() {
     assert_eq!(page_unnest("string"), ".");
     assert_eq!(page_unnest("gleam/string"), "..");
     assert_eq!(page_unnest("gleam/string/inspect"), "../..");
-}
-
-fn escape_html_content(it: String) -> String {
-    it.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-#[test]
-fn escape_html_content_test() {
-    assert_eq!(
-        escape_html_content("&<>\"'".to_string()),
-        "&amp;&lt;&gt;&quot;&#39;"
-    );
 }
 
 fn import_synonyms(parent: &str, child: &str) -> String {
@@ -599,6 +599,7 @@ struct Link {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct TypeConstructor {
     definition: String,
+    raw_definition: String,
     documentation: String,
     text_documentation: String,
     arguments: Vec<TypeConstructorArg>,
@@ -608,12 +609,14 @@ struct TypeConstructor {
 struct TypeConstructorArg {
     name: String,
     doc: String,
+    text_documentation: String,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct TypeDefinition<'a> {
     name: &'a str,
     definition: String,
+    raw_definition: String,
     documentation: String,
     constructors: Vec<TypeConstructor>,
     text_documentation: String,
@@ -626,6 +629,7 @@ struct TypeDefinition<'a> {
 struct DocsValues<'a> {
     name: &'a str,
     definition: String,
+    raw_definition: String,
     documentation: String,
     text_documentation: String,
     source_url: String,
@@ -671,6 +675,8 @@ struct ModuleTemplate<'a> {
     rendering_timestamp: &'a str,
 }
 
+/// Search data for use by Hexdocs search, as well as the search built-in to
+/// generated documentation
 #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct SearchData {
     items: Vec<SearchItem>,
@@ -678,15 +684,23 @@ struct SearchData {
     programming_language: SearchProgrammingLanguage,
 }
 
+/// A single item that can appear as a search result
 #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct SearchItem {
+    /// The type of item this is: Value, Type, Module, or other Page
     #[serde(rename = "type")]
     type_: SearchItemType,
+    /// The title of the module or package containing this search item
     #[serde(rename = "parentTitle")]
     parent_title: String,
+    /// The title of this item
     title: String,
+    /// Markdown text which describes this item, containing documentation from
+    /// doc comments, as well as rendered definitions of types and values.
     #[serde(rename = "doc")]
     content: String,
+    /// The relative URL to the documentation for this search item, for example
+    /// `gleam/option.html#Option`
     #[serde(rename = "ref")]
     reference: String,
 }

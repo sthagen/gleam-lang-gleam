@@ -45,9 +45,9 @@ use std::{collections::HashSet, sync::Arc};
 use super::{
     DownloadDependencies, MakeLocker,
     code_action::{
-        AddAnnotations, CodeActionBuilder, ConvertFromUse, ConvertToFunctionCall, ConvertToPipe,
-        ConvertToUse, ExpandFunctionCapture, ExtractConstant, ExtractVariable,
-        FillInMissingLabelledArgs, FillUnusedFields, FixBinaryOperation,
+        AddAnnotations, AnnotateTopLevelDefinitions, CodeActionBuilder, ConvertFromUse,
+        ConvertToFunctionCall, ConvertToPipe, ConvertToUse, ExpandFunctionCapture, ExtractConstant,
+        ExtractVariable, FillInMissingLabelledArgs, FillUnusedFields, FixBinaryOperation,
         FixTruncatedBitArraySegment, GenerateDynamicDecoder, GenerateFunction, GenerateJsonEncoder,
         GenerateVariant, InlineVariable, InterpolateString, LetAssertToCase, PatternMatchOnValue,
         RedundantTupleInCaseSubject, RemoveEchos, RemoveUnusedImports, UseLabelShorthandSyntax,
@@ -271,7 +271,7 @@ where
                 None => return Ok(None),
             };
 
-            let completer = Completer::new(&src, &params, &this.compiler, module);
+            let mut completer = Completer::new(&src, &params, &this.compiler, module);
             let byte_index = completer.module_line_numbers.byte_index(params.position);
 
             // If in comment context, do not provide completions
@@ -279,7 +279,7 @@ where
                 return Ok(None);
             }
 
-            // Check current filercontents if the user is writing an import
+            // Check current file contents if the user is writing an import
             // and handle separately from the rest of the completion flow
             // Check if an import is being written
             if let Some(value) = completer.import_completions() {
@@ -309,9 +309,10 @@ where
                     Some(completions)
                 }
                 Located::Expression {
-                    expression: TypedExpr::RecordAccess { record, .. },
+                    expression: TypedExpr::RecordAccess { record, type_, .. },
                     ..
                 } => {
+                    completer.expected_type = Some(type_.clone());
                     let mut completions = vec![];
                     completions.append(&mut completer.completion_values());
                     completions.append(&mut completer.completion_field_accessors(record.type_()));
@@ -332,10 +333,14 @@ where
                     );
                     Some(completions)
                 }
-                Located::Statement(_) | Located::Expression { .. } => {
+                Located::Expression { expression, .. } => {
+                    completer.expected_type = Some(expression.type_());
                     Some(completer.completion_values())
                 }
                 Located::ModuleFunction(_) => Some(completer.completion_types()),
+
+                Located::Statement(_) => Some(completer.completion_values()),
+
                 Located::FunctionBody(_) => Some(completer.completion_values()),
 
                 Located::ModuleTypeAlias(_)
@@ -462,6 +467,8 @@ where
             )
             .code_actions();
             AddAnnotations::new(module, &lines, &params).code_action(&mut actions);
+            actions
+                .extend(AnnotateTopLevelDefinitions::new(module, &lines, &params).code_actions());
             Ok(if actions.is_empty() {
                 None
             } else {
@@ -1462,7 +1469,7 @@ fn code_action_unused_values(
     }
 
     // Sort spans by start position, with longer spans coming first
-    unused_values.sort_by_key(|span| (span.start, -(span.end as i64 - span.start as i64)));
+    unused_values.sort_by_key(|span| (span.start, -(span.len() as i64)));
 
     let mut processed_lsp_range = Vec::new();
 

@@ -113,3 +113,55 @@ pub type Wibble {
 "
     );
 }
+
+#[test]
+fn const_record_update_generic_respecialization() {
+    assert_js!(
+        "
+pub type Box(a) {
+  Box(name: String, value: a)
+}
+
+pub const base = Box(\"score\", 50)
+pub const updated = Box(..base, value: \"Hello\")
+
+pub fn main() {
+  #(base, updated)
+}
+",
+    );
+}
+
+#[test]
+fn record_update_with_unlabelled_fields() {
+    assert_js!(
+        r#"
+pub type Wibble {
+  Wibble(Int, Float, b: Bool, s: String)
+}
+
+pub fn main() {
+  let record = Wibble(1, 3.14, True, "Hello")
+  Wibble(..record, b: False)
+}
+"#
+    );
+}
+
+#[test]
+fn constant_record_update_with_unlabelled_fields() {
+    assert_js!(
+        r#"
+pub type Wibble {
+  Wibble(Int, Float, b: Bool, s: String)
+}
+
+pub const record = Wibble(1, 3.14, True, "Hello")
+pub const updated = Wibble(..record, b: False)
+
+pub fn main() {
+  updated
+}
+"#
+    );
+}

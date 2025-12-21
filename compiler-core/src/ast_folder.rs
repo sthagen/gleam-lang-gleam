@@ -7,14 +7,14 @@ use crate::{
     analyse::Inferred,
     ast::{
         Assert, AssignName, Assignment, BinOp, BitArraySize, CallArg, Constant, Definition,
-        FunctionLiteralKind, Pattern, RecordBeingUpdated, SrcSpan, Statement, TailPattern,
-        TargetedDefinition, TodoKind, TypeAst, TypeAstConstructor, TypeAstFn, TypeAstHole,
-        TypeAstTuple, TypeAstVar, UntypedArg, UntypedAssert, UntypedAssignment, UntypedClause,
-        UntypedConstant, UntypedConstantBitArraySegment, UntypedCustomType, UntypedDefinition,
-        UntypedExpr, UntypedExprBitArraySegment, UntypedFunction, UntypedImport, UntypedModule,
-        UntypedModuleConstant, UntypedPattern, UntypedPatternBitArraySegment,
-        UntypedRecordUpdateArg, UntypedStatement, UntypedTailPattern, UntypedTypeAlias, UntypedUse,
-        UntypedUseAssignment, Use, UseAssignment,
+        FunctionLiteralKind, InvalidExpression, Pattern, RecordBeingUpdated, RecordUpdateArg,
+        SrcSpan, Statement, TailPattern, TargetedDefinition, TodoKind, TypeAst, TypeAstConstructor,
+        TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, UntypedArg, UntypedAssert,
+        UntypedAssignment, UntypedClause, UntypedConstant, UntypedConstantBitArraySegment,
+        UntypedCustomType, UntypedDefinition, UntypedExpr, UntypedExprBitArraySegment,
+        UntypedFunction, UntypedImport, UntypedModule, UntypedModuleConstant, UntypedPattern,
+        UntypedPatternBitArraySegment, UntypedRecordUpdateArg, UntypedStatement,
+        UntypedTailPattern, UntypedTypeAlias, UntypedUse, UntypedUseAssignment, Use, UseAssignment,
     },
     build::Target,
     parse::LiteralFloatValue,
@@ -902,7 +902,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
         &mut self,
         location: SrcSpan,
         constructor: Box<UntypedExpr>,
-        record: RecordBeingUpdated,
+        record: RecordBeingUpdated<UntypedExpr>,
         arguments: Vec<UntypedRecordUpdateArg>,
     ) -> UntypedExpr {
         UntypedExpr::RecordUpdate {
@@ -959,7 +959,11 @@ pub trait UntypedConstantFolder {
 
             Constant::String { location, value } => self.fold_constant_string(location, value),
 
-            Constant::Tuple { location, elements } => self.fold_constant_tuple(location, elements),
+            Constant::Tuple {
+                location,
+                elements,
+                type_: (),
+            } => self.fold_constant_tuple(location, elements),
 
             Constant::List {
                 location,
@@ -977,6 +981,25 @@ pub trait UntypedConstantFolder {
                 field_map: _,
                 record_constructor: _,
             } => self.fold_constant_record(location, module, name, arguments),
+
+            Constant::RecordUpdate {
+                location,
+                constructor_location,
+                module,
+                name,
+                record,
+                arguments,
+                tag: (),
+                type_: (),
+                field_map: _,
+            } => self.fold_constant_record_update(
+                location,
+                constructor_location,
+                module,
+                name,
+                record,
+                arguments,
+            ),
 
             Constant::BitArray { location, segments } => {
                 self.fold_constant_bit_array(location, segments)
@@ -999,7 +1022,8 @@ pub trait UntypedConstantFolder {
             Constant::Invalid {
                 location,
                 type_: (),
-            } => self.fold_constant_invalid(location),
+                extra_information,
+            } => self.fold_constant_invalid(location, extra_information),
         }
     }
 
@@ -1038,7 +1062,11 @@ pub trait UntypedConstantFolder {
         location: SrcSpan,
         elements: Vec<UntypedConstant>,
     ) -> UntypedConstant {
-        Constant::Tuple { location, elements }
+        Constant::Tuple {
+            location,
+            elements,
+            type_: (),
+        }
     }
 
     fn fold_constant_list(
@@ -1067,8 +1095,30 @@ pub trait UntypedConstantFolder {
             arguments,
             tag: (),
             type_: (),
-            field_map: None,
+            field_map: Inferred::Unknown,
             record_constructor: None,
+        }
+    }
+
+    fn fold_constant_record_update(
+        &mut self,
+        location: SrcSpan,
+        constructor_location: SrcSpan,
+        module: Option<(EcoString, SrcSpan)>,
+        name: EcoString,
+        record: RecordBeingUpdated<UntypedConstant>,
+        arguments: Vec<RecordUpdateArg<UntypedConstant>>,
+    ) -> UntypedConstant {
+        Constant::RecordUpdate {
+            location,
+            constructor_location,
+            module,
+            name,
+            record,
+            arguments,
+            tag: (),
+            type_: (),
+            field_map: Inferred::Unknown,
         }
     }
 
@@ -1108,10 +1158,15 @@ pub trait UntypedConstantFolder {
         }
     }
 
-    fn fold_constant_invalid(&mut self, location: SrcSpan) -> UntypedConstant {
+    fn fold_constant_invalid(
+        &mut self,
+        location: SrcSpan,
+        extra_information: Option<InvalidExpression>,
+    ) -> UntypedConstant {
         Constant::Invalid {
             location,
             type_: (),
+            extra_information,
         }
     }
 
@@ -1167,6 +1222,42 @@ pub trait UntypedConstantFolder {
                     type_,
                     field_map,
                     record_constructor,
+                }
+            }
+
+            Constant::RecordUpdate {
+                location,
+                constructor_location,
+                module,
+                name,
+                record,
+                arguments,
+                tag,
+                type_,
+                field_map,
+            } => {
+                let record = RecordBeingUpdated {
+                    base: Box::new(self.fold_constant(*record.base)),
+                    location: record.location,
+                };
+                let arguments = arguments
+                    .into_iter()
+                    .map(|argument| RecordUpdateArg {
+                        label: argument.label,
+                        location: argument.location,
+                        value: self.fold_constant(argument.value),
+                    })
+                    .collect();
+                Constant::RecordUpdate {
+                    location,
+                    constructor_location,
+                    module,
+                    name,
+                    record,
+                    arguments,
+                    tag,
+                    type_,
+                    field_map,
                 }
             }
 

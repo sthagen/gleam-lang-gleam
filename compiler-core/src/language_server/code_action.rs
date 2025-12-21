@@ -1,7 +1,8 @@
 use std::{collections::HashSet, iter, sync::Arc};
 
 use crate::{
-    Error, STDLIB_PACKAGE_NAME, analyse,
+    Error, STDLIB_PACKAGE_NAME,
+    analyse::Inferred,
     ast::{
         self, ArgNames, AssignName, AssignmentKind, BitArraySegmentTruncation, BoundVariable,
         BoundVariableName, CallArg, CustomType, FunctionLiteralKind, ImplicitCallArgOrigin, Import,
@@ -786,18 +787,15 @@ impl<'a> FillInMissingLabelledArgs<'a> {
             //   call(one|)
             //           ^ Cursor here, no comma behind, we'll have to add one!
             //
-            let has_comma_after_last_argument = if let Some(last_arg) = arguments
-                .iter()
-                .filter(|arg| !arg.is_implicit())
-                .next_back()
-            {
-                self.module
-                    .code
-                    .get(last_arg.location.end as usize..=label_insertion_start as usize)
-                    .is_some_and(|text| text.contains(','))
-            } else {
-                false
-            };
+            let has_comma_after_last_argument =
+                if let Some(last_arg) = arguments.iter().rfind(|arg| !arg.is_implicit()) {
+                    self.module
+                        .code
+                        .get(last_arg.location.end as usize..=label_insertion_start as usize)
+                        .is_some_and(|text| text.contains(','))
+                } else {
+                    false
+                };
 
             let format_label = match kind {
                 SelectedCallKind::Value => |label| format!("{label}: todo"),
@@ -902,7 +900,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
-        constructor: &'ast analyse::Inferred<type_::PatternConstructor>,
+        constructor: &'ast Inferred<type_::PatternConstructor>,
         spread: &'ast Option<SrcSpan>,
         type_: &'ast Arc<Type>,
     ) {
@@ -1361,6 +1359,113 @@ impl<'a> AddAnnotations<'a> {
     }
 }
 
+/// Code action to add type annotations to all top level definitions
+///
+pub struct AnnotateTopLevelDefinitions<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    is_hovering_definition_requiring_annotations: bool,
+}
+
+impl<'a> AnnotateTopLevelDefinitions<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            is_hovering_definition_requiring_annotations: false,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        // We only want to trigger the action if we're over one of the definition
+        // which is lacking some annotations in the module
+        if !self.is_hovering_definition_requiring_annotations {
+            return vec![];
+        };
+
+        let mut action = Vec::with_capacity(1);
+        CodeActionBuilder::new("Annotate all top level definitions")
+            .kind(CodeActionKind::REFACTOR_REWRITE)
+            .changes(self.params.text_document.uri.clone(), self.edits.edits)
+            .preferred(false)
+            .push_to(&mut action);
+        action
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for AnnotateTopLevelDefinitions<'_> {
+    fn visit_typed_module_constant(&mut self, constant: &'ast TypedModuleConstant) {
+        let code_action_range = self.edits.src_span_to_lsp_range(constant.location);
+
+        // We don't need to add an annotation if there already is one
+        if constant.annotation.is_some() {
+            return;
+        }
+
+        // We're hovering definition which needs some annotations
+        if overlaps(code_action_range, self.params.range) {
+            self.is_hovering_definition_requiring_annotations = true;
+        }
+
+        self.edits.insert(
+            constant.name_location.end,
+            format!(
+                ": {}",
+                // Create new printer to ignore type variables from other definitions
+                Printer::new_without_type_variables(&self.module.ast.names)
+                    .print_type(&constant.type_)
+            ),
+        );
+    }
+
+    fn visit_typed_function(&mut self, fun: &'ast ast::TypedFunction) {
+        // Don't annotate already annotated arguments
+        let arguments_to_annotate = fun
+            .arguments
+            .iter()
+            .filter(|argument| argument.annotation.is_none())
+            .collect::<Vec<_>>();
+        let needs_return_annotation = fun.return_annotation.is_none();
+
+        if arguments_to_annotate.is_empty() && !needs_return_annotation {
+            return;
+        }
+
+        let code_action_range = self.edits.src_span_to_lsp_range(fun.location);
+        if overlaps(code_action_range, self.params.range) {
+            self.is_hovering_definition_requiring_annotations = true;
+        }
+
+        // Create new printer to ignore type variables from other definitions
+        let mut printer = Printer::new_without_type_variables(&self.module.ast.names);
+        collect_type_variables(&mut printer, fun);
+
+        // Annotate each argument separately
+        for argument in arguments_to_annotate {
+            self.edits.insert(
+                argument.location.end,
+                format!(": {}", printer.print_type(&argument.type_)),
+            );
+        }
+
+        // Annotate the return type if it isn't already annotated
+        if needs_return_annotation {
+            self.edits.insert(
+                fun.location.end,
+                format!(" -> {}", printer.print_type(&fun.return_type)),
+            );
+        }
+    }
+}
+
 struct TypeVariableCollector<'a, 'b> {
     printer: &'a mut Printer<'b>,
 }
@@ -1560,14 +1665,14 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
-        constructor: &'ast analyse::Inferred<type_::PatternConstructor>,
+        constructor: &'ast Inferred<type_::PatternConstructor>,
         spread: &'ast Option<SrcSpan>,
         type_: &'ast Arc<Type>,
     ) {
         let range = src_span_to_lsp_range(*location, self.line_numbers);
         if overlaps(self.params.range, range)
             && let Some((module_alias, _)) = module
-            && let analyse::Inferred::Known(_) = constructor
+            && let Inferred::Known(_) = constructor
             && let Some(import) = self.get_module_import(module_alias, name, ast::Layer::Value)
         {
             self.qualified_constructor = Some(QualifiedConstructor {
@@ -1588,6 +1693,67 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
             spread,
             type_,
         );
+    }
+
+    fn visit_typed_constant_record(
+        &mut self,
+        location: &'ast SrcSpan,
+        module: &'ast Option<(EcoString, SrcSpan)>,
+        name: &'ast EcoString,
+        arguments: &'ast Vec<CallArg<ast::TypedConstant>>,
+        tag: &'ast EcoString,
+        type_: &'ast Arc<Type>,
+        field_map: &'ast Inferred<FieldMap>,
+        record_constructor: &'ast Option<Box<ValueConstructor>>,
+    ) {
+        let range = src_span_to_lsp_range(*location, self.line_numbers);
+        if overlaps(self.params.range, range)
+            && let Some((module_alias, _)) = module
+            && let Some(import) = self.get_module_import(module_alias, name, ast::Layer::Value)
+        {
+            self.qualified_constructor = Some(QualifiedConstructor {
+                import,
+                used_name: module_alias.clone(),
+                constructor: name.clone(),
+                layer: ast::Layer::Value,
+            });
+        }
+        ast::visit::visit_typed_constant_record(
+            self,
+            location,
+            module,
+            name,
+            arguments,
+            tag,
+            type_,
+            field_map,
+            record_constructor,
+        );
+    }
+
+    fn visit_typed_constant_var(
+        &mut self,
+        location: &'ast SrcSpan,
+        module: &'ast Option<(EcoString, SrcSpan)>,
+        name: &'ast EcoString,
+        constructor: &'ast Option<Box<ValueConstructor>>,
+        type_: &'ast Arc<Type>,
+    ) {
+        let range = src_span_to_lsp_range(*location, self.line_numbers);
+        if overlaps(self.params.range, range)
+            && let Some((module_alias, _)) = module
+            && let Some(constructor) = constructor
+            && let type_::ValueConstructorVariant::Record { .. } = &constructor.variant
+            && let Some(import) = self.get_module_import(module_alias, name, ast::Layer::Value)
+        {
+            self.qualified_constructor = Some(QualifiedConstructor {
+                import,
+                used_name: module_alias.clone(),
+                constructor: name.clone(),
+                layer: ast::Layer::Value,
+            });
+        }
+        ast::visit::visit_typed_constant_var(self, location, module, name, constructor, type_);
     }
 }
 
@@ -1741,12 +1907,12 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
-        constructor: &'ast analyse::Inferred<type_::PatternConstructor>,
+        constructor: &'ast Inferred<type_::PatternConstructor>,
         spread: &'ast Option<SrcSpan>,
         type_: &'ast Arc<Type>,
     ) {
         if let Some((module_alias, _)) = module
-            && let analyse::Inferred::Known(_) = constructor
+            && let Inferred::Known(_) = constructor
         {
             let QualifiedConstructor {
                 used_name,
@@ -1770,6 +1936,65 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
             spread,
             type_,
         );
+    }
+
+    fn visit_typed_constant_record(
+        &mut self,
+        location: &'ast SrcSpan,
+        module: &'ast Option<(EcoString, SrcSpan)>,
+        name: &'ast EcoString,
+        arguments: &'ast Vec<CallArg<ast::TypedConstant>>,
+        tag: &'ast EcoString,
+        type_: &'ast Arc<Type>,
+        field_map: &'ast Inferred<FieldMap>,
+        record_constructor: &'ast Option<Box<ValueConstructor>>,
+    ) {
+        if let Some((module_alias, _)) = module {
+            let QualifiedConstructor {
+                used_name,
+                constructor,
+                layer,
+                ..
+            } = &self.qualified_constructor;
+
+            if layer.is_value() && used_name == module_alias && name == constructor {
+                self.remove_module_qualifier(*location);
+            }
+        }
+        ast::visit::visit_typed_constant_record(
+            self,
+            location,
+            module,
+            name,
+            arguments,
+            tag,
+            type_,
+            field_map,
+            record_constructor,
+        );
+    }
+
+    fn visit_typed_constant_var(
+        &mut self,
+        location: &'ast SrcSpan,
+        module: &'ast Option<(EcoString, SrcSpan)>,
+        name: &'ast EcoString,
+        constructor: &'ast Option<Box<ValueConstructor>>,
+        type_: &'ast Arc<Type>,
+    ) {
+        if let Some((module_alias, _)) = module {
+            let QualifiedConstructor {
+                used_name,
+                constructor: wanted_constructor,
+                layer,
+                ..
+            } = &self.qualified_constructor;
+
+            if layer.is_value() && used_name == module_alias && name == wanted_constructor {
+                self.remove_module_qualifier(*location);
+            }
+        }
+        ast::visit::visit_typed_constant_var(self, location, module, name, constructor, type_);
     }
 }
 
@@ -1931,7 +2156,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
-        constructor: &'ast analyse::Inferred<type_::PatternConstructor>,
+        constructor: &'ast Inferred<type_::PatternConstructor>,
         spread: &'ast Option<SrcSpan>,
         type_: &'ast Arc<Type>,
     ) {
@@ -1940,7 +2165,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
                 self.params.range,
                 src_span_to_lsp_range(*location, self.line_numbers),
             )
-            && let analyse::Inferred::Known(constructor) = constructor
+            && let Inferred::Known(constructor) = constructor
         {
             self.get_module_import_from_value_constructor(&constructor.module, name);
         }
@@ -1956,6 +2181,75 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
             spread,
             type_,
         );
+    }
+
+    fn visit_typed_constant_record(
+        &mut self,
+        location: &'ast SrcSpan,
+        module: &'ast Option<(EcoString, SrcSpan)>,
+        name: &'ast EcoString,
+        arguments: &'ast Vec<CallArg<ast::TypedConstant>>,
+        _tag: &'ast EcoString,
+        _type_: &'ast Arc<Type>,
+        _field_map: &'ast Inferred<FieldMap>,
+        record_constructor: &'ast Option<Box<ValueConstructor>>,
+    ) {
+        if module.is_none()
+            && overlaps(
+                self.params.range,
+                src_span_to_lsp_range(*location, self.line_numbers),
+            )
+            && let Some(record_constructor) = record_constructor
+            && let Some(module_name) = match &record_constructor.variant {
+                type_::ValueConstructorVariant::ModuleConstant { module, .. }
+                | type_::ValueConstructorVariant::ModuleFn { module, .. }
+                | type_::ValueConstructorVariant::Record { module, .. } => Some(module),
+
+                type_::ValueConstructorVariant::LocalVariable { .. }
+                | type_::ValueConstructorVariant::LocalConstant { .. } => None,
+            }
+        {
+            self.get_module_import_from_value_constructor(module_name, name);
+        }
+        ast::visit::visit_typed_constant_record(
+            self,
+            location,
+            module,
+            name,
+            arguments,
+            _tag,
+            _type_,
+            _field_map,
+            record_constructor,
+        );
+    }
+
+    fn visit_typed_constant_var(
+        &mut self,
+        location: &'ast SrcSpan,
+        module: &'ast Option<(EcoString, SrcSpan)>,
+        name: &'ast EcoString,
+        constructor: &'ast Option<Box<ValueConstructor>>,
+        type_: &'ast Arc<Type>,
+    ) {
+        if module.is_none()
+            && overlaps(
+                self.params.range,
+                src_span_to_lsp_range(*location, self.line_numbers),
+            )
+            && let Some(constructor) = constructor
+            && let Some(module_name) = match &constructor.variant {
+                type_::ValueConstructorVariant::ModuleConstant { module, .. }
+                | type_::ValueConstructorVariant::ModuleFn { module, .. }
+                | type_::ValueConstructorVariant::Record { module, .. } => Some(module),
+
+                type_::ValueConstructorVariant::LocalVariable { .. }
+                | type_::ValueConstructorVariant::LocalConstant { .. } => None,
+            }
+        {
+            self.get_module_import_from_value_constructor(module_name, name);
+        }
+        ast::visit::visit_typed_constant_var(self, location, module, name, constructor, type_);
     }
 }
 
@@ -2105,7 +2399,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportSecondPass<'a
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
-        constructor: &'ast analyse::Inferred<type_::PatternConstructor>,
+        constructor: &'ast Inferred<type_::PatternConstructor>,
         spread: &'ast Option<SrcSpan>,
         type_: &'ast Arc<Type>,
     ) {
@@ -2130,6 +2424,61 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportSecondPass<'a
             spread,
             type_,
         );
+    }
+
+    fn visit_typed_constant_record(
+        &mut self,
+        location: &'ast SrcSpan,
+        module: &'ast Option<(EcoString, SrcSpan)>,
+        name: &'ast EcoString,
+        arguments: &'ast Vec<CallArg<ast::TypedConstant>>,
+        tag: &'ast EcoString,
+        type_: &'ast Arc<Type>,
+        field_map: &'ast Inferred<FieldMap>,
+        record_constructor: &'ast Option<Box<ValueConstructor>>,
+    ) {
+        if module.is_none() {
+            let UnqualifiedConstructor {
+                constructor: wanted_constructor,
+                layer,
+                ..
+            } = &self.unqualified_constructor;
+            if layer.is_value() && wanted_constructor.used_name() == name {
+                self.add_module_qualifier(*location);
+            }
+        }
+        ast::visit::visit_typed_constant_record(
+            self,
+            location,
+            module,
+            name,
+            arguments,
+            tag,
+            type_,
+            field_map,
+            record_constructor,
+        );
+    }
+
+    fn visit_typed_constant_var(
+        &mut self,
+        location: &'ast SrcSpan,
+        module: &'ast Option<(EcoString, SrcSpan)>,
+        name: &'ast EcoString,
+        constructor: &'ast Option<Box<ValueConstructor>>,
+        type_: &'ast Arc<Type>,
+    ) {
+        if module.is_none() {
+            let UnqualifiedConstructor {
+                constructor: wanted_constructor,
+                layer,
+                ..
+            } = &self.unqualified_constructor;
+            if layer.is_value() && wanted_constructor.used_name() == name {
+                self.add_module_qualifier(*location);
+            }
+        }
+        ast::visit::visit_typed_constant_var(self, location, module, name, constructor, type_);
     }
 }
 
@@ -2258,10 +2607,7 @@ impl<'a> ConvertFromUse<'a> {
             .get(use_line_end as usize - 1..use_line_end as usize)
             == Some(")");
 
-        let last_explicit_arg = arguments
-            .iter()
-            .filter(|argument| !argument.is_implicit())
-            .next_back();
+        let last_explicit_arg = arguments.iter().rfind(|argument| !argument.is_implicit());
         let last_arg_end = last_explicit_arg.map_or(use_line_end - 1, |arg| arg.location.end);
 
         // This is the piece of code between the end of the last argument and
@@ -2942,6 +3288,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
             | TypedExpr::Block { .. }
             | TypedExpr::ModuleSelect { .. }
             | TypedExpr::Invalid { .. }
+            | TypedExpr::PositionalAccess { .. }
             | TypedExpr::Var { .. } => (),
 
             TypedExpr::Int { location, .. }
@@ -3259,6 +3606,7 @@ fn can_be_constant(
         | TypedExpr::Fn { .. }
         | TypedExpr::Case { .. }
         | TypedExpr::RecordAccess { .. }
+        | TypedExpr::PositionalAccess { .. }
         | TypedExpr::ModuleSelect { .. }
         | TypedExpr::TupleIndex { .. }
         | TypedExpr::Todo { .. }
@@ -3451,6 +3799,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractConstant<'ast> {
                 | TypedExpr::Fn { .. }
                 | TypedExpr::Case { .. }
                 | TypedExpr::RecordAccess { .. }
+                | TypedExpr::PositionalAccess { .. }
                 | TypedExpr::ModuleSelect { .. }
                 | TypedExpr::TupleIndex { .. }
                 | TypedExpr::Todo { .. }
@@ -4693,8 +5042,7 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
         };
 
         let variable_start = (variable_location.start - clause_location.start) as usize;
-        let variable_end =
-            variable_start + (variable_location.end - variable_location.start) as usize;
+        let variable_end = variable_start + variable_location.len();
 
         let clause_code = code_at(self.module, clause_location);
         let patterns = patterns
@@ -5247,7 +5595,7 @@ pub struct GenerateFunction<'a> {
     modules: &'a std::collections::HashMap<EcoString, Module>,
     params: &'a CodeActionParams,
     edits: TextEdits<'a>,
-    last_visited_function_end: Option<u32>,
+    last_visited_definition_end: Option<u32>,
     function_to_generate: Option<FunctionToGenerate<'a>>,
 }
 
@@ -5262,7 +5610,7 @@ struct FunctionToGenerate<'a> {
     /// have any actual arguments!
     given_arguments: Option<&'a [TypedCallArg]>,
     return_type: Arc<Type>,
-    previous_function_end: Option<u32>,
+    previous_definition_end: Option<u32>,
 }
 
 impl<'a> GenerateFunction<'a> {
@@ -5277,7 +5625,7 @@ impl<'a> GenerateFunction<'a> {
             modules,
             params,
             edits: TextEdits::new(line_numbers),
-            last_visited_function_end: None,
+            last_visited_definition_end: None,
             function_to_generate: None,
         }
     }
@@ -5288,7 +5636,7 @@ impl<'a> GenerateFunction<'a> {
         let Some(
             function_to_generate @ FunctionToGenerate {
                 module,
-                previous_function_end: Some(insert_at),
+                previous_definition_end: Some(insert_at),
                 ..
             },
         ) = self.function_to_generate.take()
@@ -5329,8 +5677,16 @@ impl<'a> GenerateFunction<'a> {
             ..
         } = function_to_generate;
 
-        // Labels do not share the same namespace as argument so we use two separate
-        // generators to avoid renaming a label in case it shares a name with an argument.
+        // This might be triggered on variants as well, in that case we don't
+        // want to offer this action. The "generate variant" action will be
+        // offered instead.
+        if !is_valid_lowercase_name(name) {
+            return vec![];
+        }
+
+        // Labels do not share the same namespace as argument so we use two
+        // separate generators to avoid renaming a label in case it shares a
+        // name with an argument.
         let mut label_names = NameGenerator::new();
         let mut argument_names = NameGenerator::new();
 
@@ -5393,7 +5749,7 @@ impl<'a> GenerateFunction<'a> {
                     arguments_types,
                     given_arguments,
                     return_type,
-                    previous_function_end: self.last_visited_function_end,
+                    previous_definition_end: self.last_visited_definition_end,
                     module: None,
                 })
             }
@@ -5415,7 +5771,7 @@ impl<'a> GenerateFunction<'a> {
                 arguments_types,
                 given_arguments,
                 return_type,
-                previous_function_end: self.last_visited_function_end,
+                previous_definition_end: self.last_visited_definition_end,
                 module: Some(module),
             })
         }
@@ -5424,8 +5780,13 @@ impl<'a> GenerateFunction<'a> {
 
 impl<'ast> ast::visit::Visit<'ast> for GenerateFunction<'ast> {
     fn visit_typed_function(&mut self, fun: &'ast ast::TypedFunction) {
-        self.last_visited_function_end = Some(fun.end_position);
+        self.last_visited_definition_end = Some(fun.end_position);
         ast::visit::visit_typed_function(self, fun);
+    }
+
+    fn visit_typed_module_constant(&mut self, constant: &'ast TypedModuleConstant) {
+        self.last_visited_definition_end = Some(constant.value.location().end);
+        ast::visit::visit_typed_module_constant(self, constant);
     }
 
     fn visit_typed_expr_invalid(
@@ -5448,6 +5809,27 @@ impl<'ast> ast::visit::Visit<'ast> for GenerateFunction<'ast> {
         }
 
         ast::visit::visit_typed_expr_invalid(self, location, type_, extra_information);
+    }
+
+    fn visit_typed_constant_invalid(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        extra_information: &'ast Option<InvalidExpression>,
+    ) {
+        let constant_range = self.edits.src_span_to_lsp_range(*location);
+        if let Some(extra_information) = extra_information
+            && within(self.params.range, constant_range)
+        {
+            match extra_information {
+                InvalidExpression::ModuleSelect { module_name, label } => {
+                    self.try_save_function_from_other_module(module_name, label, type_, None)
+                }
+                InvalidExpression::UnknownVariable { name } => {
+                    self.try_save_function_to_generate(name, type_, None)
+                }
+            }
+        }
     }
 
     fn visit_typed_expr_call(
@@ -5837,7 +6219,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for GenerateVariant<'ast, IO> {
         name: &'ast EcoString,
         arguments: &'ast Vec<CallArg<TypedPattern>>,
         module: &'ast Option<(EcoString, SrcSpan)>,
-        constructor: &'ast analyse::Inferred<type_::PatternConstructor>,
+        constructor: &'ast Inferred<type_::PatternConstructor>,
         spread: &'ast Option<SrcSpan>,
         type_: &'ast Arc<Type>,
     ) {
@@ -7018,8 +7400,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillUnusedFields<'ast> {
 
             let last_argument_end = arguments
                 .iter()
-                .filter(|arg| !arg.is_implicit())
-                .next_back()
+                .rfind(|arg| !arg.is_implicit())
                 .map(|arg| arg.location.end);
 
             self.data = Some(FillUnusedFieldsData {
@@ -7364,6 +7745,7 @@ impl<'ast> ast::visit::Visit<'ast> for WrapInBlock<'ast> {
             // To avoid wrapping the same expression in multiple, nested blocks.
             TypedExpr::Block { .. } => {}
             TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
             | TypedExpr::Int { .. }
             | TypedExpr::Float { .. }
             | TypedExpr::String { .. }
@@ -7856,6 +8238,7 @@ impl<'ast> ast::visit::Visit<'ast> for RemoveBlock<'ast> {
                     | TypedExpr::Call { .. }
                     | TypedExpr::Case { .. }
                     | TypedExpr::RecordAccess { .. }
+                    | TypedExpr::PositionalAccess { .. }
                     | TypedExpr::ModuleSelect { .. }
                     | TypedExpr::Tuple { .. }
                     | TypedExpr::TupleIndex { .. }
@@ -8123,22 +8506,51 @@ impl<'a> CollapseNestedCase<'a> {
         let pattern_text: String = code_at(self.module, matched_pattern_span).into();
         let matched_variable_span = matched_variable.location;
 
-        let pattern_with_variable = |new_content: String| {
+        let pattern_with_variable = |mut new_content: String| {
             let mut new_pattern = pattern_text.clone();
 
             match matched_variable {
                 BoundVariable {
-                    name: BoundVariableName::Regular { .. },
+                    name: BoundVariableName::Regular { .. } | BoundVariableName::ListTail { .. },
                     ..
                 } => {
-                    // If the variable is a regular variable we'll have to replace
-                    // it entirely with the new pattern taking its place.
-                    let variable_start_in_pattern =
-                        matched_variable_span.start - matched_pattern_span.start;
-                    let variable_length = matched_variable_span.end - matched_variable_span.start;
-                    let variable_end_in_pattern = variable_start_in_pattern + variable_length;
-                    let replaced_range =
-                        variable_start_in_pattern as usize..variable_end_in_pattern as usize;
+                    let trimmed_contents = new_content.trim();
+
+                    let pattern_is_literal_list =
+                        trimmed_contents.starts_with("[") && trimmed_contents.ends_with("]");
+                    let pattern_is_discard = trimmed_contents == "_";
+
+                    let span_to_replace = match (
+                        &matched_variable.name,
+                        // We verify whether the pattern is compatible with the list prefix `..`.
+                        // For example, `..var` is valid syntax, but `..[]` and `.._` are not.
+                        pattern_is_literal_list || pattern_is_discard,
+                    ) {
+                        // We normally replace the selected variable with the pattern.
+                        (BoundVariableName::Regular { .. }, _) => matched_variable_span,
+
+                        // If the selected pattern is not a list, we also replace it normally.
+                        (BoundVariableName::ListTail { .. }, false) => matched_variable_span,
+                        // If the pattern is a list to also remove the list tail prefix.
+                        (BoundVariableName::ListTail { tail_location, .. }, true) => {
+                            // When it's a list literal, we remove the surrounding brackets.
+                            let len = trimmed_contents.len();
+                            if let Some(slice) = new_content.trim().get(1..(len - 1)) {
+                                new_content = slice.to_string()
+                            };
+
+                            *tail_location
+                        }
+
+                        (BoundVariableName::ShorthandLabel { .. }, _) => unreachable!(),
+                    };
+
+                    let start_of_pattern =
+                        (span_to_replace.start - matched_pattern_span.start) as usize;
+                    let pattern_length = span_to_replace.len();
+
+                    let end_of_pattern = start_of_pattern + pattern_length;
+                    let replaced_range = start_of_pattern..end_of_pattern;
 
                     new_pattern.replace_range(replaced_range, &new_content);
                 }

@@ -112,6 +112,7 @@ const ASSIGN_UNUSED_RESULT: &str = "Assign unused Result value to `_`";
 const ADD_MISSING_PATTERNS: &str = "Add missing patterns";
 const ADD_ANNOTATION: &str = "Add type annotation";
 const ADD_ANNOTATIONS: &str = "Add type annotations";
+const ANNOTATE_TOP_LEVEL_DEFINITIONS: &str = "Annotate all top level definitions";
 const CONVERT_FROM_USE: &str = "Convert from `use`";
 const CONVERT_TO_USE: &str = "Convert to `use`";
 const EXTRACT_VARIABLE: &str = "Extract variable";
@@ -3948,6 +3949,154 @@ import option.{type Option}
         find_position_of("opt.").select_until(find_position_of(".Option(")),
     );
 }
+
+#[test]
+fn test_qualified_to_unqualified_import_in_constant_var() {
+    let src = r#"
+import option
+
+const none = option.None
+"#;
+    let title = "Unqualify option.None";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("None").to_selection(),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_import_in_constant_record() {
+    let src = r#"
+import option
+
+const some = option.Some(1)
+"#;
+    let title = "Unqualify option.Some";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("Some").to_selection(),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_import_in_nested_constant() {
+    let src = r#"
+import option
+
+type Result(a) {
+  Result(expected: a, actual: option.Option(a))
+}
+
+const zero = Result(0, option.None)
+"#;
+    let title = "Unqualify option.None";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("None").to_selection(),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_import_constant_multiple_occurrences() {
+    let src = r#"
+import option
+
+const a = option.None
+const b = option.Some(option.None)
+"#;
+    let title = "Unqualify option.None";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("None").nth_occurrence(1).to_selection(),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_import_not_offered_for_function_in_constant() {
+    let src = r#"
+import list
+
+const mapper = list.map
+"#;
+
+    let title = "Unqualify list.map";
+    assert_no_code_actions!(
+        title,
+        TestProject::for_source(src).add_hex_module("list", "pub fn map(list, f) { todo }"),
+        find_position_of("list.map").to_selection(),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_import_not_offered_for_module_constant_in_constant() {
+    let src = r#"
+import mymath
+
+const x = mymath.pi
+"#;
+
+    let title = "Unqualify mymath.pi";
+    assert_no_code_actions!(
+        title,
+        TestProject::for_source(src).add_hex_module("mymath", "pub const pi = 3.14159"),
+        find_position_of("pi").to_selection(),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_import_from_constant_also_updates_functions() {
+    let src = r#"
+import option
+
+const default = option.None
+
+pub fn get_or_default(value: a) {
+  case value {
+    option.Some(x) -> x
+    option.None -> value
+  }
+}
+"#;
+    let title = "Unqualify option.None";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("None").nth_occurrence(1).to_selection(),
+    );
+}
+
+#[test]
+fn test_qualified_to_unqualified_import_from_function_also_updates_constants() {
+    let src = r#"
+import option
+
+const default = option.None
+
+pub fn get_or_default(value: a) {
+  case value {
+    option.Some(x) -> x
+    option.None -> value
+  }
+}
+"#;
+    let title = "Unqualify option.None";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("None").nth_occurrence(2).to_selection(),
+    );
+}
+
 #[test]
 fn test_unqualified_to_qualified_import_function() {
     let src = r#"
@@ -4369,6 +4518,58 @@ pub fn example() {
         find_position_of("wob")
             .nth_occurrence(2)
             .select_until(find_position_of("ble").nth_occurrence(3))
+    );
+}
+
+#[test]
+fn test_unqualified_to_qualified_import_in_constant_var() {
+    let src = r#"
+import option.{None}
+
+const none = None
+"#;
+    let title = "Qualify None as option.None";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("None").nth_occurrence(2).to_selection(),
+    );
+}
+
+#[test]
+fn test_unqualified_to_qualified_import_in_constant_record() {
+    let src = r#"
+import option.{Some}
+
+const some = Some(1)
+"#;
+    let title = "Qualify Some as option.Some";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("Some").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn test_unqualified_to_qualified_import_in_nested_constant() {
+    let src = r#"
+import option.{type Option, None}
+
+type Result(a) {
+  Result(expected: a, actual: Option(a))
+}
+
+const zero = Result(0, None)
+"#;
+    let title = "Qualify None as option.None";
+    assert_code_action!(
+        title,
+        TestProject::for_source(src)
+            .add_hex_module("option", "pub type Option(v) { Some(v) None }"),
+        find_position_of("None").nth_occurrence(2).to_selection(),
     );
 }
 
@@ -7580,6 +7781,30 @@ pub fn main() -> Bool {
 }
 
 #[test]
+fn generate_function_works_with_constants() {
+    assert_code_action!(
+        GENERATE_FUNCTION,
+        "const wibble: fn(Int) -> String = wobble",
+        find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn generate_function_works_with_constants_2() {
+    assert_code_action!(
+        GENERATE_FUNCTION,
+        "
+type Wibble(a) {
+    Wibble(fun: fn(Int) -> a)
+}
+
+const wibble: Wibble(Int) = Wibble(missing)
+",
+        find_position_of("missing").to_selection()
+    );
+}
+
+#[test]
 fn generate_function_works_with_pipeline_steps() {
     assert_code_action!(
         GENERATE_FUNCTION,
@@ -9922,6 +10147,52 @@ fn collapse_nested_case_combines_inner_and_outer_guards_and_adds_parentheses_whe
     );
 }
 
+#[test]
+fn collapse_nested_case_combines_list_with_unformatted_tail() {
+    assert_code_action!(
+        COLLAPSE_NESTED_CASE,
+        r#"pub fn main(elems: List(String)) {
+  case elems {
+    [first, .. rest_of_list] ->
+      case rest_of_list {
+        [] -> 0
+        ["first"] -> 1
+        [_, "second"] -> 2
+        [_, "second", "third", _] -> 4
+        _ -> -1
+      }
+    _ -> -1
+  }
+}"#,
+        find_position_of("rest").to_selection()
+    );
+}
+
+#[test]
+fn collapse_nested_case_combines_list_with_tail() {
+    assert_code_action!(
+        COLLAPSE_NESTED_CASE,
+        r#"pub fn main(elems: List(List(Int))) {
+  case elems {
+    [] -> 0
+    [_, ..tail] ->
+      case tail {
+        [] -> -1
+        [[1]] -> 1
+        [_, [3, 4]] -> 3
+        [_, _, [5, 6, 7], _] -> 5
+        tail_list -> {
+            echo tail_list
+            -1
+        }
+      }
+    _ -> -1
+  }
+}"#,
+        find_position_of("tail").to_selection()
+    );
+}
+
 // https://github.com/gleam-lang/gleam/issues/3786
 #[test]
 fn type_variables_from_other_functions_do_not_change_annotations() {
@@ -10015,6 +10286,21 @@ pub fn main() {
         GENERATE_FUNCTION,
         TestProject::for_source(src).add_module("wibble", "pub fn wibble() {}"),
         find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn generate_function_is_not_offered_for_variants() {
+    assert_no_code_actions!(
+        GENERATE_FUNCTION,
+        "
+pub type Wibble
+
+pub fn main() -> Wibble {
+  Wobble(1)
+}
+",
+        find_position_of("Wobble").to_selection()
     );
 }
 
@@ -11127,5 +11413,167 @@ fn merge_case_branch_does_not_merge_branches_with_variables_with_same_name_and_d
   }
 }"#,
         find_position_of("Ok").select_until(find_position_of("Error"))
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_dont_affect_local_vars() {
+    assert_code_action!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+pub const answer = 42
+
+pub fn add_two(thing) {
+  thing + 2
+}
+
+pub fn add_one(thing) {
+  let result = thing + 1
+  result
+}
+"#,
+        find_position_of("fn").select_until(find_position_of("("))
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_constant() {
+    assert_code_action!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+pub const answer = 42
+
+pub fn add_two(thing) {
+  thing + 2
+}
+
+pub fn add_one(thing) {
+  thing + 1
+}
+"#,
+        find_position_of("const").select_until(find_position_of("="))
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_function() {
+    assert_code_action!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+pub fn add_two(thing) {
+  thing + 2
+}
+
+pub fn add_one(thing) {
+  thing + 1
+}
+"#,
+        find_position_of("fn").select_until(find_position_of("("))
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_already_annotated() {
+    assert_no_code_actions!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+pub const answer: Int = 42
+
+pub fn add_two(thing: Int) -> Int {
+  thing + 2
+}
+
+pub fn add_one(thing: Int) -> Int {
+  thing + 1
+}
+"#,
+        find_position_of("fn").select_until(find_position_of("("))
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_inside_body() {
+    assert_no_code_actions!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+pub fn add_one(thing) {
+  thing + 1
+}
+"#,
+        find_position_of("thing + 1").to_selection()
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_partially_annotated() {
+    assert_code_action!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+pub const answer: Int = 42
+pub const another_answer = 43
+
+pub fn add_two(thing) -> Int {
+  thing + 2
+}
+
+pub fn add_one(thing: Int) {
+  thing + 1
+}
+"#,
+        find_position_of("fn").select_until(find_position_of("("))
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_with_partially_annotated_generic_function() {
+    assert_code_action!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+pub fn wibble(a: a, b, c: c, d) {
+  todo
+}
+"#,
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_with_two_generic_functions() {
+    assert_code_action!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+fn wibble(one) { todo }
+
+fn wobble(other) { todo }
+"#,
+        find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_with_constant_and_generic_functions() {
+    assert_code_action!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+const answer = 42
+
+fn wibble(one) { todo }
+
+fn wobble(other) { todo }
+"#,
+        find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn annotate_all_top_level_definitions_not_suggested_if_annotations_present() {
+    assert_no_code_actions!(
+        ANNOTATE_TOP_LEVEL_DEFINITIONS,
+        r#"
+fn wibble(one: Int) -> Int { one }
+
+fn wobble(one) { wibble(one) }
+"#,
+        find_position_of("wibble").to_selection()
     );
 }

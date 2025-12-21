@@ -1506,11 +1506,12 @@ fn const_inline<'a>(literal: &'a TypedConstant, env: &mut Env<'a>) -> Document<'
         },
 
         Constant::Record { tag, arguments, .. } => {
-            let arguments = arguments
+            // Record updates are fully expanded during type checking, so we just handle arguments
+            let arguments_doc = arguments
                 .iter()
                 .map(|argument| const_inline(&argument.value, env));
             let tag = atom_string(to_snake_case(tag));
-            tuple(std::iter::once(tag).chain(arguments))
+            tuple(std::iter::once(tag).chain(arguments_doc))
         }
 
         Constant::Var {
@@ -1527,6 +1528,7 @@ fn const_inline<'a>(literal: &'a TypedConstant, env: &mut Env<'a>) -> Document<'
             const_string_concatenate(left, right, env)
         }
 
+        Constant::RecordUpdate { .. } => panic!("record updates should not reach code generation"),
         Constant::Invalid { .. } => panic!("invalid constants should not reach code generation"),
     }
 }
@@ -2080,6 +2082,7 @@ fn needs_begin_end_wrapping(expression: &TypedExpr) -> bool {
         | TypedExpr::BinOp { .. }
         | TypedExpr::Case { .. }
         | TypedExpr::RecordAccess { .. }
+        | TypedExpr::PositionalAccess { .. }
         | TypedExpr::Block { .. }
         | TypedExpr::ModuleSelect { .. }
         | TypedExpr::Tuple { .. }
@@ -2254,6 +2257,7 @@ fn expr<'a>(expression: &'a TypedExpr, env: &mut Env<'a>) -> Document<'a> {
         } => module_select_fn(type_.clone(), module, name),
 
         TypedExpr::RecordAccess { record, index, .. } => tuple_index(record, index + 1, env),
+        TypedExpr::PositionalAccess { record, index, .. } => tuple_index(record, index + 1, env),
 
         TypedExpr::RecordUpdate {
             record_assignment,
@@ -3247,6 +3251,9 @@ fn find_referenced_private_functions(
 ) {
     match constant {
         Constant::Invalid { .. } => panic!("invalid constants should not reach code generation"),
+        Constant::RecordUpdate { .. } => {
+            panic!("record updates should not reach code generation")
+        }
 
         Constant::Int { .. }
         | Constant::Float { .. }

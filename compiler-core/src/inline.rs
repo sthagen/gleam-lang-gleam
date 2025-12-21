@@ -629,6 +629,18 @@ impl Inliner<'_> {
                 documentation,
             },
 
+            TypedExpr::PositionalAccess {
+                location,
+                type_,
+                index,
+                record,
+            } => TypedExpr::PositionalAccess {
+                location,
+                type_,
+                index,
+                record: self.boxed_expression(record),
+            },
+
             TypedExpr::Tuple {
                 location,
                 type_,
@@ -904,6 +916,7 @@ impl Inliner<'_> {
             | TypedExpr::BinOp { .. }
             | TypedExpr::Case { .. }
             | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
             | TypedExpr::Tuple { .. }
             | TypedExpr::TupleIndex { .. }
             | TypedExpr::Todo { .. }
@@ -1618,6 +1631,7 @@ impl FunctionToInlinable {
             | TypedExpr::List { .. }
             | TypedExpr::BinOp { .. }
             | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
             | TypedExpr::ModuleSelect { .. }
             | TypedExpr::Tuple { .. }
             | TypedExpr::TupleIndex { .. }

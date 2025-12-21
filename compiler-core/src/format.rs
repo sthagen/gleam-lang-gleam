@@ -10,7 +10,6 @@ use crate::{
     build::Target,
     docvec,
     io::Utf8Writer,
-    parse::SpannedString,
     parse::extra::{Comment, ModuleExtra},
     pretty::{self, *},
     warning::WarningEmitter,
@@ -82,12 +81,12 @@ enum FnCapturePosition {
 /// One of the pieces making a record update arg list: it could be the starting
 /// record being updated, or one of the subsequent arguments.
 ///
-enum RecordUpdatePiece<'a> {
-    Record(&'a RecordBeingUpdated),
-    Argument(&'a UntypedRecordUpdateArg),
+enum RecordUpdatePiece<'a, A> {
+    Record(&'a RecordBeingUpdated<A>),
+    Argument(&'a RecordUpdateArg<A>),
 }
 
-impl HasLocation for RecordUpdatePiece<'_> {
+impl<A> HasLocation for RecordUpdatePiece<'_, A> {
     fn location(&self) -> SrcSpan {
         match self {
             RecordUpdatePiece::Record(record) => record.location,
@@ -95,6 +94,8 @@ impl HasLocation for RecordUpdatePiece<'_> {
         }
     }
 }
+
+type UntypedRecordUpdatePiece<'a> = RecordUpdatePiece<'a, UntypedExpr>;
 
 /// Hayleigh's bane
 #[derive(Debug, Clone, Default)]
@@ -365,22 +366,7 @@ impl<'comments> Formatter<'comments> {
         match statement {
             Definition::Function(function) => self.statement_fn(function),
 
-            Definition::TypeAlias(TypeAlias {
-                alias,
-                parameters: arguments,
-                type_ast: resolved_type,
-                publicity,
-                deprecation,
-                location,
-                ..
-            }) => self.type_alias(
-                *publicity,
-                alias,
-                arguments,
-                resolved_type,
-                deprecation,
-                location,
-            ),
+            Definition::TypeAlias(alias) => self.type_alias(alias),
 
             Definition::CustomType(ct) => self.custom_type(ct),
 
@@ -389,7 +375,9 @@ impl<'comments> Formatter<'comments> {
                 as_name,
                 unqualified_values,
                 unqualified_types,
-                ..
+                documentation: _,
+                location: _,
+                package: _,
             }) => {
                 let second = if unqualified_values.is_empty() && unqualified_types.is_empty() {
                     nil()
@@ -441,7 +429,11 @@ impl<'comments> Formatter<'comments> {
                 annotation,
                 value,
                 deprecation,
-                ..
+                documentation: _,
+                location: _,
+                name_location: _,
+                type_: _,
+                implementations: _,
             }) => {
                 let attributes = AttributesPrinter::new()
                     .set_internal(*publicity)
@@ -560,9 +552,16 @@ impl<'comments> Formatter<'comments> {
                 .append(" ")
                 .append(self.const_expr(right)),
 
-            Constant::Invalid { .. } => {
-                panic!("invalid constants can not be in an untyped ast")
-            }
+            Constant::RecordUpdate {
+                module,
+                name,
+                record,
+                arguments,
+                location,
+                ..
+            } => self.const_record_update(module, name, record, arguments, location),
+
+            Constant::Invalid { .. } => panic!("invalid constants can not be in an untyped ast"),
         };
         commented(document, comments)
     }
@@ -779,21 +778,25 @@ impl<'comments> Formatter<'comments> {
         self.wrap_arguments(arguments, location.end)
     }
 
-    pub fn type_alias<'a>(
-        &mut self,
-        publicity: Publicity,
-        name: &'a str,
-        arguments: &'a [SpannedString],
-        type_: &'a TypeAst,
-        deprecation: &'a Deprecation,
-        location: &SrcSpan,
-    ) -> Document<'a> {
+    pub fn type_alias<'a, A>(&mut self, alias: &'a TypeAlias<A>) -> Document<'a> {
+        let TypeAlias {
+            alias: name,
+            parameters: arguments,
+            type_ast: type_,
+            publicity,
+            deprecation,
+            location,
+            name_location: _,
+            type_: _,
+            documentation: _,
+        } = alias;
+
         let attributes = AttributesPrinter::new()
             .set_deprecation(deprecation)
-            .set_internal(publicity)
+            .set_internal(*publicity)
             .to_doc();
 
-        let head = docvec![attributes, pub_(publicity), "type ", name];
+        let head = docvec![attributes, pub_(*publicity), "type ", name];
         let head = if arguments.is_empty() {
             head
         } else {
@@ -816,24 +819,40 @@ impl<'comments> Formatter<'comments> {
     }
 
     fn statement_fn<'a>(&mut self, function: &'a UntypedFunction) -> Document<'a> {
+        let Function {
+            location,
+            body_start: _,
+            end_position,
+            name,
+            arguments,
+            body,
+            publicity,
+            deprecation,
+            return_annotation,
+            return_type: _,
+            documentation: _,
+            external_erlang,
+            external_javascript,
+            implementations: _,
+            purity: _,
+        } = function;
+
         let attributes = AttributesPrinter::new()
-            .set_deprecation(&function.deprecation)
-            .set_internal(function.publicity)
-            .set_external_erlang(&function.external_erlang)
-            .set_external_javascript(&function.external_javascript)
+            .set_deprecation(deprecation)
+            .set_internal(*publicity)
+            .set_external_erlang(external_erlang)
+            .set_external_javascript(external_javascript)
             .to_doc();
 
         // Fn name and args
-        let arguments = function
-            .arguments
+        let arguments = arguments
             .iter()
             .map(|argument| self.fn_arg(argument))
             .collect_vec();
-        let signature = pub_(function.publicity)
+        let signature = pub_(*publicity)
             .append("fn ")
             .append(
-                &function
-                    .name
+                &name
                     .as_ref()
                     .expect("Function in a statement must be named")
                     .1,
@@ -843,21 +862,20 @@ impl<'comments> Formatter<'comments> {
                     arguments,
                     // Calculate end location of arguments to not consume comments in
                     // return annotation
-                    function
-                        .return_annotation
+                    return_annotation
                         .as_ref()
-                        .map_or(function.location.end, |ann| ann.location().start),
+                        .map_or(location.end, |ann| ann.location().start),
                 ),
             );
 
         // Add return annotation
-        let signature = match &function.return_annotation {
+        let signature = match &return_annotation {
             Some(anno) => signature.append(" -> ").append(self.type_ast(anno)),
             None => signature,
         }
         .group();
 
-        if function.body.is_empty() {
+        if body.is_empty() {
             return attributes.append(signature);
         }
 
@@ -865,10 +883,10 @@ impl<'comments> Formatter<'comments> {
 
         // Format body
 
-        let body = self.statements(&function.body);
+        let body = self.statements(body);
 
         // Add any trailing comments
-        let body = match printed_comments(self.pop_comments(function.end_position), false) {
+        let body = match printed_comments(self.pop_comments(*end_position), false) {
             Some(comments) => body.append(line()).append(comments),
             None => body,
         };
@@ -1427,13 +1445,13 @@ impl<'comments> Formatter<'comments> {
     pub fn record_update<'a>(
         &mut self,
         constructor: &'a UntypedExpr,
-        record: &'a RecordBeingUpdated,
+        record: &'a RecordBeingUpdated<UntypedExpr>,
         arguments: &'a [UntypedRecordUpdateArg],
         location: &SrcSpan,
     ) -> Document<'a> {
         let constructor_doc: Document<'a> = self.expr(constructor);
-        let pieces = std::iter::once(RecordUpdatePiece::Record(record))
-            .chain(arguments.iter().map(RecordUpdatePiece::Argument))
+        let pieces = std::iter::once(UntypedRecordUpdatePiece::Record(record))
+            .chain(arguments.iter().map(UntypedRecordUpdatePiece::Argument))
             .collect_vec();
 
         self.append_inlinable_wrapped_arguments(
@@ -1441,17 +1459,66 @@ impl<'comments> Formatter<'comments> {
             &pieces,
             location,
             |arg| match arg {
-                RecordUpdatePiece::Argument(arg) => &arg.value,
-                RecordUpdatePiece::Record(record) => record.base.as_ref(),
+                UntypedRecordUpdatePiece::Argument(arg) => &arg.value,
+                UntypedRecordUpdatePiece::Record(record) => record.base.as_ref(),
             },
             |this, arg| match arg {
-                RecordUpdatePiece::Argument(arg) => this.record_update_arg(arg),
-                RecordUpdatePiece::Record(record) => {
-                    let comments = this.pop_comments(record.base.location().start);
+                UntypedRecordUpdatePiece::Argument(arg) => this.record_update_arg(arg),
+                UntypedRecordUpdatePiece::Record(record) => {
+                    let comments = this.pop_comments(record.location.start);
                     commented("..".to_doc().append(this.expr(&record.base)), comments)
                 }
             },
         )
+    }
+
+    pub fn const_record_update<'a, A, B>(
+        &mut self,
+        module: &Option<(EcoString, SrcSpan)>,
+        name: &'a EcoString,
+        record: &'a RecordBeingUpdated<Constant<A, B>>,
+        arguments: &'a [RecordUpdateArg<Constant<A, B>>],
+        location: &SrcSpan,
+    ) -> Document<'a> {
+        let constructor_doc = match module {
+            Some((m, _)) => m.to_doc().append(".").append(name.as_str()),
+            None => name.to_doc(),
+        };
+
+        let pieces = std::iter::once(RecordUpdatePiece::Record(record))
+            .chain(arguments.iter().map(RecordUpdatePiece::Argument))
+            .collect_vec();
+
+        let docs = pieces
+            .iter()
+            .map(|piece| match piece {
+                RecordUpdatePiece::Argument(arg) => {
+                    let comments = self.pop_comments(arg.location.start);
+                    let doc = match arg {
+                        _ if arg.uses_label_shorthand() => arg.label.as_str().to_doc().append(":"),
+                        _ => arg
+                            .label
+                            .as_str()
+                            .to_doc()
+                            .append(": ")
+                            .append(self.const_expr(&arg.value))
+                            .group(),
+                    };
+                    commented(doc, comments)
+                }
+                RecordUpdatePiece::Record(record) => {
+                    let comments = self.pop_comments(record.location.start);
+                    commented(
+                        "..".to_doc().append(self.const_expr(&record.base)),
+                        comments,
+                    )
+                }
+            })
+            .collect_vec();
+
+        constructor_doc
+            .append(self.wrap_arguments(docs, location.end))
+            .group()
     }
 
     pub fn bin_op<'a>(
@@ -1729,34 +1796,57 @@ impl<'comments> Formatter<'comments> {
         commented(doc_comments.append(doc).group(), comments)
     }
 
-    pub fn custom_type<'a, A>(&mut self, ct: &'a CustomType<A>) -> Document<'a> {
-        let _ = self.pop_empty_lines(ct.location.end);
+    pub fn custom_type<'a, A>(&mut self, type_: &'a CustomType<A>) -> Document<'a> {
+        let CustomType {
+            location,
+            end_position,
+            name,
+            name_location: _,
+            publicity,
+            constructors,
+            documentation: _,
+            deprecation,
+            opaque,
+            parameters,
+            typed_parameters: _,
+            external_erlang,
+            external_javascript,
+        } = type_;
+
+        let _ = self.pop_empty_lines(location.end);
 
         let attributes = AttributesPrinter::new()
-            .set_deprecation(&ct.deprecation)
-            .set_internal(ct.publicity)
+            .set_deprecation(deprecation)
+            .set_internal(*publicity)
+            .set_external_erlang(external_erlang)
+            .set_external_javascript(external_javascript)
             .to_doc();
 
         let doc = attributes
-            .append(pub_(ct.publicity))
-            .append(if ct.opaque { "opaque type " } else { "type " })
-            .append(if ct.parameters.is_empty() {
-                ct.name.clone().to_doc()
+            .append(pub_(*publicity))
+            .append(if *opaque { "opaque type " } else { "type " })
+            .append(if parameters.is_empty() {
+                name.clone().to_doc()
             } else {
-                let arguments = ct.parameters.iter().map(|(_, e)| e.to_doc()).collect_vec();
-                ct.name
+                let arguments = type_
+                    .parameters
+                    .iter()
+                    .map(|(_, e)| e.to_doc())
+                    .collect_vec();
+                type_
+                    .name
                     .clone()
                     .to_doc()
-                    .append(self.wrap_arguments(arguments, ct.location.end))
+                    .append(self.wrap_arguments(arguments, location.end))
                     .group()
             });
 
-        if ct.constructors.is_empty() {
+        if constructors.is_empty() {
             return doc;
         }
         let doc = doc.append(" {");
 
-        let inner = concat(ct.constructors.iter().map(|c| {
+        let inner = concat(constructors.iter().map(|c| {
             if self.pop_empty_lines(c.location.start) {
                 lines(2)
             } else {
@@ -1766,7 +1856,7 @@ impl<'comments> Formatter<'comments> {
         }));
 
         // Add any trailing comments
-        let inner = match printed_comments(self.pop_comments(ct.end_position), false) {
+        let inner = match printed_comments(self.pop_comments(*end_position), false) {
             Some(comments) => inner.append(line()).append(comments),
             None => inner,
         }
