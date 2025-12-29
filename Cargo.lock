@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "gleam"
-version = "1.14.0-rc2"
+version = "1.14.0"
 dependencies = [
  "gleam-cli",
  "static_vcruntime",
@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "gleam-cli"
-version = "1.14.0-rc2"
+version = "1.14.0"
 dependencies = [
  "async-trait",
  "base16",
@@ -1079,6 +1079,7 @@ dependencies = [
  "fslock",
  "futures",
  "gleam-core",
+ "gleam-language-server",
  "hexpm",
  "hostname",
  "http",
@@ -1111,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "gleam-core"
-version = "1.14.0-rc2"
+version = "1.14.0"
 dependencies = [
  "age",
  "askama",
@@ -1166,8 +1167,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "gleam-language-server"
+version = "1.14.0-rc1"
+dependencies = [
+ "camino",
+ "debug-ignore",
+ "ecow",
+ "gleam-core",
+ "hexpm",
+ "im",
+ "insta",
+ "itertools",
+ "lsp-server",
+ "lsp-types",
+ "serde",
+ "serde_json",
+ "strum",
+ "toml 0.9.7",
+ "tracing",
+ "vec1",
+]
+
+[[package]]
 name = "gleam-wasm"
-version = "1.14.0-rc2"
+version = "1.14.0"
 dependencies = [
  "camino",
  "console_error_panic_hook",
@@ -3130,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "test-output"
-version = "1.14.0-rc2"
+version = "1.14.0"
 dependencies = [
  "camino",
  "gleam-cli",
@@ -3141,7 +3164,7 @@ dependencies = [
 
 [[package]]
 name = "test-package-compiler"
-version = "1.14.0-rc2"
+version = "1.14.0"
 dependencies = [
  "camino",
  "gleam-core",
@@ -3155,7 +3178,7 @@ dependencies = [
 
 [[package]]
 name = "test-project-compiler"
-version = "1.14.0-rc2"
+version = "1.14.0"
 dependencies = [
  "camino",
  "gleam-core",

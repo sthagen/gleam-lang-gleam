@@ -10,7 +10,7 @@ use lsp_types::{
 use strum::IntoEnumIterator;
 use vec1::Vec1;
 
-use crate::{
+use gleam_core::{
     Result,
     ast::{
         self, Arg, CallArg, Function, FunctionLiteralKind, Pattern, Publicity, TypedExpr,
@@ -797,7 +797,8 @@ impl<'a, IO> Completer<'a, IO> {
                 .and_then(|i| i.accessors.get(name))
                 .filter(|a| a.publicity.is_importable() || module == &self.module.name)
                 .map(|a| a.accessors_for_variant(*inferred_variant)),
-            _ => None,
+
+            Type::Fn { .. } | Type::Var { .. } | Type::Tuple { .. } => None,
         }
     }
 
@@ -830,7 +831,28 @@ impl<'a, IO> Completer<'a, IO> {
                 .get(module_name)
                 .and_then(|i| i.values.get(label))
                 .and_then(|a| a.field_map()),
-            _ => None,
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => None,
         }
     }
 
@@ -914,7 +936,6 @@ impl<'a, IO> Completer<'a, IO> {
         let kind = Some(match value.variant {
             ValueConstructorVariant::LocalVariable { .. } => CompletionItemKind::VARIABLE,
             ValueConstructorVariant::ModuleConstant { .. } => CompletionItemKind::CONSTANT,
-            ValueConstructorVariant::LocalConstant { .. } => CompletionItemKind::CONSTANT,
             ValueConstructorVariant::ModuleFn { .. } => CompletionItemKind::FUNCTION,
             ValueConstructorVariant::Record { arity: 0, .. } => CompletionItemKind::ENUM_MEMBER,
             ValueConstructorVariant::Record { .. } => CompletionItemKind::CONSTRUCTOR,

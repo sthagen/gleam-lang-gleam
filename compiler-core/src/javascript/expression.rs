@@ -604,7 +604,29 @@ impl<'module, 'a> Generator<'module, 'a> {
             TypedExpr::BinOp { name, .. } if name.is_operator_to_wrap() => {}
             TypedExpr::Fn { .. } => {}
 
-            _ => return self.wrap_expression(expression),
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => return self.wrap_expression(expression),
         }
 
         let document = self.expression(expression);
@@ -677,9 +699,6 @@ impl<'module, 'a> Generator<'module, 'a> {
 
     fn variable(&mut self, name: &'a EcoString, constructor: &'a ValueConstructor) -> Document<'a> {
         match &constructor.variant {
-            ValueConstructorVariant::LocalConstant { literal } => {
-                self.constant_expression(Context::Function, literal)
-            }
             ValueConstructorVariant::Record { arity, .. } => {
                 let type_ = constructor.type_.clone();
                 let tracker = &mut self.tracker;
@@ -705,49 +724,46 @@ impl<'module, 'a> Generator<'module, 'a> {
 
         let mut latest_local_var: Option<EcoString> = None;
         for assignment in all_assignments {
-            match assignment.value.as_ref() {
-                // An echo in a pipeline won't result in an assignment, instead it
-                // just prints the previous variable assigned in the pipeline.
-                TypedExpr::Echo {
-                    expression: None,
-                    message,
-                    location,
-                    ..
-                } => documents.push(self.not_in_tail_position(Some(Ordering::Strict), |this| {
+            // An echo in a pipeline won't result in an assignment, instead it
+            // just prints the previous variable assigned in the pipeline.
+            if let TypedExpr::Echo {
+                expression: None,
+                message,
+                location,
+                ..
+            } = assignment.value.as_ref()
+            {
+                documents.push(self.not_in_tail_position(Some(Ordering::Strict), |this| {
                     let var = latest_local_var
                         .as_ref()
                         .expect("echo with no previous step in a pipe");
                     this.echo(var.to_doc(), message.as_deref(), location)
-                })),
-
+                }))
+            } else {
                 // Otherwise we assign the intermediate pipe value to a variable.
-                _ => {
-                    let assignment_document = self
-                        .not_in_tail_position(Some(Ordering::Strict), |this| {
-                            this.simple_variable_assignment(&assignment.name, &assignment.value)
-                        });
-                    documents.push(self.add_statement_level(assignment_document));
-                    latest_local_var = Some(self.local_var(&assignment.name));
-                }
+                let assignment_document = self
+                    .not_in_tail_position(Some(Ordering::Strict), |this| {
+                        this.simple_variable_assignment(&assignment.name, &assignment.value)
+                    });
+                documents.push(self.add_statement_level(assignment_document));
+                latest_local_var = Some(self.local_var(&assignment.name));
             }
 
             documents.push(line());
         }
 
-        match finally {
-            TypedExpr::Echo {
-                expression: None,
-                message,
-                location,
-                ..
-            } => {
-                let var = latest_local_var.expect("echo with no previous step in a pipe");
-                documents.push(self.echo(var.to_doc(), message.as_deref(), location));
-            }
-            _ => {
-                let finally = self.expression(finally);
-                documents.push(self.add_statement_level(finally))
-            }
+        if let TypedExpr::Echo {
+            expression: None,
+            message,
+            location,
+            ..
+        } = finally
+        {
+            let var = latest_local_var.expect("echo with no previous step in a pipe");
+            documents.push(self.echo(var.to_doc(), message.as_deref(), location));
+        } else {
+            let finally = self.expression(finally);
+            documents.push(self.add_statement_level(finally))
         }
 
         documents.to_doc().force_break()
@@ -757,12 +773,11 @@ impl<'module, 'a> Generator<'module, 'a> {
         &mut self,
         expression: &'a TypedExpr,
     ) -> Document<'a> {
-        match expression {
-            TypedExpr::Block { statements, .. } => self.statements(statements),
-            _ => {
-                let expression_document = self.expression(expression);
-                self.add_statement_level(expression_document)
-            }
+        if let TypedExpr::Block { statements, .. } = expression {
+            self.statements(statements)
+        } else {
+            let expression_document = self.expression(expression);
+            self.add_statement_level(expression_document)
         }
     }
 
@@ -970,7 +985,26 @@ impl<'module, 'a> Generator<'module, 'a> {
                 match name {
                     BinOp::And => return self.assert_and(left, right, message, location),
                     BinOp::Or => return self.assert_or(left, right, message, location),
-                    _ => {}
+                    BinOp::Eq
+                    | BinOp::NotEq
+                    | BinOp::LtInt
+                    | BinOp::LtEqInt
+                    | BinOp::LtFloat
+                    | BinOp::LtEqFloat
+                    | BinOp::GtEqInt
+                    | BinOp::GtInt
+                    | BinOp::GtEqFloat
+                    | BinOp::GtFloat
+                    | BinOp::AddInt
+                    | BinOp::AddFloat
+                    | BinOp::SubInt
+                    | BinOp::SubFloat
+                    | BinOp::MultInt
+                    | BinOp::MultFloat
+                    | BinOp::DivInt
+                    | BinOp::DivFloat
+                    | BinOp::RemainderInt
+                    | BinOp::Concatenate => {}
                 }
 
                 let left_document = self.not_in_tail_position(Some(Ordering::Loose), |this| {
@@ -1011,7 +1045,28 @@ impl<'module, 'a> Generator<'module, 'a> {
                 )
             }
 
-            _ => (
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => (
                 self.wrap_expression(subject),
                 vec![
                     ("kind", string("expression")),
@@ -1213,15 +1268,14 @@ impl<'module, 'a> Generator<'module, 'a> {
     }
 
     fn assign_to_variable(&mut self, value: &'a TypedExpr) -> Document<'a> {
-        match value {
-            TypedExpr::Var { .. } => self.expression(value),
-            _ => {
-                let value = self.wrap_expression(value);
-                let variable = self.next_local_var(&ASSIGNMENT_VAR.into());
-                let assignment = docvec!["let ", variable.clone(), " = ", value, ";"];
-                self.statement_level.push(assignment);
-                variable.to_doc()
-            }
+        if let TypedExpr::Var { .. } = value {
+            self.expression(value)
+        } else {
+            let value = self.wrap_expression(value);
+            let variable = self.next_local_var(&ASSIGNMENT_VAR.into());
+            let assignment = docvec!["let ", variable.clone(), " = ", value, ";"];
+            self.statement_level.push(assignment);
+            variable.to_doc()
         }
     }
 
@@ -1347,7 +1401,30 @@ impl<'module, 'a> Generator<'module, 'a> {
                 docs.to_doc()
             }
 
-            _ => {
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => {
                 let fun = self.not_in_tail_position(None, |this| -> Document<'_> {
                     let is_fn_literal = matches!(fun, TypedExpr::Fn { .. });
                     let fun = this.wrap_expression(fun);
@@ -1587,33 +1664,74 @@ impl<'module, 'a> Generator<'module, 'a> {
         right: &'a TypedExpr,
         should_be_equal: bool,
     ) -> Option<Document<'a>> {
-        if let TypedExpr::Var {
-            constructor:
-                ValueConstructor {
-                    variant: ValueConstructorVariant::Record { arity: 0, name, .. },
-                    ..
-                },
-            ..
-        } = right
-        {
-            let left_doc = self
-                .not_in_tail_position(Some(Ordering::Strict), |this| this.wrap_expression(left));
-            Some(self.singleton_equal(left_doc, name, should_be_equal))
-        } else {
-            None
+        match right {
+            TypedExpr::Var {
+                constructor:
+                    ValueConstructor {
+                        variant: ValueConstructorVariant::Record { arity: 0, name, .. },
+                        ..
+                    },
+                ..
+            } => {
+                let left_doc = self.not_in_tail_position(Some(Ordering::Strict), |this| {
+                    this.wrap_expression(left)
+                });
+                Some(self.singleton_equal(left_doc, None, name, should_be_equal))
+            }
+            TypedExpr::ModuleSelect {
+                module_alias,
+                constructor: ModuleValueConstructor::Record { arity: 0, name, .. },
+                ..
+            } => {
+                let left_doc = self.not_in_tail_position(Some(Ordering::Strict), |this| {
+                    this.wrap_expression(left)
+                });
+                Some(self.singleton_equal(left_doc, Some(module_alias), name, should_be_equal))
+            }
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => None,
         }
     }
 
     fn singleton_equal(
         &self,
         value: Document<'a>,
-        tag: &EcoString,
+        module: Option<&'a str>,
+        name: &'a str,
         should_be_equal: bool,
     ) -> Document<'a> {
-        if should_be_equal {
-            docvec![value, " instanceof ", tag.to_doc()]
+        let record = if let Some(module) = module {
+            docvec!["$", module, ".", name]
         } else {
-            docvec!["!(", value, " instanceof ", tag.to_doc(), ")"]
+            name.to_doc()
+        };
+
+        if should_be_equal {
+            docvec![value, " instanceof ", record]
+        } else {
+            docvec!["!(", value, " instanceof ", record, ")"]
         }
     }
 
@@ -1812,7 +1930,7 @@ impl<'module, 'a> Generator<'module, 'a> {
 
                 match context {
                     Context::Constant => docvec!["/* @__PURE__ */ ", list],
-                    Context::Function => list,
+                    Context::Guard => list,
                 }
             }
 
@@ -1864,21 +1982,22 @@ impl<'module, 'a> Generator<'module, 'a> {
                 );
                 match context {
                     Context::Constant => docvec!["/* @__PURE__ */ ", constructor],
-                    Context::Function => constructor,
+                    Context::Guard => constructor,
                 }
             }
             Constant::BitArray { segments, .. } => {
                 let bit_array = self.constant_bit_array(segments, context);
                 match context {
                     Context::Constant => docvec!["/* @__PURE__ */ ", bit_array],
-                    Context::Function => bit_array,
+                    Context::Guard => bit_array,
                 }
             }
 
             Constant::Var { name, module, .. } => {
-                match module {
-                    None => maybe_escape_identifier(name).to_doc(),
-                    Some((module, _)) => {
+                match (module, context) {
+                    (None, Context::Guard) => self.local_var(name).to_doc(),
+                    (None, Context::Constant) => maybe_escape_identifier(name).to_doc(),
+                    (Some((module, _)), _) => {
                         // JS keywords can be accessed here, but we must escape anyway
                         // as we escape when exporting such names in the first place,
                         // and the imported name has to match the exported name.
@@ -1910,7 +2029,10 @@ impl<'module, 'a> Generator<'module, 'a> {
     ) -> Document<'a> {
         self.tracker.bit_array_literal_used = true;
         let segments_array = array(segments.iter().map(|segment| {
-            let value = self.constant_expression(Context::Constant, &segment.value);
+            let value = match context {
+                Context::Constant => self.constant_expression(context, &segment.value),
+                Context::Guard => self.guard_constant_expression(&segment.value),
+            };
 
             let details = self.constant_bit_array_segment_details(segment, context);
 
@@ -2003,7 +2125,10 @@ impl<'module, 'a> Generator<'module, 'a> {
             }
 
             Some(size) => {
-                let mut size = self.constant_expression(context, size);
+                let mut size = match context {
+                    Context::Constant => self.constant_expression(context, size),
+                    Context::Guard => self.guard_constant_expression(size),
+                };
                 if unit != 1 {
                     size = size.group().append(" * ".to_doc().append(unit.to_doc()));
                 }
@@ -2173,13 +2298,19 @@ impl<'module, 'a> Generator<'module, 'a> {
     ) -> Option<Document<'a>> {
         if let ClauseGuard::Constant(Constant::Record {
             record_constructor: Some(constructor),
+            module,
             name,
             ..
         }) = right
             && let ValueConstructorVariant::Record { arity: 0, .. } = constructor.variant
         {
             let left_doc = self.guard(left);
-            return Some(self.singleton_equal(left_doc, name, should_be_equal));
+            return Some(self.singleton_equal(
+                left_doc,
+                module.as_ref().map(|(module, _)| module.as_str()),
+                name,
+                should_be_equal,
+            ));
         }
         None
     }
@@ -2283,12 +2414,17 @@ impl<'module, 'a> Generator<'module, 'a> {
             }
 
             Constant::BitArray { segments, .. } => {
-                self.constant_bit_array(segments, Context::Function)
+                self.constant_bit_array(segments, Context::Guard)
             }
 
             Constant::Var { name, .. } => self.local_var(name).to_doc(),
 
-            expression => self.constant_expression(Context::Function, expression),
+            Constant::Int { .. }
+            | Constant::Float { .. }
+            | Constant::String { .. }
+            | Constant::RecordUpdate { .. }
+            | Constant::StringConcatenation { .. }
+            | Constant::Invalid { .. } => self.constant_expression(Context::Guard, expression),
         }
     }
 }
@@ -2396,7 +2532,7 @@ pub fn float_from_value(value: f64) -> Document<'static> {
 #[derive(Debug, Clone, Copy)]
 pub enum Context {
     Constant,
-    Function,
+    Guard,
 }
 
 #[derive(Debug)]

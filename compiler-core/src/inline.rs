@@ -537,7 +537,6 @@ impl Inliner<'_> {
                     }
                 }
                 ValueConstructorVariant::ModuleConstant { .. }
-                | ValueConstructorVariant::LocalConstant { .. }
                 | ValueConstructorVariant::ModuleFn { .. }
                 | ValueConstructorVariant::Record { .. } => expression,
             },
@@ -861,7 +860,6 @@ impl Inliner<'_> {
                 // function calls, so they also cannot be inlined.
                 ValueConstructorVariant::LocalVariable { .. }
                 | ValueConstructorVariant::ModuleConstant { .. }
-                | ValueConstructorVariant::LocalConstant { .. }
                 | ValueConstructorVariant::Record { .. } => function,
             },
             TypedExpr::ModuleSelect {
@@ -1406,7 +1404,30 @@ fn expand_block(expression: TypedExpr) -> TypedExpr {
                 }
             }
         }
-        _ => expression,
+        TypedExpr::Int { .. }
+        | TypedExpr::Float { .. }
+        | TypedExpr::String { .. }
+        | TypedExpr::Block { .. }
+        | TypedExpr::Pipeline { .. }
+        | TypedExpr::Var { .. }
+        | TypedExpr::Fn { .. }
+        | TypedExpr::List { .. }
+        | TypedExpr::Call { .. }
+        | TypedExpr::BinOp { .. }
+        | TypedExpr::Case { .. }
+        | TypedExpr::RecordAccess { .. }
+        | TypedExpr::PositionalAccess { .. }
+        | TypedExpr::ModuleSelect { .. }
+        | TypedExpr::Tuple { .. }
+        | TypedExpr::TupleIndex { .. }
+        | TypedExpr::Todo { .. }
+        | TypedExpr::Panic { .. }
+        | TypedExpr::Echo { .. }
+        | TypedExpr::BitArray { .. }
+        | TypedExpr::RecordUpdate { .. }
+        | TypedExpr::NegateBool { .. }
+        | TypedExpr::NegateInt { .. }
+        | TypedExpr::Invalid { .. } => expression,
     }
 }
 
@@ -1587,7 +1608,6 @@ impl FunctionToInlinable {
                         }
                     }
                     ValueConstructorVariant::ModuleConstant { .. }
-                    | ValueConstructorVariant::LocalConstant { .. }
                     | ValueConstructorVariant::ModuleFn { .. }
                     | ValueConstructorVariant::Record { .. } => {}
                 }
@@ -1691,8 +1711,7 @@ impl FunctionToInlinable {
             ValueConstructorVariant::LocalVariable { .. } => {
                 Some(InlinableValueConstructor::LocalVariable)
             }
-            ValueConstructorVariant::ModuleConstant { .. }
-            | ValueConstructorVariant::LocalConstant { .. } => None,
+            ValueConstructorVariant::ModuleConstant { .. } => None,
             ValueConstructorVariant::ModuleFn { name, module, .. } => {
                 Some(InlinableValueConstructor::Function {
                     name: name.clone(),

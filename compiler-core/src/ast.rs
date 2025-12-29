@@ -148,7 +148,10 @@ impl UntypedModule {
                 Definition::Import(Import {
                     module, location, ..
                 }) => Some((module.clone(), *location)),
-                _ => None,
+                Definition::Function(_)
+                | Definition::TypeAlias(_)
+                | Definition::CustomType(_)
+                | Definition::ModuleConstant(_) => None,
             })
             .collect()
     }
@@ -223,7 +226,10 @@ impl<A> Arg<A> {
     pub fn is_capture_hole(&self) -> bool {
         match &self.names {
             ArgNames::Named { name, .. } if name == CAPTURE_VARIABLE => true,
-            _ => false,
+            ArgNames::Discard { .. }
+            | ArgNames::LabelledDiscard { .. }
+            | ArgNames::Named { .. }
+            | ArgNames::NamedLabelled { .. } => false,
         }
     }
 }
@@ -402,7 +408,7 @@ impl TypeAst {
                             .zip(o_arguments)
                             .all(|a| a.0.is_logically_equal(a.1))
                 }
-                _ => false,
+                TypeAst::Fn(_) | TypeAst::Var(_) | TypeAst::Tuple(_) | TypeAst::Hole(_) => false,
             },
             TypeAst::Fn(TypeAstFn {
                 arguments,
@@ -421,14 +427,19 @@ impl TypeAst {
                             .all(|a| a.0.is_logically_equal(a.1))
                         && return_.is_logically_equal(o_return_)
                 }
-                _ => false,
+                TypeAst::Constructor(_)
+                | TypeAst::Var(_)
+                | TypeAst::Tuple(_)
+                | TypeAst::Hole(_) => false,
             },
             TypeAst::Var(TypeAstVar { name, location: _ }) => match other {
                 TypeAst::Var(TypeAstVar {
                     name: o_name,
                     location: _,
                 }) => name == o_name,
-                _ => false,
+                TypeAst::Constructor(_) | TypeAst::Fn(_) | TypeAst::Tuple(_) | TypeAst::Hole(_) => {
+                    false
+                }
             },
             TypeAst::Tuple(TypeAstTuple {
                 elements,
@@ -444,14 +455,18 @@ impl TypeAst {
                             .zip(other_elements)
                             .all(|a| a.0.is_logically_equal(a.1))
                 }
-                _ => false,
+                TypeAst::Constructor(_) | TypeAst::Fn(_) | TypeAst::Var(_) | TypeAst::Hole(_) => {
+                    false
+                }
             },
             TypeAst::Hole(TypeAstHole { name, location: _ }) => match other {
                 TypeAst::Hole(TypeAstHole {
                     name: o_name,
                     location: _,
                 }) => name == o_name,
-                _ => false,
+                TypeAst::Constructor(_) | TypeAst::Fn(_) | TypeAst::Var(_) | TypeAst::Tuple(_) => {
+                    false
+                }
             },
         }
     }
@@ -849,7 +864,7 @@ pub struct Import<PackageName> {
 }
 
 impl<T> Import<T> {
-    pub(crate) fn used_name(&self) -> Option<EcoString> {
+    pub fn used_name(&self) -> Option<EcoString> {
         match self.as_name.as_ref() {
             Some((AssignName::Variable(name), _)) => Some(name.clone()),
             Some((AssignName::Discard(_), _)) => None,
@@ -1303,7 +1318,7 @@ impl BinOp {
         self.operator_kind() == other.operator_kind()
     }
 
-    pub(crate) fn is_float_operator(&self) -> bool {
+    pub fn is_float_operator(&self) -> bool {
         match self {
             BinOp::LtFloat
             | BinOp::LtEqFloat
@@ -1334,11 +1349,30 @@ impl BinOp {
     fn is_bool_operator(&self) -> bool {
         match self {
             BinOp::And | BinOp::Or => true,
-            _ => false,
+            BinOp::Eq
+            | BinOp::NotEq
+            | BinOp::LtInt
+            | BinOp::LtEqInt
+            | BinOp::LtFloat
+            | BinOp::LtEqFloat
+            | BinOp::GtEqInt
+            | BinOp::GtInt
+            | BinOp::GtEqFloat
+            | BinOp::GtFloat
+            | BinOp::AddInt
+            | BinOp::AddFloat
+            | BinOp::SubInt
+            | BinOp::SubFloat
+            | BinOp::MultInt
+            | BinOp::MultFloat
+            | BinOp::DivInt
+            | BinOp::DivFloat
+            | BinOp::RemainderInt
+            | BinOp::Concatenate => false,
         }
     }
 
-    pub(crate) fn is_int_operator(&self) -> bool {
+    pub fn is_int_operator(&self) -> bool {
         match self {
             BinOp::LtInt
             | BinOp::LtEqInt
@@ -1376,7 +1410,20 @@ impl BinOp {
             BinOp::SubInt => Some(BinOp::SubFloat),
             BinOp::MultInt => Some(BinOp::MultFloat),
             BinOp::DivInt => Some(BinOp::DivFloat),
-            _ => None,
+            BinOp::And
+            | BinOp::Or
+            | BinOp::Eq
+            | BinOp::NotEq
+            | BinOp::LtFloat
+            | BinOp::LtEqFloat
+            | BinOp::GtEqFloat
+            | BinOp::GtFloat
+            | BinOp::AddFloat
+            | BinOp::SubFloat
+            | BinOp::MultFloat
+            | BinOp::DivFloat
+            | BinOp::RemainderInt
+            | BinOp::Concatenate => None,
         }
     }
 
@@ -1390,7 +1437,20 @@ impl BinOp {
             BinOp::SubFloat => Some(BinOp::SubInt),
             BinOp::MultFloat => Some(BinOp::MultInt),
             BinOp::DivFloat => Some(BinOp::DivInt),
-            _ => None,
+            BinOp::And
+            | BinOp::Or
+            | BinOp::Eq
+            | BinOp::NotEq
+            | BinOp::LtInt
+            | BinOp::LtEqInt
+            | BinOp::GtEqInt
+            | BinOp::GtInt
+            | BinOp::AddInt
+            | BinOp::SubInt
+            | BinOp::MultInt
+            | BinOp::DivInt
+            | BinOp::RemainderInt
+            | BinOp::Concatenate => None,
         }
     }
 }
@@ -1515,7 +1575,29 @@ impl CallArg<TypedExpr> {
     pub fn is_capture_hole(&self) -> bool {
         match &self.value {
             TypedExpr::Var { name, .. } => name == CAPTURE_VARIABLE,
-            _ => false,
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => false,
         }
     }
 }
@@ -1554,7 +1636,26 @@ impl CallArg<UntypedExpr> {
     pub fn is_capture_hole(&self) -> bool {
         match &self.value {
             UntypedExpr::Var { name, .. } => name == CAPTURE_VARIABLE,
-            _ => false,
+            UntypedExpr::Int { .. }
+            | UntypedExpr::Float { .. }
+            | UntypedExpr::String { .. }
+            | UntypedExpr::Block { .. }
+            | UntypedExpr::Fn { .. }
+            | UntypedExpr::List { .. }
+            | UntypedExpr::Call { .. }
+            | UntypedExpr::BinOp { .. }
+            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Case { .. }
+            | UntypedExpr::FieldAccess { .. }
+            | UntypedExpr::Tuple { .. }
+            | UntypedExpr::TupleIndex { .. }
+            | UntypedExpr::Todo { .. }
+            | UntypedExpr::Panic { .. }
+            | UntypedExpr::Echo { .. }
+            | UntypedExpr::BitArray { .. }
+            | UntypedExpr::RecordUpdate { .. }
+            | UntypedExpr::NegateBool { .. }
+            | UntypedExpr::NegateInt { .. } => false,
         }
     }
 }
@@ -1943,7 +2044,30 @@ fn pattern_and_expression_are_the_same(pattern: &TypedPattern, expression: &Type
                         })
             }
 
-            _ => false,
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => false,
         },
 
         // A pattern for a constructor with no arguments:
@@ -2991,10 +3115,7 @@ impl<A> Pattern<A> {
 
     #[must_use]
     pub fn is_variable(&self) -> bool {
-        match self {
-            Pattern::Variable { .. } => true,
-            _ => false,
-        }
+        matches!(self, Pattern::Variable { .. })
     }
 
     #[must_use]
@@ -3316,7 +3437,7 @@ impl TypedPattern {
     /// If the pattern is a `Constructor` with a spread, it returns a tuple with
     /// all the ignored fields. Split in unlabelled and labelled ones.
     ///
-    pub(crate) fn unused_arguments(&self) -> Option<PatternUnusedArguments> {
+    pub fn unused_arguments(&self) -> Option<PatternUnusedArguments> {
         let TypedPattern::Constructor {
             arguments,
             spread: Some(_),
@@ -3656,7 +3777,22 @@ impl<Value, Type> BitArraySegment<Value, Type> {
     pub fn size(&self) -> Option<&Value> {
         self.options.iter().find_map(|x| match x {
             BitArrayOption::Size { value, .. } => Some(value.as_ref()),
-            _ => None,
+            BitArrayOption::Bytes { .. }
+            | BitArrayOption::Int { .. }
+            | BitArrayOption::Float { .. }
+            | BitArrayOption::Bits { .. }
+            | BitArrayOption::Utf8 { .. }
+            | BitArrayOption::Utf16 { .. }
+            | BitArrayOption::Utf32 { .. }
+            | BitArrayOption::Utf8Codepoint { .. }
+            | BitArrayOption::Utf16Codepoint { .. }
+            | BitArrayOption::Utf32Codepoint { .. }
+            | BitArrayOption::Signed { .. }
+            | BitArrayOption::Unsigned { .. }
+            | BitArrayOption::Big { .. }
+            | BitArrayOption::Little { .. }
+            | BitArrayOption::Native { .. }
+            | BitArrayOption::Unit { .. } => None,
         })
     }
 
@@ -3666,23 +3802,35 @@ impl<Value, Type> BitArraySegment<Value, Type> {
             .find_map(|option| match option {
                 BitArrayOption::Unit { value, .. } => Some(*value),
                 BitArrayOption::Bytes { .. } => Some(8),
-                _ => None,
+                BitArrayOption::Int { .. }
+                | BitArrayOption::Float { .. }
+                | BitArrayOption::Bits { .. }
+                | BitArrayOption::Utf8 { .. }
+                | BitArrayOption::Utf16 { .. }
+                | BitArrayOption::Utf32 { .. }
+                | BitArrayOption::Utf8Codepoint { .. }
+                | BitArrayOption::Utf16Codepoint { .. }
+                | BitArrayOption::Utf32Codepoint { .. }
+                | BitArrayOption::Signed { .. }
+                | BitArrayOption::Unsigned { .. }
+                | BitArrayOption::Big { .. }
+                | BitArrayOption::Little { .. }
+                | BitArrayOption::Native { .. }
+                | BitArrayOption::Size { .. } => None,
             })
             .unwrap_or(1)
     }
 
     pub(crate) fn has_bits_option(&self) -> bool {
-        self.options.iter().any(|option| match option {
-            BitArrayOption::Bits { .. } => true,
-            _ => false,
-        })
+        self.options
+            .iter()
+            .any(|option| matches!(option, BitArrayOption::Bits { .. }))
     }
 
     pub(crate) fn has_bytes_option(&self) -> bool {
-        self.options.iter().any(|option| match option {
-            BitArrayOption::Bytes { .. } => true,
-            _ => false,
-        })
+        self.options
+            .iter()
+            .any(|option| matches!(option, BitArrayOption::Bytes { .. }))
     }
 }
 
@@ -3712,7 +3860,7 @@ impl<TypedValue> BitArraySegment<TypedValue, Arc<Type>>
 where
     TypedValue: HasType + HasLocation + Clone + bit_array::GetLiteralValue,
 {
-    pub(crate) fn check_for_truncated_value(&self) -> Option<BitArraySegmentTruncation> {
+    pub fn check_for_truncated_value(&self) -> Option<BitArraySegmentTruncation> {
         // Both the size and the value must be two compile-time known constants.
         let segment_bits = self.bits_size()?.to_i64()?;
         let literal_value = self.value.as_int_literal()?;
@@ -3901,7 +4049,22 @@ impl<A> BitArrayOption<A> {
     pub fn value(&self) -> Option<&A> {
         match self {
             BitArrayOption::Size { value, .. } => Some(value),
-            _ => None,
+            BitArrayOption::Bytes { .. }
+            | BitArrayOption::Int { .. }
+            | BitArrayOption::Float { .. }
+            | BitArrayOption::Bits { .. }
+            | BitArrayOption::Utf8 { .. }
+            | BitArrayOption::Utf16 { .. }
+            | BitArrayOption::Utf32 { .. }
+            | BitArrayOption::Utf8Codepoint { .. }
+            | BitArrayOption::Utf16Codepoint { .. }
+            | BitArrayOption::Utf32Codepoint { .. }
+            | BitArrayOption::Signed { .. }
+            | BitArrayOption::Unsigned { .. }
+            | BitArrayOption::Big { .. }
+            | BitArrayOption::Little { .. }
+            | BitArrayOption::Native { .. }
+            | BitArrayOption::Unit { .. } => None,
         }
     }
 
@@ -4283,11 +4446,8 @@ impl<T, E> Statement<T, E> {
     }
 
     #[must_use]
-    pub(crate) fn is_use(&self) -> bool {
-        match self {
-            Self::Use(_) => true,
-            _ => false,
-        }
+    pub fn is_use(&self) -> bool {
+        matches!(self, Self::Use(_))
     }
 }
 

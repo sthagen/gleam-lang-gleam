@@ -1160,7 +1160,28 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let todopanic = match fun {
             TypedExpr::Todo { .. } => Some((location, TodoOrPanic::Todo)),
             TypedExpr::Panic { .. } => Some((location, TodoOrPanic::Panic)),
-            _ => None,
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => None,
         };
         if let Some((location, kind)) = todopanic {
             let arguments_location = match (arguments.first(), arguments.last()) {
@@ -1274,8 +1295,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 implementations, ..
             } => implementations,
             ValueConstructorVariant::Record { .. }
-            | ValueConstructorVariant::LocalVariable { .. }
-            | ValueConstructorVariant::LocalConstant { .. } => return Ok(()),
+            | ValueConstructorVariant::LocalVariable { .. } => return Ok(()),
         };
 
         self.implementations
@@ -1327,27 +1347,21 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         // Computes a potential module access. This will be used if a record access can't be used.
         // Computes both the inferred access and if it shadows a variable.
-        let module_access = match &container {
-            UntypedExpr::Var { name, .. } => {
-                let module_access = self.infer_module_access(
-                    name,
-                    label.clone(),
-                    &container_location,
-                    label_location,
-                );
-                // Returns the result and if it shadows an existing variable in scope
-                Some((module_access, self.environment.scope.contains_key(name)))
-            }
-            _ => None,
+        let module_access = if let UntypedExpr::Var { name, .. } = &container {
+            let module_access =
+                self.infer_module_access(name, label.clone(), &container_location, label_location);
+            // Returns the result and if it shadows an existing variable in scope
+            Some((module_access, self.environment.scope.contains_key(name)))
+        } else {
+            None
         };
-        let record = match container {
+        let record = if let UntypedExpr::Var { location, name } = container {
             // If the left-hand-side of the record access is a variable, this might actually be
             // module access. In that case, we only want to register a reference to the variable
             // if we actually referencing it in the record access.
-            UntypedExpr::Var { location, name } => {
-                self.infer_var(name, location, ReferenceRegistration::DoNotRegister)
-            }
-            _ => self.infer_or_error(container),
+            self.infer_var(name, location, ReferenceRegistration::DoNotRegister)
+        } else {
+            self.infer_or_error(container)
         };
         // TODO: is this clone avoidable? we need to box the record for inference in both
         // the success case and in the valid record but invalid label case
@@ -1523,7 +1537,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 location: tuple.location(),
             }),
 
-            _ => Err(Error::NotATuple {
+            Type::Named { .. } | Type::Fn { .. } | Type::Var { .. } => Err(Error::NotATuple {
                 location: tuple.location(),
                 given: tuple.type_(),
             }),
@@ -1564,16 +1578,43 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             })
                         }
 
-                        _ => (),
+                        UntypedExpr::Int { .. }
+                        | UntypedExpr::Block { .. }
+                        | UntypedExpr::Var { .. }
+                        | UntypedExpr::Fn { .. }
+                        | UntypedExpr::List { .. }
+                        | UntypedExpr::Call { .. }
+                        | UntypedExpr::BinOp { .. }
+                        | UntypedExpr::PipeLine { .. }
+                        | UntypedExpr::Case { .. }
+                        | UntypedExpr::FieldAccess { .. }
+                        | UntypedExpr::Tuple { .. }
+                        | UntypedExpr::TupleIndex { .. }
+                        | UntypedExpr::Todo { .. }
+                        | UntypedExpr::Panic { .. }
+                        | UntypedExpr::Echo { .. }
+                        | UntypedExpr::BitArray { .. }
+                        | UntypedExpr::RecordUpdate { .. }
+                        | UntypedExpr::NegateBool { .. }
+                        | UntypedExpr::NegateInt { .. } => (),
                     }
                 }
 
-                self.infer_bit_segment(
+                let segment = self.infer_bit_segment(
                     *segment.value,
                     segment.options,
                     segment.location,
                     |env, expr| env.infer_or_error(expr),
-                )
+                );
+
+                if let Ok(segment) = &segment {
+                    // If we could successfully infer the segment we need to
+                    // check if it's `size` option uses any feature that has to
+                    // be tracked!
+                    self.check_segment_size_expression(&segment.options);
+                };
+
+                segment
             })
             .try_collect()?;
 
@@ -1618,16 +1659,33 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             })
                         }
 
-                        _ => (),
+                        Constant::Int { .. }
+                        | Constant::Tuple { .. }
+                        | Constant::List { .. }
+                        | Constant::Record { .. }
+                        | Constant::RecordUpdate { .. }
+                        | Constant::BitArray { .. }
+                        | Constant::Var { .. }
+                        | Constant::StringConcatenation { .. }
+                        | Constant::Invalid { .. } => (),
                     }
                 }
 
-                self.infer_bit_segment(
+                let segment = self.infer_bit_segment(
                     *segment.value,
                     segment.options,
                     segment.location,
                     |env, expr| Ok(env.infer_const(&None, expr)),
-                )
+                );
+
+                if let Ok(segment) = &segment {
+                    // If we could successfully infer the segment we need to
+                    // check if it's `size` option uses any feature that has to
+                    // be tracked!
+                    self.check_constant_segment_size_expression(&segment.options);
+                }
+
+                segment
             })
             .try_collect()?;
 
@@ -1728,11 +1786,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         match self.infer_or_error(expression) {
             Ok(result) => result,
             Err(error) => {
-                let information = match &error {
-                    Error::UnknownVariable { name, .. } => {
-                        Some(InvalidExpression::UnknownVariable { name: name.clone() })
-                    }
-                    _ => None,
+                let information = if let Error::UnknownVariable { name, .. } = &error {
+                    Some(InvalidExpression::UnknownVariable { name: name.clone() })
+                } else {
+                    None
                 };
 
                 self.problems.error(error);
@@ -1885,14 +1942,16 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         };
 
         // Extract the module information from the call expression.
-        let (module_name, module_alias, label) = match fun.as_ref() {
-            TypedExpr::ModuleSelect {
-                module_name,
-                module_alias,
-                label,
-                ..
-            } => (module_name, module_alias, label),
-            _ => return,
+        let (module_name, module_alias, label) = if let TypedExpr::ModuleSelect {
+            module_name,
+            module_alias,
+            label,
+            ..
+        } = fun.as_ref()
+        {
+            (module_name, module_alias, label)
+        } else {
+            return;
         };
 
         // Check if we have a `list.length` call from `gleam/list`.
@@ -1955,7 +2014,24 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     BinOp::GtInt => ComparisonOutcome::AlwaysFails,
                     BinOp::GtEqInt if n >= m => ComparisonOutcome::AlwaysSucceeds,
                     BinOp::GtEqInt => ComparisonOutcome::AlwaysFails,
-                    _ => return,
+                    BinOp::And
+                    | BinOp::Or
+                    | BinOp::Eq
+                    | BinOp::NotEq
+                    | BinOp::LtFloat
+                    | BinOp::LtEqFloat
+                    | BinOp::GtEqFloat
+                    | BinOp::GtFloat
+                    | BinOp::AddInt
+                    | BinOp::AddFloat
+                    | BinOp::SubInt
+                    | BinOp::SubFloat
+                    | BinOp::MultInt
+                    | BinOp::MultFloat
+                    | BinOp::DivInt
+                    | BinOp::DivFloat
+                    | BinOp::RemainderInt
+                    | BinOp::Concatenate => return,
                 }
             }
 
@@ -1972,7 +2048,24 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 BinOp::GtFloat => ComparisonOutcome::AlwaysFails,
                 BinOp::GtEqFloat if n >= m => ComparisonOutcome::AlwaysSucceeds,
                 BinOp::GtEqFloat => ComparisonOutcome::AlwaysFails,
-                _ => return,
+                BinOp::And
+                | BinOp::Or
+                | BinOp::Eq
+                | BinOp::NotEq
+                | BinOp::LtInt
+                | BinOp::LtEqInt
+                | BinOp::GtEqInt
+                | BinOp::GtInt
+                | BinOp::AddInt
+                | BinOp::AddFloat
+                | BinOp::SubInt
+                | BinOp::SubFloat
+                | BinOp::MultInt
+                | BinOp::MultFloat
+                | BinOp::DivInt
+                | BinOp::DivFloat
+                | BinOp::RemainderInt
+                | BinOp::Concatenate => return,
             },
 
             _ => return,
@@ -2386,8 +2479,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         return Err(Error::NonLocalClauseGuardVariable { location, name });
                     }
 
-                    ValueConstructorVariant::ModuleConstant { literal, .. }
-                    | ValueConstructorVariant::LocalConstant { literal } => {
+                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
                         return Ok(ClauseGuard::Constant(literal.clone()));
                     }
                 };
@@ -2429,10 +2521,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         location: tuple.location(),
                     }),
 
-                    _ => Err(Error::NotATuple {
-                        location: tuple.location(),
-                        given: tuple.type_(),
-                    }),
+                    Type::Named { .. } | Type::Fn { .. } | Type::Var { .. } => {
+                        Err(Error::NotATuple {
+                            location: tuple.location(),
+                            given: tuple.type_(),
+                        })
+                    }
                 }
             }
 
@@ -2445,15 +2539,15 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             } => match self.infer_clause_guard(*container.clone()) {
                 Ok(container) => self.infer_guard_record_access(container, label, label_location),
 
-                Err(err) => match *container {
-                    ClauseGuard::Var { name, location, .. } => {
+                Err(err) => {
+                    if let ClauseGuard::Var { name, location, .. } = *container {
                         self.infer_guard_module_access(name, label, location, label_location, err)
+                    } else {
+                        Err(Error::RecordAccessUnknownType {
+                            location: label_location,
+                        })
                     }
-
-                    _ => Err(Error::RecordAccessUnknownType {
-                        location: label_location,
-                    }),
-                },
+                }
             },
 
             ClauseGuard::ModuleSelect { location, .. } => {
@@ -2917,8 +3011,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     ) -> Result<TypedClauseGuard, Error> {
         let module_access = self
             .infer_module_access(&name, label, &module_location, label_location)
-            .and_then(|ma| match ma {
-                TypedExpr::ModuleSelect {
+            .and_then(|ma| {
+                if let TypedExpr::ModuleSelect {
                     location,
                     field_start: _,
                     type_,
@@ -2926,32 +3020,38 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     module_name,
                     module_alias,
                     constructor,
-                } => match constructor {
-                    ModuleValueConstructor::Constant { literal, .. } => {
-                        self.environment.references.register_value_reference(
-                            module_name.clone(),
-                            label.clone(),
-                            &label,
-                            label_location,
-                            ReferenceKind::Qualified,
-                        );
+                } = ma
+                {
+                    match constructor {
+                        ModuleValueConstructor::Constant { literal, .. } => {
+                            self.environment.references.register_value_reference(
+                                module_name.clone(),
+                                label.clone(),
+                                &label,
+                                label_location,
+                                ReferenceKind::Qualified,
+                            );
 
-                        Ok(ClauseGuard::ModuleSelect {
-                            location,
-                            type_,
-                            label,
-                            module_name,
-                            module_alias,
-                            literal,
-                        })
+                            Ok(ClauseGuard::ModuleSelect {
+                                location,
+                                type_,
+                                label,
+                                module_name,
+                                module_alias,
+                                literal,
+                            })
+                        }
+
+                        ModuleValueConstructor::Record { .. }
+                        | ModuleValueConstructor::Fn { .. } => {
+                            Err(Error::RecordAccessUnknownType { location })
+                        }
                     }
-
-                    _ => Err(Error::RecordAccessUnknownType { location }),
-                },
-
-                _ => Err(Error::RecordAccessUnknownType {
-                    location: module_location,
-                }),
+                } else {
+                    Err(Error::RecordAccessUnknownType {
+                        location: module_location,
+                    })
+                }
             });
 
         // If the name is in the environment, use the original error from
@@ -3027,7 +3127,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
             variant @ (ValueConstructorVariant::LocalVariable { .. }
             | ValueConstructorVariant::ModuleConstant { .. }
-            | ValueConstructorVariant::LocalConstant { .. }
             | ValueConstructorVariant::Record { .. }) => {
                 variant.to_module_value_constructor(Arc::clone(&type_), &module_name, &label)
             }
@@ -3133,7 +3232,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     )
                 }),
 
-            _something_without_fields => return Err(unknown_field(vec![])),
+            // Non-named types do not have fields
+            Type::Fn { .. } | Type::Var { .. } | Type::Tuple { .. } => {
+                return Err(unknown_field(vec![]));
+            }
         }
         .ok_or_else(|| unknown_field(vec![]))?;
 
@@ -3194,9 +3296,30 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
             TypedExpr::Var { name, .. } => (None, name),
 
-            constructor => {
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => {
                 return Err(Error::RecordUpdateInvalidConstructor {
-                    location: constructor.location(),
+                    location: typed_constructor.location(),
                 });
             }
         };
@@ -3348,7 +3471,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     field,
                 },
             },
-            _ => convert_unify_error(e, record_location),
+            UnifyError::ExtraVarInAlternativePattern { .. }
+            | UnifyError::MissingVarInAlternativePattern { .. }
+            | UnifyError::DuplicateVarInPattern { .. }
+            | UnifyError::RecursiveType => convert_unify_error(e, record_location),
         };
 
         let indices_to_labels = variant.field_map.indices_to_labels();
@@ -3429,7 +3555,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                                 ))
                             }),
 
-                        _ => panic!("Type has already checked to be valid"),
+                        Type::Fn { .. } | Type::Var { .. } | Type::Tuple { .. } => {
+                            panic!("Type has already checked to be valid")
+                        }
                     }
                     .expect("Variant has already checked to be valid");
 
@@ -3497,7 +3625,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // The record constructor needs to be a function.
         let (arguments_types, return_type) = match constructor.type_().as_ref() {
             Type::Fn { arguments, return_ } => (arguments.clone(), return_.clone()),
-            _ => {
+            Type::Named { .. } | Type::Var { .. } | Type::Tuple { .. } => {
                 return Err(Error::RecordUpdateInvalidConstructor {
                     location: constructor.location(),
                 });
@@ -3520,7 +3648,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     location: constructor.location(),
                 });
             }
-            _ => {
+            ValueConstructorVariant::LocalVariable { .. }
+            | ValueConstructorVariant::ModuleConstant { .. }
+            | ValueConstructorVariant::ModuleFn { .. } => {
                 return Err(Error::RecordUpdateInvalidConstructor {
                     location: constructor.location(),
                 });
@@ -3532,7 +3662,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         // instantiate a new copy of the generic return type for our value constructor.
         let return_type_copy = match value_constructor.type_.as_ref() {
             Type::Fn { return_, .. } => self.instantiate(return_.clone(), &mut hashmap![]),
-            _ => {
+            Type::Named { .. } | Type::Var { .. } | Type::Tuple { .. } => {
                 return Err(Error::RecordUpdateInvalidConstructor {
                     location: constructor.location(),
                 });
@@ -3833,7 +3963,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             ValueConstructorVariant::LocalVariable { .. } => {
                 self.environment.increment_usage(referenced_name)
             }
-            ValueConstructorVariant::LocalConstant { .. } => {}
         }
     }
 
@@ -3933,6 +4062,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 arguments,
                 ..
             } => {
+                self.track_feature_usage(FeatureKind::ConstantRecordUpdate, location);
                 let constructor = match self.infer_value_constructor(&module, &name, &location) {
                     Ok(constructor) => constructor,
                     Err(error) => {
@@ -3964,8 +4094,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         return self.new_invalid_constant(location);
                     }
 
-                    ValueConstructorVariant::ModuleConstant { literal, .. }
-                    | ValueConstructorVariant::LocalConstant { literal } => {
+                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
                         return literal.clone();
                     }
                 };
@@ -3981,7 +4110,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 // Extract field types and return type from the instantiated constructor
                 let (field_types, expected_type) = match instantiated_constructor_type.as_ref() {
                     Type::Fn { arguments, return_ } => (arguments.clone(), return_.clone()),
-                    _ => {
+                    Type::Named { .. } | Type::Var { .. } | Type::Tuple { .. } => {
                         self.problems.error(Error::RecordUpdateInvalidConstructor {
                             location: constructor_location,
                         });
@@ -3996,19 +4125,29 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         constructor: Some(value_constructor),
                         ..
                     } => match &value_constructor.variant {
-                        ValueConstructorVariant::LocalConstant { literal }
-                        | ValueConstructorVariant::ModuleConstant { literal, .. } => {
-                            literal.clone()
-                        }
-                        _ => typed_record,
+                        ValueConstructorVariant::ModuleConstant { literal, .. } => literal.clone(),
+                        ValueConstructorVariant::LocalVariable { .. }
+                        | ValueConstructorVariant::ModuleFn { .. }
+                        | ValueConstructorVariant::Record { .. } => typed_record,
                     },
-                    _ => typed_record,
+                    Constant::Int { .. }
+                    | Constant::Float { .. }
+                    | Constant::String { .. }
+                    | Constant::Tuple { .. }
+                    | Constant::List { .. }
+                    | Constant::Record { .. }
+                    | Constant::RecordUpdate { .. }
+                    | Constant::BitArray { .. }
+                    | Constant::Var { .. }
+                    | Constant::StringConcatenation { .. }
+                    | Constant::Invalid { .. } => typed_record,
                 };
 
                 // Get the field arguments from the record that we'll use as the base.
-                let (base_arguments, base_tag) = match resolved_record {
-                    Constant::Record { arguments, tag, .. } => (arguments, tag),
-                    _ => {
+                let (base_arguments, base_tag) =
+                    if let Constant::Record { arguments, tag, .. } = resolved_record {
+                        (arguments, tag)
+                    } else {
                         self.problems.error(convert_unify_error(
                             UnifyError::CouldNotUnify {
                                 expected: expected_type.clone(),
@@ -4018,8 +4157,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             record.location,
                         ));
                         return self.new_invalid_constant(location);
-                    }
-                };
+                    };
 
                 // Check that the variant being spread matches the constructor variant
                 // For multi-variant custom types, you can't spread Dog to create Cat
@@ -4119,21 +4257,25 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             .map(|(name, _)| RecordField::Labelled(name.clone()))
                             .unwrap_or_else(|| RecordField::Unlabelled(index as u32));
 
-                        self.problems.error(match unify_error {
-                            UnifyError::CouldNotUnify {
+                        self.problems.error(
+                            if let UnifyError::CouldNotUnify {
                                 expected, given, ..
-                            } => Error::UnsafeRecordUpdate {
-                                location: record.location,
-                                reason: UnsafeRecordUpdateReason::IncompatibleFieldTypes {
-                                    constructed_variant: expected_type.clone(),
-                                    record_variant: typed_record_type.clone(),
-                                    expected_field_type: expected,
-                                    record_field_type: given,
-                                    field,
-                                },
+                            } = unify_error
+                            {
+                                Error::UnsafeRecordUpdate {
+                                    location: record.location,
+                                    reason: UnsafeRecordUpdateReason::IncompatibleFieldTypes {
+                                        constructed_variant: expected_type.clone(),
+                                        record_variant: typed_record_type.clone(),
+                                        expected_field_type: expected,
+                                        record_field_type: given,
+                                        field,
+                                    },
+                                }
+                            } else {
+                                convert_unify_error(unify_error, location)
                             },
-                            _ => convert_unify_error(unify_error, location),
-                        });
+                        );
                         return self.new_invalid_constant(location);
                     }
                 }
@@ -4185,8 +4327,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     }
 
                     // TODO: remove this clone. Could use an rc instead
-                    ValueConstructorVariant::ModuleConstant { literal, .. }
-                    | ValueConstructorVariant::LocalConstant { literal } => {
+                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
                         return literal.clone();
                     }
                 };
@@ -4241,8 +4382,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     }
 
                     // TODO: remove this clone. Could be an rc instead
-                    ValueConstructorVariant::ModuleConstant { literal, .. }
-                    | ValueConstructorVariant::LocalConstant { literal } => {
+                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
                         return literal.clone();
                     }
                 };
@@ -4407,7 +4547,6 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
                 match constructor.variant {
                     ValueConstructorVariant::ModuleConstant { .. }
-                    | ValueConstructorVariant::LocalConstant { .. }
                     | ValueConstructorVariant::ModuleFn { .. }
                     | ValueConstructorVariant::LocalVariable { .. } => Constant::Var {
                         location,
@@ -4559,7 +4698,28 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
             TypedExpr::Var { name, .. } => (None, name),
 
-            _ => return Ok(None),
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => return Ok(None),
         };
 
         Ok(self
@@ -4605,7 +4765,26 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 location,
             ),
 
-            fun => self.infer(fun),
+            UntypedExpr::Int { .. }
+            | UntypedExpr::Float { .. }
+            | UntypedExpr::String { .. }
+            | UntypedExpr::Block { .. }
+            | UntypedExpr::Var { .. }
+            | UntypedExpr::Fn { .. }
+            | UntypedExpr::List { .. }
+            | UntypedExpr::Call { .. }
+            | UntypedExpr::BinOp { .. }
+            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Case { .. }
+            | UntypedExpr::Tuple { .. }
+            | UntypedExpr::TupleIndex { .. }
+            | UntypedExpr::Todo { .. }
+            | UntypedExpr::Panic { .. }
+            | UntypedExpr::Echo { .. }
+            | UntypedExpr::BitArray { .. }
+            | UntypedExpr::RecordUpdate { .. }
+            | UntypedExpr::NegateBool { .. }
+            | UntypedExpr::NegateInt { .. } => self.infer(fun),
         };
 
         let (fun, arguments, type_) =
@@ -4677,26 +4856,24 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             });
 
         if let Err(e) = field_map {
-            match e {
-                Error::IncorrectArity {
+            if let Error::IncorrectArity {
+                expected,
+                given,
+                context,
+                labels,
+                location,
+            } = e
+            {
+                labelled_arity_error = true;
+                self.problems.error(Error::IncorrectArity {
                     expected,
                     given,
                     context,
                     labels,
                     location,
-                } => {
-                    labelled_arity_error = true;
-                    self.problems.error(Error::IncorrectArity {
-                        expected,
-                        given,
-                        context,
-                        labels,
-                        location,
-                    });
-                }
-                _ => {
-                    self.problems.error(e);
-                }
+                });
+            } else {
+                self.problems.error(e);
             }
         }
 
@@ -5231,6 +5408,113 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             self.minimum_required_version = minimum_required_version;
         }
     }
+
+    /// Checks if one of the options is a size option using an expression.
+    /// This needs to be tracked as it was introduced in Gleam 1.12.0.
+    fn check_segment_size_expression(&mut self, options: &[BitArrayOption<TypedExpr>]) {
+        let Some(size_value) = options.iter().find_map(|option| match option {
+            BitArrayOption::Size { value, .. } => Some(value),
+
+            BitArrayOption::Bytes { .. }
+            | BitArrayOption::Int { .. }
+            | BitArrayOption::Float { .. }
+            | BitArrayOption::Bits { .. }
+            | BitArrayOption::Utf8 { .. }
+            | BitArrayOption::Utf16 { .. }
+            | BitArrayOption::Utf32 { .. }
+            | BitArrayOption::Utf8Codepoint { .. }
+            | BitArrayOption::Utf16Codepoint { .. }
+            | BitArrayOption::Utf32Codepoint { .. }
+            | BitArrayOption::Signed { .. }
+            | BitArrayOption::Unsigned { .. }
+            | BitArrayOption::Big { .. }
+            | BitArrayOption::Little { .. }
+            | BitArrayOption::Native { .. }
+            | BitArrayOption::Unit { .. } => None,
+        }) else {
+            return;
+        };
+
+        match size_value.as_ref() {
+            // Ints and vars were always allowed from the start
+            TypedExpr::Int { .. } | TypedExpr::Var { .. } => (),
+
+            // Blocks and binops were added in Gleam 1.12.0!
+            TypedExpr::Block { location, .. } | TypedExpr::BinOp { location, .. } => {
+                self.track_feature_usage(FeatureKind::ExpressionInSegmentSize, *location)
+            }
+
+            // None of these are currently supported... for now!
+            TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => (),
+        }
+    }
+
+    /// Checks if one of the options is a size option using an expression.
+    /// This needs to be tracked as it was introduced in Gleam 1.12.0.
+    ///
+    /// This is basically the same as the function above working on expressions!
+    fn check_constant_segment_size_expression(&self, options: &[BitArrayOption<TypedConstant>]) {
+        let Some(size_value) = options.iter().find_map(|option| match option {
+            BitArrayOption::Size { value, .. } => Some(value),
+
+            BitArrayOption::Bytes { .. }
+            | BitArrayOption::Int { .. }
+            | BitArrayOption::Float { .. }
+            | BitArrayOption::Bits { .. }
+            | BitArrayOption::Utf8 { .. }
+            | BitArrayOption::Utf16 { .. }
+            | BitArrayOption::Utf32 { .. }
+            | BitArrayOption::Utf8Codepoint { .. }
+            | BitArrayOption::Utf16Codepoint { .. }
+            | BitArrayOption::Utf32Codepoint { .. }
+            | BitArrayOption::Signed { .. }
+            | BitArrayOption::Unsigned { .. }
+            | BitArrayOption::Big { .. }
+            | BitArrayOption::Little { .. }
+            | BitArrayOption::Native { .. }
+            | BitArrayOption::Unit { .. } => None,
+        }) else {
+            return;
+        };
+
+        // Expressions are not allowed in constants so for now nothing needs
+        // tracking. Though this is handy to have already in place if we were to
+        // lift this restriction for constant bit arrays as well!
+        match size_value.as_ref() {
+            // Ints and vars were always allowed from the start
+            TypedConstant::Int { .. } | TypedConstant::Var { .. } => (),
+
+            // None of these are currently supported... for now!
+            Constant::Float { .. }
+            | Constant::String { .. }
+            | Constant::Tuple { .. }
+            | Constant::List { .. }
+            | Constant::Record { .. }
+            | Constant::RecordUpdate { .. }
+            | Constant::BitArray { .. }
+            | Constant::StringConcatenation { .. }
+            | Constant::Invalid { .. } => (),
+        }
+    }
 }
 
 /// Given a constants, this will change its type into the given one, turning
@@ -5443,16 +5727,39 @@ fn check_subject_for_redundant_match(
             None
         }
 
-        // We make sure to not emit warnings if the case is being used like an
-        // if expression:
-        // ```gleam
-        // case True {
-        //   _ if condition -> todo
-        //   _ if other_condition -> todo
-        //   _ -> todo
-        // }
-        // ```
-        _ => match subject.record_constructor_arity() {
+        TypedExpr::Int { .. }
+        | TypedExpr::Float { .. }
+        | TypedExpr::String { .. }
+        | TypedExpr::Block { .. }
+        | TypedExpr::Pipeline { .. }
+        | TypedExpr::Var { .. }
+        | TypedExpr::Fn { .. }
+        | TypedExpr::List { .. }
+        | TypedExpr::Call { .. }
+        | TypedExpr::BinOp { .. }
+        | TypedExpr::Case { .. }
+        | TypedExpr::RecordAccess { .. }
+        | TypedExpr::PositionalAccess { .. }
+        | TypedExpr::ModuleSelect { .. }
+        | TypedExpr::Tuple { .. }
+        | TypedExpr::TupleIndex { .. }
+        | TypedExpr::Todo { .. }
+        | TypedExpr::Panic { .. }
+        | TypedExpr::Echo { .. }
+        | TypedExpr::BitArray { .. }
+        | TypedExpr::RecordUpdate { .. }
+        | TypedExpr::NegateBool { .. }
+        | TypedExpr::NegateInt { .. }
+        | TypedExpr::Invalid { .. } => match subject.record_constructor_arity() {
+            // We make sure to not emit warnings if the case is being used like an
+            // if expression:
+            // ```gleam
+            // case True {
+            //   _ if condition -> todo
+            //   _ if other_condition -> todo
+            //   _ -> todo
+            // }
+            // ```
             Some(0) if !case_used_like_if => Some(Warning::CaseMatchOnLiteralValue {
                 location: subject.location(),
             }),
@@ -5516,20 +5823,21 @@ struct UseCall {
 fn get_use_expression_call(call: UntypedExpr) -> UseCall {
     // Ensure that the use's call is of the right structure. i.e. it is a
     // call to a function.
-    match call {
-        UntypedExpr::Call {
-            fun: function,
-            arguments,
-            ..
-        } => UseCall {
+    if let UntypedExpr::Call {
+        fun: function,
+        arguments,
+        ..
+    } = call
+    {
+        UseCall {
             arguments,
             function,
-        },
-
-        other => UseCall {
-            function: Box::new(other),
+        }
+    } else {
+        UseCall {
+            function: Box::new(call),
             arguments: vec![],
-        },
+        }
     }
 }
 
@@ -5695,10 +6003,6 @@ fn static_compare(one: &TypedExpr, other: &TypedExpr) -> StaticComparison {
                 ValueConstructorVariant::ModuleConstant { .. },
                 ValueConstructorVariant::ModuleConstant { .. },
             )
-            | (
-                ValueConstructorVariant::LocalConstant { .. },
-                ValueConstructorVariant::LocalConstant { .. },
-            )
             | (ValueConstructorVariant::Record { .. }, ValueConstructorVariant::Record { .. })
                 if one == other =>
             {
@@ -5719,7 +6023,6 @@ fn static_compare(one: &TypedExpr, other: &TypedExpr) -> StaticComparison {
             (
                 ValueConstructorVariant::LocalVariable { .. }
                 | ValueConstructorVariant::ModuleConstant { .. }
-                | ValueConstructorVariant::LocalConstant { .. }
                 | ValueConstructorVariant::ModuleFn { .. }
                 | ValueConstructorVariant::Record { .. },
                 _,
