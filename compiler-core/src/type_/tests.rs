@@ -821,6 +821,14 @@ fn infer_module_type_retention_test() {
                     }
                 ),
                 (
+                    "UtfCodepoint".into(),
+                    TypeVariantConstructors {
+                        type_parameters_ids: vec![],
+                        variants: vec![],
+                        opaque: Opaque::NotOpaque,
+                    }
+                ),
+                (
                     "Result".into(),
                     TypeVariantConstructors {
                         type_parameters_ids: vec![1, 2],
