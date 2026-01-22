@@ -31,11 +31,19 @@
   versions. Files using the old names will continue to work.
   ([Louis Pilfold](https://github.com/lpil))
 
+- The password used for encrypting new local Hex API keys must now be at least
+  8 characters in length.
+  ([Louis Pilfold](https://github.com/lpil))
+
 ### Language server
 
 - The language server now allows extracting the start of a pipeline into a
   variable.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server now suggests adding missing type parameters
+  to custom generic types.
+  ([Andi Pabst](https://github.com/andipabst))
 
 ### Formatter
 
