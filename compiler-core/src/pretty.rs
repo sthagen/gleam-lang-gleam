@@ -56,8 +56,26 @@ macro_rules! docvec {
         Document::Vec(Vec::new())
     };
 
-    ($($x:expr),+ $(,)?) => {
-        Document::Vec(vec![$($x.to_doc()),+])
+    // A docvec![] with a single element
+    ($first:expr $(,)?) => {
+        Document::Vec(vec![$first.to_doc()])
+    };
+
+    // A docvec![] with multiple elements.
+    ($first:expr, $($rest:expr),+ $(,)?) => {
+        // A document that looks like this: `Vec[Vec[..rest], ..other_rest]`
+        // is exactly the same as a flat: `Vec[..rest, ..other_rest]`.
+        // So in case a `docvec!` starts with a `Vec` we flatten it out to avoid
+        // having deeply nested documents.
+        match $first.to_doc() {
+            Document::Vec(mut vec) => {
+                $(
+                    vec.push($rest.to_doc());
+                )*
+                Document::Vec(vec)
+            },
+            first => Document::Vec(vec![first, $($rest.to_doc()),+])
+        }
     };
 }
 

@@ -288,6 +288,8 @@ where
             let completions = match found {
                 Located::PatternSpread { .. } => None,
                 Located::Pattern(_pattern) => None,
+                Located::StringPrefixPatternVariable { .. } => None,
+
                 // Do not show completions when typing inside a string.
                 Located::Expression {
                     expression: TypedExpr::String { .. },
@@ -989,6 +991,9 @@ Unused labelled fields:
                         range,
                     })
                 }
+                Located::StringPrefixPatternVariable { location, .. } => Some(
+                    hover_for_string_prefix_pattern_variable(location, &lines, module),
+                ),
                 Located::Expression { expression, .. } => Some(hover_for_expression(
                     expression,
                     lines,
@@ -1335,6 +1340,19 @@ fn hover_for_constant(
     Hover {
         contents: HoverContents::Scalar(MarkedString::String(contents)),
         range: Some(src_span_to_lsp_range(constant.location(), &line_numbers)),
+    }
+}
+
+fn hover_for_string_prefix_pattern_variable(
+    location: SrcSpan,
+    lines: &LineNumbers,
+    module: &Module,
+) -> Hover {
+    let type_ = Printer::new(&module.ast.names).print_type(&type_::string());
+    let contents = format!("```gleam\n{type_}\n```");
+    Hover {
+        contents: HoverContents::Scalar(MarkedString::String(contents)),
+        range: Some(src_span_to_lsp_range(location, lines)),
     }
 }
 

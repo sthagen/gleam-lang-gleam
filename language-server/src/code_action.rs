@@ -9386,6 +9386,44 @@ impl<'a> ExtractFunction<'a> {
                     end,
                 )
             }
+            ExtractedValue::Expression(TypedExpr::Fn {
+                type_,
+                location: full_location,
+                kind: FunctionLiteralKind::Anonymous { .. },
+                arguments,
+                body,
+                ..
+            }) => {
+                let location = body.first().location().merge(&body.last().location());
+                let return_type = type_.return_type().expect("Fn should have a return type");
+
+                if extracted.parameters.is_empty() {
+                    self.extract_anonymous_function(
+                        *full_location,
+                        location,
+                        arguments,
+                        return_type,
+                        end,
+                    )
+                } else if arguments.len() == 1 {
+                    self.extract_anonymous_function_with_capture_hole(
+                        *full_location,
+                        location,
+                        arguments.first().expect("There is exactly one argument"),
+                        extracted.parameters,
+                        return_type,
+                        end,
+                    )
+                } else {
+                    self.extract_anonymous_function_body(
+                        location,
+                        arguments,
+                        extracted.parameters,
+                        return_type,
+                        end,
+                    )
+                }
+            }
             ExtractedValue::Expression(expression) => {
                 let expression_type = if let TypedExpr::Fn {
                     type_,
@@ -9450,6 +9488,195 @@ impl<'a> ExtractFunction<'a> {
             }
             number += 1;
         }
+    }
+
+    /// For anonymous functions that do not capture any variables from an outer scope.
+    /// Moves the function so it is defined at the module top-level instead,
+    /// replacing the original literal with a reference to the new function.
+    fn extract_anonymous_function(
+        &mut self,
+        location: SrcSpan,
+        code_location: SrcSpan,
+        arguments: &[TypedArg],
+        return_type: Arc<Type>,
+        function_end: u32,
+    ) {
+        // --- BEFORE
+        // ```gleam
+        // pub fn main() {
+        //   list.each([1, 2, 3], fn(x) { io.println(int.to_string(x)) })
+        //                        ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔↑
+        // }
+        // ```
+        //
+        // --- AFTER
+        // ```gleam
+        // pub fn main() {
+        //   list.each([1, 2, 3], function)
+        // }
+        //
+        // fn function(x: Int) -> Nil {
+        //   io.println(int.to_string(x))
+        // }
+        // ```
+
+        let name = self.function_name();
+        self.edits.replace(location, name.to_string());
+
+        let mut printer = Printer::new(&self.module.ast.names);
+
+        let return_type = printer.print_type(&return_type);
+        let function_body = code_at(self.module, code_location);
+        let mut name_generator = NameGenerator::new();
+        let arguments = arguments
+            .iter()
+            .map(|arg| {
+                if let Some(name) = arg.get_variable_name() {
+                    eco_format!("{name}: {}", printer.print_type(&arg.type_))
+                } else {
+                    let name = name_generator.generate_name_from_type(&arg.type_);
+                    eco_format!("_{name}: {}", printer.print_type(&arg.type_))
+                }
+            })
+            .join(", ");
+
+        let function = format!(
+            "\n\nfn {name}({arguments}) -> {return_type} {{
+  {function_body}
+}}"
+        );
+        self.edits.insert(function_end, function);
+    }
+
+    /// For anonymous functions that capture variables from an external scope
+    /// but only expect a single argument.
+    /// Uses function caputre syntax to provide a more concise refactoring than
+    /// `extract_anonymous_function_body`.
+    fn extract_anonymous_function_with_capture_hole(
+        &mut self,
+        location: SrcSpan,
+        code_location: SrcSpan,
+        argument: &TypedArg,
+        extra_parameters: Vec<(EcoString, Arc<Type>)>,
+        return_type: Arc<Type>,
+        function_end: u32,
+    ) {
+        let name = self.function_name();
+
+        // --- BEFORE
+        // ```gleam
+        // pub fn main() {
+        //   let needle = 42
+        //   let haystack = [25, 81, 74, 42, 33]
+        //   list.filter(haystack, fn(x) { x == needle })
+        //                         ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔↑
+        // }
+        // ```
+        //
+        // --- AFTER
+        // ```gleam
+        // pub fn main() {
+        //   let needle = 42
+        //   let haystack = [25, 81, 74, 42, 33]
+        //   list.filter(haystack, function(_, needle))
+        // }
+        //
+        // fn function(x: Int, needle: Int) -> Bool {
+        //   x == needle
+        // }
+        // ```
+
+        let call = format!(
+            "{name}(_, {})",
+            extra_parameters.iter().map(|(name, _)| name).join(", ")
+        );
+        self.edits.replace(location, call);
+
+        let mut printer = Printer::new(&self.module.ast.names);
+
+        // build up the code for the newly generated function
+        let return_type = printer.print_type(&return_type);
+        let function_body = code_at(self.module, code_location);
+        let argument = if let Some(name) = argument.get_variable_name() {
+            eco_format!("{name}: {}", printer.print_type(&argument.type_))
+        } else {
+            let name = NameGenerator::new().generate_name_from_type(&argument.type_);
+            eco_format!("_{name}: {}", printer.print_type(&argument.type_))
+        };
+        let extra_parameters = extra_parameters
+            .iter()
+            .map(|(name, type_)| eco_format!("{name}: {}", printer.print_type(type_)))
+            .join(", ");
+
+        let function = format!(
+            "\n\nfn {name}({argument}, {extra_parameters}) -> {return_type} {{
+  {function_body}
+}}"
+        );
+        self.edits.insert(function_end, function);
+    }
+
+    /// For non-unary anonymous functions that capture variables from an external scope.
+    /// Replaces just the _function body_ with a call to the newly generated function.
+    fn extract_anonymous_function_body(
+        &mut self,
+        location: SrcSpan,
+        arguments: &[TypedArg],
+        extra_parameters: Vec<(EcoString, Arc<Type>)>,
+        return_type: Arc<Type>,
+        function_end: u32,
+    ) {
+        let name = self.function_name();
+        // --- BEFORE
+        // ```gleam
+        // pub fn main() {
+        //   let factor = 2
+        //   list.fold([], 0, fn(acc, value) { acc + value * factor })
+        //                    ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔↑
+        // }
+        // ```
+        //
+        // --- AFTER
+        // ```gleam
+        // pub fn main() {
+        //   let factor = 2
+        //   list.fold([], 0, fn(acc, value) { function(acc, value, factor) })
+        // }
+        //
+        // fn function(acc: Int, value: Int, factor: Int) -> Int {
+        //   acc + value * factor
+        // }
+        // ```
+
+        // if the programmer has ignored an argument, the generated function
+        // cannot take it as an parameter
+        let arguments = arguments
+            .iter()
+            .filter_map(|arg| arg.get_variable_name().map(|name| (name, &arg.type_)))
+            .chain(extra_parameters.iter().map(|(name, type_)| (name, type_)))
+            .collect::<Vec<(&EcoString, &Arc<Type>)>>();
+
+        let call = format!(
+            "{name}({})",
+            arguments.iter().map(|(name, _)| name).join(", ")
+        );
+        self.edits.replace(location, call);
+
+        let mut printer = Printer::new(&self.module.ast.names);
+
+        let return_type = printer.print_type(&return_type);
+        let function_body = code_at(self.module, location);
+        let arguments = arguments
+            .iter()
+            .map(|(name, type_)| eco_format!("{name}: {}", printer.print_type(type_)))
+            .join(", ");
+
+        let function = format!(
+            "\n\nfn {name}({arguments}) -> {return_type} {{
+  {function_body}
+}}"
+        );
+        self.edits.insert(function_end, function);
     }
 
     /// Extracts code from the end of a function or block. This could either be

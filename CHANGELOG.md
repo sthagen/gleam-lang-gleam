@@ -35,6 +35,29 @@
   8 characters in length.
   ([Louis Pilfold](https://github.com/lpil))
 
+- The build tool now emits errors for unknown fields in package config,
+  except ones under `[tools]`. For example, with this:
+
+  ```toml
+  name = "hello"
+  version = "1.0.0"
+
+  [tools.my-tool]
+  my-awesome-setting = true
+  ```
+
+  Building the project won't give any errors. But with this:
+
+  ```toml
+  name = "hello"
+  version = "1.0.0"
+  my-awesome-setting = true
+  ```
+
+  Building the project will emit error.
+
+  ([Andrey Kozhev](https://github.com/ankddev))
+
 ### Language server
 
 - The language server now allows extracting the start of a pipeline into a
@@ -44,6 +67,23 @@
 - The language server now suggests adding missing type parameters
   to custom generic types.
   ([Andi Pabst](https://github.com/andipabst))
+
+- The `Extract function` code action now provides more ergonomic/idiomatic
+  refactorings when used on anonymous functions.
+  ([Hari Mohan](https://github.com/seafoamteal))
+
+- It's now possible to find references and rename variables in string prefix
+  patterns.
+
+  ```gleam
+  case wibble {
+    "1" as digit <> rest -> digit <> rest
+    //     ^^^^^    ^^^^
+    // You can now trigger "Find references" and "Rename" from here
+  }
+  ```
+
+  ([Igor Castejón](https://github.com/IgorCastejon))
 
 ### Formatter
 
@@ -68,6 +108,10 @@
 - Fixed a bug where the compiler would generate invalid code on the JavaScript
   target when using a `case` expression as the right hand side of an equality
   check in an `assert`.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The formatter no longer stack overflows trying to format lists with many
+  items.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The language server no longer recommends the deprecated `@target` attribute.
@@ -127,4 +171,8 @@
 
 - Fixed a bug where renaming would not work properly if there was an error in
   target file.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where generics in custom types would not be properly generated
+  when emitting TypeScript declarations.
   ([Surya Rose](https://github.com/GearsDatapacks))
