@@ -326,6 +326,9 @@ file_names.iter().map(|x| x.as_str()).join(", "))]
     #[error("Version already published")]
     HexPublishReplaceRequired { version: String },
 
+    #[error("Insufficient permissions to publish {name} {version}")]
+    HexPublishAccessDenied { name: String, version: String },
+
     #[error("The gleam version constraint is wrong and so cannot be published")]
     CannotPublishWrongVersion {
         minimum_required_version: SmallVersion,
@@ -4603,6 +4606,20 @@ or you can publish it using a different version number"
                 hint: Some(
                     "Please add the --replace flag if you want to replace the release.".into(),
                 ),
+            }],
+            Error::HexPublishAccessDenied { name, version } => vec![Diagnostic {
+                title: "Access denied".to_string(),
+                text: wrap_format!(
+                    "You are not one of the maintainers of the {name} package, so \
+you cannot publish a new {version} version. Are you logged into the correct account?
+
+If you are trying to publish a new package then you will need to pick another, \
+as this one is already in use.
+"
+                ),
+                level: Level::Error,
+                location: None,
+                hint: None,
             }],
 
             Error::CannotAddSelfAsDependency { name } => vec![Diagnostic {

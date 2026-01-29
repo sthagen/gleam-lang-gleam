@@ -58,6 +58,10 @@
 
   ([Andrey Kozhev](https://github.com/ankddev))
 
+- When attempting to publish a package on Hex with an already taken name,
+  the message is clearer.
+  ([vyacheslavhere](https://github.com/vyacheslavhere))
+
 ### Language server
 
 - The language server now allows extracting the start of a pipeline into a
@@ -110,8 +114,16 @@
   check in an `assert`.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a bug where the compiler would generate invalid code on the JavaScript
+  target for some `case` expressions using clause guards.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The formatter no longer stack overflows trying to format lists with many
   items.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the formatter would not be able to consistently format a
+  constant list with an `@internal` attribute.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The language server no longer recommends the deprecated `@target` attribute.
@@ -175,4 +187,8 @@
 
 - Fixed a bug where generics in custom types would not be properly generated
   when emitting TypeScript declarations.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the package cache would not properly be reset when a version
+  of a package was replaced on Hex.
   ([Surya Rose](https://github.com/GearsDatapacks))
