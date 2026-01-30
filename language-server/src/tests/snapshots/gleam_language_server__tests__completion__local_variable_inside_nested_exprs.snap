@@ -1,5 +1,5 @@
 ---
-source: compiler-core/src/language_server/tests/completion.rs
+source: language-server/src/tests/completion.rs
 expression: "\ntype Wibble { Wobble(List(#(Bool))) }\nfn wibble() {\n  Wobble([#(!{\n    let wibble = True\n    wibble\n  })])\n  todo\n}\n"
 ---
 type Wibble { Wobble(List(#(Bool))) }
@@ -39,7 +39,7 @@ Wobble
   sort:   2_Wobble
   desc:   app
   edits:
-    [5:4-5:4]: "Wobble"
+    [5:4-5:7]: "Wobble"
 wibble
   kind:   Variable
   detail: Bool
@@ -47,11 +47,9 @@ wibble
   desc:   app
   docs:   "A locally defined variable."
   edits:
-    [5:4-5:4]: "wibble"
+    [5:4-5:10]: "wibble"
 wibble
   kind:   Function
   detail: fn() -> a
   sort:   2_wibble
   desc:   app
-  edits:
-    [5:4-5:4]: "wibble"

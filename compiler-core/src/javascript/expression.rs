@@ -1100,6 +1100,56 @@ impl<'module, 'a> Generator<'module, 'a> {
         .group()
     }
 
+    fn negate_bool_expression(&mut self, value: &'a TypedExpr) -> Document<'a> {
+        match value {
+            TypedExpr::BinOp {
+                name, left, right, ..
+            } => match name {
+                BinOp::And => self.print_bin_op(left, right, "||"),
+                BinOp::Or => self.print_bin_op(left, right, "&&"),
+                BinOp::Eq => self.equal(left, right, false),
+                BinOp::NotEq => self.equal(left, right, true),
+                BinOp::LtInt | BinOp::LtFloat => self.print_bin_op(left, right, ">="),
+                BinOp::LtEqInt | BinOp::LtEqFloat => self.print_bin_op(left, right, ">"),
+                BinOp::GtInt | BinOp::GtFloat => self.print_bin_op(left, right, "<="),
+                BinOp::GtEqInt | BinOp::GtEqFloat => self.print_bin_op(left, right, "<"),
+                BinOp::AddInt
+                | BinOp::AddFloat
+                | BinOp::SubInt
+                | BinOp::SubFloat
+                | BinOp::MultInt
+                | BinOp::MultFloat
+                | BinOp::DivInt
+                | BinOp::DivFloat
+                | BinOp::RemainderInt
+                | BinOp::Concatenate => unreachable!("type checking should make this impossible"),
+            },
+            TypedExpr::NegateBool { value, .. } => self.wrap_expression(value),
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Pipeline { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => docvec!["!", self.wrap_expression(value)],
+        }
+    }
+
     /// In Gleam, the `&&` operator is short-circuiting, meaning that we can't
     /// pre-evaluate both sides of it, and use them in the exception that is
     /// thrown.
@@ -1171,13 +1221,14 @@ impl<'module, 'a> Generator<'module, 'a> {
         let left_value =
             self.not_in_tail_position(Some(Ordering::Loose), |this| this.wrap_expression(left));
 
-        let right_value =
-            self.not_in_tail_position(Some(Ordering::Strict), |this| this.wrap_expression(right));
+        let right_value = self.not_in_tail_position(Some(Ordering::Strict), |this| {
+            this.negate_bool_expression(right)
+        });
 
         let right_check = docvec![
             line(),
             "if (",
-            docvec!["!", right_value].nest(INDENT),
+            right_value.nest(INDENT),
             ") {",
             docvec![
                 line(),

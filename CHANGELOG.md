@@ -68,6 +68,19 @@
   variable.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The language server is now smarter when producing autocompletions. Imagine
+  you're updating your code to fully qualify the uses of the `Json` type:
+
+  ```gleam
+  pub fn payload() -> js|Json
+  //                    ^ typing the module name
+  ```
+
+  Accepting the `json.Json` completion will not produce the correct `json.Json`
+  annotation rather than generating invalid code: `json.JsonJson`.
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The language server now suggests adding missing type parameters
   to custom generic types.
   ([Andi Pabst](https://github.com/andipabst))
@@ -135,6 +148,10 @@
 
 - Fixed a bug that would result in not being able to rename an aliased pattern.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed JavaScript codegen bug for `assert` when using `&&` with comparison
+  operators on the right side.
+  ([vyacheslavhere](https://github.com/vyacheslavhere))
 
 - Added an error message when attempting to update packages that are not
   dependencies of the project, instead of failing silently.
