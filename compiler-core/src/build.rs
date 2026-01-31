@@ -46,7 +46,6 @@ use vec1::Vec1;
     Debug,
     Serialize,
     Deserialize,
-    Display,
     EnumString,
     EnumVariantNames,
     EnumIter,
@@ -66,6 +65,13 @@ pub enum Target {
 }
 
 impl Target {
+    pub fn as_presentable_str(&self) -> &str {
+        match self {
+            Target::Erlang => "Erlang",
+            Target::JavaScript => "JavaScript",
+        }
+    }
+
     pub fn variant_strings() -> Vec<EcoString> {
         Self::VARIANTS.iter().map(|s| (*s).into()).collect()
     }
@@ -119,7 +125,7 @@ impl Codegen {
 }
 
 #[derive(
-    Debug, Serialize, Deserialize, Display, EnumString, EnumVariantNames, Clone, Copy, PartialEq, Eq,
+    Debug, Serialize, Deserialize, EnumString, EnumVariantNames, Clone, Copy, PartialEq, Eq,
 )]
 pub enum Runtime {
     #[strum(serialize = "nodejs", serialize = "node")]
@@ -131,6 +137,16 @@ pub enum Runtime {
     #[strum(serialize = "bun")]
     #[serde(rename = "bun")]
     Bun,
+}
+
+impl Runtime {
+    pub fn as_presentable_str(&self) -> &str {
+        match self {
+            Runtime::NodeJs => "NodeJS",
+            Runtime::Deno => "Deno",
+            Runtime::Bun => "Bun",
+        }
+    }
 }
 
 impl Default for Runtime {
