@@ -1,15 +1,15 @@
 ---
 source: compiler-core/src/type_/tests/errors.rs
-expression: "let x = <<1:utf8-unit(5)>> x"
+expression: "let x = <<\"test\":unit(5)>> x"
 ---
 ----- SOURCE CODE
-let x = <<1:utf8-unit(5)>> x
+let x = <<"test":unit(5)>> x
 
 ----- ERROR
 error: Invalid bit array segment
   ┌─ /src/one/two.gleam:1:18
   │
-1 │ let x = <<1:utf8-unit(5)>> x
+1 │ let x = <<"test":unit(5)>> x
   │                  ^^^^^^^ Unit cannot be specified here
 
 Hint: utf8 segments are sized based on their value and cannot have a unit.
