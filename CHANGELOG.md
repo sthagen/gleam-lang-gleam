@@ -62,6 +62,10 @@
   the message is clearer.
   ([vyacheslavhere](https://github.com/vyacheslavhere))
 
+- The build tool now shows better error message on passing unexpected labeled
+  arguments by taking into account, whether it's a function or a constructor.
+  ([Andrey Kozhev](https://github.com/ankddev))
+
 ### Language server
 
 - The language server now allows extracting the start of a pipeline into a
@@ -139,6 +143,10 @@
   constant list with an `@internal` attribute.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The "convert to pipe" code action now works on nested function calls as well,
+  rather than always being applied to the outermost one.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The language server no longer recommends the deprecated `@target` attribute.
   ([Hari Mohan](https://github.com/seafoamteal))
 
@@ -209,6 +217,10 @@
 - Fixed a bug where the package cache would not properly be reset when a version
   of a package was replaced on Hex.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a crash (`bad_generator`) that could occur when a linked OTP process
+  exits with a non-standard exit reason.
+  ([John Downey](https://github.com/jtdowney))
 
 - Fixed a bug where diagnostic about incorrect `size` and `unit` options would
   use incorrect error location.
