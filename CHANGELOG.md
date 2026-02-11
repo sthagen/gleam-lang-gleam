@@ -20,6 +20,10 @@
 
   ([Adi Salimgereyev](https://github.com/abs0luty))
 
+- Improved the code generated on the Erlang target when dividing a `Float`
+  number by the literal number `0.0`.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Build tool
 
 - When adding a package that does not exist on Hex, the message is a bit
@@ -154,12 +158,25 @@
 
   ([Vladislav Shakitskiy](https://github.com/vshakitskiy))
 
+- The "Interpolate String" code action now lets the user "cut out" any portion
+  of a string, regardless of whether it is a valid Gleam identifier or not.
+  ([Hari Mohan](https://github.com/seafoamteal))
+
+- When interpolating an expression at the very start or the very end
+  of a string, redundant empty strings are no longer added before/after the
+  interpolated expression.
+  ([Hari Mohan](https://github.com/seafoamteal))
+
 ### Formatter
 
 ### Bug fixes
 
 - Fixed a bug where some bit array patterns would erroneously be marked as
   unreachable.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the Gleam standard library's `dict.each` function would
+  incorrectly be assumed to be pure.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The compiler now correctly tracks the minimum required version for constant
