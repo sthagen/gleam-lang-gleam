@@ -10,6 +10,7 @@ use gleam_core::{
     build::Runtime,
     config::{DenoConfig, DenoFlag, Docs, ErlangConfig, JavaScriptConfig},
     manifest::{Base16Checksum, Manifest, ManifestPackage, ManifestPackageSource},
+    paths::ProjectPaths,
     requirement::Requirement,
 };
 
@@ -841,6 +842,91 @@ fn verified_requirements_equality_with_canonicalized_paths() {
     );
 }
 
+#[test]
+fn test_path_dependency_config_updates() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create a temp directory");
+    let root_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("Path should be valid UTF-8");
+    let paths = ProjectPaths::new(root_path.clone());
+    let dep_path = root_path.join("dep");
+    std::fs::create_dir_all(&dep_path).expect("Failed to create dependency directory");
+    let build_packages_dir = root_path.join("build").join("packages");
+    std::fs::create_dir_all(&build_packages_dir)
+        .expect("Failed to create build/packages directory");
+
+    let config = "name = \"dep\"
+version = \"1.0.0\"
+
+[dependencies]
+";
+    let dep_config_path = dep_path.join("gleam.toml");
+    fs::write(&dep_config_path, config).expect("Failed to write to manifest file");
+
+    let requirements = HashMap::from([(
+        EcoString::from("dep"),
+        Requirement::Path {
+            path: Utf8PathBuf::from("dep"),
+        },
+    )]);
+
+    // Initial check testing
+
+    let unchanged = path_dependency_configs_unchanged(&requirements, &paths).unwrap();
+    assert!(!unchanged, "fresh always needs resolution");
+
+    let fingerprint_path = build_packages_dir.join("dep.config_fingerprint");
+    assert!(fingerprint_path.exists(), "fingerprint must exist");
+
+    let unchanged = path_dependency_configs_unchanged(&requirements, &paths).unwrap();
+    assert!(unchanged, "is unchanged");
+
+    // Set fingerprint mtime to some time in the past. This causes the mtime check to fail,
+    // so it moves on to checking the fingerprint itself.
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+    let past = filetime::FileTime::from_system_time(past);
+    filetime::set_file_mtime(&fingerprint_path, past).unwrap();
+
+    let unchanged = path_dependency_configs_unchanged(&requirements, &paths).unwrap();
+    assert!(unchanged, "mtime is outdated, but content has not changed");
+
+    // Writing new content means the mtime and the fingerprint checks will fail.
+    let config = "name = \"dep\"
+version = \"1.0.0\"
+
+[dependencies]
+blah = \">= 1.0.0\"
+";
+    fs::write(&dep_config_path, config).unwrap();
+
+    let unchanged = path_dependency_configs_unchanged(&requirements, &paths).unwrap();
+    assert!(!unchanged, "content has changed");
+
+    // Run again, to ensure that the fingerprint has been updated.
+    let unchanged = path_dependency_configs_unchanged(&requirements, &paths).unwrap();
+    assert!(unchanged, "no changes since last run");
+
+    // Test that mtime is checked first, and that content is not checked when the mtime
+    // is still valid. We do this by having having content that would fail the fingerprint
+    // check, but having a fresh mtime so it never gets checked.
+    // This can never happen in reality as you can't update the content without updating
+    // the mtime, but we create the situation in this test to verify the short-circuiting
+    // behaviour.
+    let config = "name = \"dep\"
+version = \"1.0.0\"
+
+[dependencies]
+blah = \">= 1.0.0\"
+wub = \">= 1.0.0\"
+";
+    fs::write(&dep_config_path, config).unwrap();
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+    let future = filetime::FileTime::from_system_time(future);
+    filetime::set_file_mtime(&fingerprint_path, future).unwrap();
+
+    let unchanged = path_dependency_configs_unchanged(&requirements, &paths).unwrap();
+    assert!(unchanged, "fingerprint is outdated, but mtime is not");
+}
+
 fn create_testable_unlock_manifest(
     packages: Vec<(EcoString, Version, Vec<EcoString>)>,
     requirements: Vec<(EcoString, EcoString)>,
@@ -1204,7 +1290,6 @@ fn package_config(
         },
         target: Target::Erlang,
         internal_modules: None,
-        tools: Default::default(),
     }
 }
 

@@ -10,6 +10,7 @@ use gleam_core::{
     io::{Command, CommandExecutor, Stdio},
     paths::ProjectPaths,
     type_::ModuleFunction,
+    version::COMPILER_VERSION,
 };
 
 use crate::{config::PackageKind, fs::ProjectIO};
@@ -252,7 +253,7 @@ fn write_javascript_entrypoint(
     let path = paths
         .build_directory_for_package(Mode::Dev, Target::JavaScript, package)
         .to_path_buf()
-        .join("gleam.main.mjs");
+        .join(format!("gleam@@private_main_v{}.mjs", COMPILER_VERSION));
     let module = format!(
         r#"import {{ main }} from "./{module}.mjs";
 main();

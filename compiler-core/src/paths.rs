@@ -131,6 +131,16 @@ impl ProjectPaths {
         self.build_directory_for_target(mode, target)
             .join("gleam_version")
     }
+
+    /// The path to the source gleam.toml file for a path dependency.
+    pub fn path_dependency_gleam_toml_path(&self, dependency_path: &Utf8Path) -> Utf8PathBuf {
+        self.root().join(dependency_path).join("gleam.toml")
+    }
+
+    pub fn dependency_gleam_toml_fingerprint_path(&self, dependency_name: &str) -> Utf8PathBuf {
+        self.build_packages_directory()
+            .join(format!("{}.config_fingerprint", dependency_name))
+    }
 }
 
 pub fn global_package_cache_package_tarball(checksum: &Base16Checksum) -> Utf8PathBuf {

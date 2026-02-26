@@ -5,6 +5,7 @@ use gleam_core::{
     error::{FileIoAction, FileKind},
     paths::ProjectPaths,
 };
+use hexpm::version::{Identifier, Version};
 
 use crate::{
     cli,
@@ -59,10 +60,8 @@ pub fn command(paths: &ProjectPaths, packages_to_add: Vec<String>, dev: bool) ->
         // Produce a version requirement locked to the major version.
         // i.e. if 1.2.3 is selected we want >= 1.2.3 and < 2.0.0
         let range = format!(
-            ">= {}.{}.{} and < {}.0.0",
-            version.major,
-            version.minor,
-            version.patch,
+            ">= {} and < {}.0.0",
+            version_to_string(version),
             version.major + 1
         );
 
@@ -109,4 +108,61 @@ fn read_toml_edit(name: &Utf8Path) -> Result<toml_edit::DocumentMut, Error> {
             path: Utf8PathBuf::from("gleam.toml"),
             err: Some(e.to_string()),
         })
+}
+
+fn version_to_string(version: &Version) -> String {
+    let mut text = String::new();
+    text.push_str(&format!(
+        "{}.{}.{}",
+        version.major, version.minor, version.patch
+    ));
+    if !version.pre.is_empty() {
+        text.push('-');
+        for (i, identifier) in version.pre.iter().enumerate() {
+            if i != 0 {
+                text.push('.');
+            }
+            match *identifier {
+                Identifier::Numeric(ref id) => text.push_str(&id.to_string()),
+                Identifier::AlphaNumeric(ref id) => text.push_str(id),
+            }
+        }
+    }
+    if let Some(build) = version.build.as_ref() {
+        text.push_str(&format!("+{build}"));
+    }
+    text
+}
+
+#[test]
+fn displays_simple_version_correctly() {
+    let version = Version {
+        major: 1,
+        minor: 23,
+        patch: 4,
+        pre: vec![],
+        build: None,
+    };
+
+    let displayed = version_to_string(&version);
+
+    assert_eq!(displayed, "1.23.4");
+}
+
+#[test]
+fn displays_full_version_correctly() {
+    let version = Version {
+        major: 1,
+        minor: 23,
+        patch: 4,
+        pre: vec![
+            Identifier::Numeric(123),
+            Identifier::AlphaNumeric("123abc".to_string()),
+        ],
+        build: Some("12345abc".to_string()),
+    };
+
+    let displayed = version_to_string(&version);
+
+    assert_eq!(displayed, "1.23.4-123.123abc+12345abc");
 }

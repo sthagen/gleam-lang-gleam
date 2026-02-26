@@ -8,7 +8,7 @@ use gleam_core::{
     build::{Codegen, Compile, Mode, Options, Package, Target},
     config::{GleamVersion, PackageConfig, SpdxLicense},
     docs::{Dependency, DependencyKind, DocContext},
-    error::{SmallVersion, wrap},
+    error::{InvalidReadmeReason, SmallVersion, wrap},
     hex,
     manifest::ManifestPackageSource,
     paths::{self, ProjectPaths},
@@ -20,7 +20,7 @@ use itertools::Itertools;
 use sha2::Digest;
 use std::{collections::HashMap, io::Write, path::PathBuf, time::Instant};
 
-use crate::{build, cli, docs, fs, http::HttpClient};
+use crate::{build, cli, docs, fs, http::HttpClient, new::default_readme};
 
 const CORE_TEAM_PUBLISH_PASSWORD: &str = "Trans rights are human rights";
 
@@ -30,6 +30,8 @@ pub fn command(paths: &ProjectPaths, replace: bool, i_am_sure: bool) -> Result<(
     let should_publish = check_for_gleam_prefix(&config)?
         && check_for_version_zero(&config)?
         && check_repo_url(&config, i_am_sure)?;
+
+    check_for_invalid_readme(&config, paths)?;
 
     if !should_publish {
         println!("Not publishing.");
@@ -127,6 +129,45 @@ HTML documentation will work:
 "
         )
     }
+    Ok(())
+}
+
+fn check_for_invalid_readme(config: &PackageConfig, paths: &ProjectPaths) -> Result<(), Error> {
+    let normalise = |string: String| {
+        string
+            .trim()
+            .replace("\r\n", "")
+            .replace("\n", "")
+            .replace("\t", "")
+            .replace(" ", "")
+    };
+
+    let project_readme = match fs::read(paths.readme()) {
+        Err(Error::FileIo {
+            err: Some(message), ..
+        }) if message.contains("No such file or directory") => {
+            return Err(Error::CannotPublishWithInvalidReadme {
+                reason: InvalidReadmeReason::Missing,
+            });
+        }
+        Err(error) => return Err(error),
+        Ok(project_readme) => project_readme,
+    };
+
+    let normalised_project_readme = normalise(project_readme);
+    if normalised_project_readme.is_empty() {
+        return Err(Error::CannotPublishWithInvalidReadme {
+            reason: InvalidReadmeReason::Empty,
+        });
+    }
+
+    let default_readme = default_readme(config.name.as_str());
+    if normalised_project_readme == normalise(default_readme) {
+        return Err(Error::CannotPublishWithInvalidReadme {
+            reason: InvalidReadmeReason::Default,
+        });
+    }
+
     Ok(())
 }
 

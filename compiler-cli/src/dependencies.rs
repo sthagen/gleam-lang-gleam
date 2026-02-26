@@ -14,7 +14,7 @@ use ecow::{EcoString, eco_format};
 use flate2::read::GzDecoder;
 use gleam_core::{
     Error, Result,
-    build::{Mode, Target, Telemetry},
+    build::{Mode, SourceFingerprint, Target, Telemetry},
     config::PackageConfig,
     dependency::{self, PackageFetchError},
     error::{FileIoAction, FileKind, ShellCommandFailureReason, StandardIoAction},
@@ -634,6 +634,73 @@ fn is_same_requirements(
     Ok(true)
 }
 
+/// Returns true if all path dependency configs are unchanged since last build.
+///
+/// If any of the path dependency configs have changed that means that we need to
+/// re-perform dependency resolution, as their dependencies could have changed
+/// themselves.
+///
+/// We use gleam.toml rather than manifest.toml as:
+///
+/// 1. The dependency requirements could have changed but resolution not have been
+///    run in that package yet, so the manifest would be the same, resulting in us
+///    failing to detect that resolution is required.
+///
+/// 2. Dependency manifests are not used in any way, so a change in the manifest
+///    may not have any impact on this package.
+///
+/// This does mean that changes unrelated to the path dependency's dependencies
+/// will trigger resolution, but gleam.toml is edited rarely, and no-change
+/// resolution is fast enough, so that's OK.
+///
+/// Note: This does not check path dependencies of path dependencies! Changes to
+/// their configs will fail to be picked up. To resolve this we would need to keep
+/// a list of all the path dependencies in the project, instead of only the direct
+/// path dependencies.
+///
+fn path_dependency_configs_unchanged(
+    requirements: &HashMap<EcoString, Requirement>,
+    paths: &ProjectPaths,
+) -> Result<bool> {
+    for (name, requirement) in requirements {
+        let Requirement::Path { path } = requirement else {
+            continue;
+        };
+
+        let config_path = paths.path_dependency_gleam_toml_path(path);
+        let fingerprint_path = paths.dependency_gleam_toml_fingerprint_path(name.as_str());
+
+        // Check mtimes before hashing, to avoid extra work
+        if fingerprint_path.exists() {
+            let config_time = fs::modification_time(&config_path)?;
+            let fingerprint_time = fs::modification_time(&fingerprint_path)?;
+            if config_time <= fingerprint_time {
+                continue;
+            }
+        };
+
+        let config_text = fs::read(&config_path)?;
+        let current_fingerprint = SourceFingerprint::new(&config_text).to_numerical_string();
+
+        // If cached hash file doesn't exist, this is the first time we're checking this dependency
+        if !fingerprint_path.exists() {
+            // Save the current hash for future comparisons
+            fs::write(&fingerprint_path, &current_fingerprint)?;
+            return Ok(false);
+        }
+
+        let previous_fingerprint = fs::read(&fingerprint_path)?;
+
+        if previous_fingerprint != current_fingerprint {
+            tracing::debug!("path_dependency_config_changed_forcing_rebuild");
+            fs::write(&fingerprint_path, &current_fingerprint)?;
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 fn same_requirements(
     requirement1: &Requirement,
     requirement2: Option<&Requirement>,
@@ -772,6 +839,7 @@ fn provide_local_package(
     } else {
         fs::canonicalise(&parent_path.join(package_path))?
     };
+
     let package_source = ProvidedPackageSource::Local {
         path: package_path.clone(),
     };

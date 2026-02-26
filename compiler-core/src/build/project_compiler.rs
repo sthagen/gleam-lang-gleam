@@ -11,7 +11,7 @@ use crate::{
     codegen::{self, ErlangApp},
     config::PackageConfig,
     dep_tree,
-    error::{FileIoAction, FileKind, ShellCommandFailureReason},
+    error::{DefinedModuleOrigin, FileIoAction, FileKind, ShellCommandFailureReason},
     io::{BeamCompiler, Command, CommandExecutor, FileSystemReader, FileSystemWriter, Stdio},
     manifest::{ManifestPackage, ManifestPackageSource},
     metadata,
@@ -104,7 +104,7 @@ pub struct ProjectCompiler<IO> {
     pub config: PackageConfig,
     pub packages: HashMap<String, ManifestPackage>,
     importable_modules: im::HashMap<EcoString, type_::ModuleInterface>,
-    pub(crate) defined_modules: im::HashMap<EcoString, Utf8PathBuf>,
+    pub(crate) defined_modules: im::HashMap<EcoString, DefinedModuleOrigin>,
     stale_modules: StaleTracker,
     /// The set of modules that have had partial compilation done since the last
     /// successful compilation.
@@ -173,12 +173,37 @@ where
         // LSP engine so state could be reused if we don't reset it.
 
         self.stale_modules.empty();
+
+        /// We also clear the defined modules, otherwise the language server
+        /// would start throwing errors for modules defined twice when compiling
+        /// a second time!
+        self.defined_modules.clear();
+    }
+
+    fn retain_only_production_packages(&mut self) {
+        let mut production = HashSet::new();
+        let mut queue: Vec<_> = self.config.dependencies.keys().collect();
+        while let Some(name) = queue.pop() {
+            if production.insert(name.clone())
+                && let Some(pkg) = self.packages.get(name.as_str())
+            {
+                queue.extend(pkg.requirements.iter());
+            }
+        }
+        self.packages
+            .retain(|name, _| production.contains(name.as_str()));
     }
 
     /// Compiles all packages in the project and returns the compiled
     /// information from the root package
     pub fn compile(mut self) -> Result<Built> {
         self.reset_state_for_new_compile_run();
+
+        // In production mode, skip dev-only dependencies entirely so they
+        // are never compiled.
+        if self.mode() == Mode::Prod {
+            self.retain_only_production_packages();
+        }
 
         // Each package may specify a Gleam version that it supports, so we
         // verify that this version is appropriate.
