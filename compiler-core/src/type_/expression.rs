@@ -2472,8 +2472,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 let constructor = self.infer_value_constructor(&None, &name, &location)?;
 
                 // We cannot support all values in guard expressions as the BEAM does not
-                let definition_location = match &constructor.variant {
-                    ValueConstructorVariant::LocalVariable { location, .. } => *location,
+                let (definition_location, origin) = match &constructor.variant {
+                    ValueConstructorVariant::LocalVariable {
+                        location, origin, ..
+                    } => (*location, origin.clone()),
                     ValueConstructorVariant::ModuleFn { .. }
                     | ValueConstructorVariant::Record { .. } => {
                         return Err(Error::NonLocalClauseGuardVariable { location, name });
@@ -2487,6 +2489,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 Ok(ClauseGuard::Var {
                     location,
                     name,
+                    origin,
                     type_: constructor.type_,
                     definition_location,
                 })
@@ -2713,7 +2716,11 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 } = ma
                 {
                     match constructor {
-                        ModuleValueConstructor::Constant { literal, .. } => {
+                        ModuleValueConstructor::Constant {
+                            literal,
+                            location: definition_location,
+                            ..
+                        } => {
                             self.environment.references.register_value_reference(
                                 module_name.clone(),
                                 label.clone(),
@@ -2724,6 +2731,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
                             Ok(ClauseGuard::ModuleSelect {
                                 location,
+                                field_start: label_location.start,
+                                definition_location,
                                 type_,
                                 label,
                                 module_name,
@@ -3251,10 +3260,20 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     }
                     .expect("Variant has already checked to be valid");
 
-                let type_ = positional_fields
-                    .get(index as usize)
-                    .expect("Field exists")
-                    .clone();
+                // Positional fields must always be defined before any labelled fields.
+                // As such, we expect that field indices 0..(positional_fields.length)
+                // all correspond to positional fields. If this is not the case, then the
+                // user currently has a mistake in the definition of their custom type.
+                //
+                // However, we do not want to show an error here, because it would be
+                // confusing for the programmer. They can already see the error at the type
+                // definition site.
+                let type_ = if let Some(type_) = positional_fields.get(index as usize) {
+                    type_.clone()
+                } else {
+                    continue;
+                };
+
                 let mut type_vars = im::HashMap::new();
                 let accessor_type = self.instantiate(accessor_type, &mut type_vars);
                 let type_ = self.instantiate(type_, &mut type_vars);

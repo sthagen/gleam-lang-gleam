@@ -3424,3 +3424,56 @@ pub fn main() {
 "
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/5296
+#[test]
+fn no_crash_on_record_update_when_constructor_definition_is_invalid() {
+    assert_module_error!(
+        "
+pub type Wibble {
+  Wibble(a: Int, b: Int, Bool)
+}
+
+pub fn main() {
+  let one = Wibble(False, a: 5, b: 6)
+  let two = Wibble(..one, b: 1)
+}
+        "
+    );
+}
+
+#[test]
+fn incomplete_pattern_does_not_show_structure_of_internal_type_outside_of_its_module() {
+    assert_module_error!(
+        (
+            "wibble",
+            "@internal
+            pub type Wibble { Wibble Wobble Woo }"
+        ),
+        "import wibble.{type Wibble}
+
+pub fn go(wibble: Wibble) {
+  case wibble {}
+}"
+    );
+}
+
+#[test]
+fn incomplete_pattern_does_not_show_structure_of_internal_type_outside_of_its_module_2() {
+    assert_module_error!(
+        (
+            "wibble",
+            "@internal
+            pub type Wibble { Wibble Wobble Woo }"
+        ),
+        "import wibble.{type Wibble}
+
+pub type Type {
+  Type(wibble: Wibble, list: List(Int))
+}
+
+pub fn go(value: Type) {
+  case value {}
+}"
+    );
+}
