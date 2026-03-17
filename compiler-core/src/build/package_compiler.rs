@@ -5,7 +5,6 @@ use crate::analyse::{ModuleAnalyzerConstructor, TargetSupport};
 use crate::build::package_loader::CacheFiles;
 
 use crate::error::DefinedModuleOrigin;
-use crate::inline;
 use crate::io::files_with_extension;
 use crate::line_numbers::{self, LineNumbers};
 use crate::type_::PRELUDE_MODULE_NAME;
@@ -22,12 +21,12 @@ use crate::{
     config::PackageConfig,
     dep_tree, error,
     io::{BeamCompiler, CommandExecutor, FileSystemReader, FileSystemWriter, Stdio},
-    metadata::ModuleEncoder,
     parse::extra::ModuleExtra,
     paths, type_,
     uid::UniqueIdGenerator,
     warning::{TypeWarningEmitter, WarningEmitter},
 };
+use crate::{inline, metadata};
 use askama::Template;
 use ecow::EcoString;
 use std::collections::HashSet;
@@ -204,7 +203,7 @@ where
             incomplete_modules,
         );
 
-        let modules = match outcome {
+        let mut modules = match outcome {
             Outcome::Ok(modules) => modules,
             Outcome::PartialFailure(modules, error) => {
                 return Outcome::PartialFailure(
@@ -239,7 +238,7 @@ where
             return error.into();
         }
 
-        if let Err(error) = self.encode_and_write_metadata(&modules) {
+        if let Err(error) = self.encode_and_write_metadata(&mut modules) {
             return error.into();
         }
 
@@ -303,7 +302,7 @@ where
         Ok(())
     }
 
-    fn encode_and_write_metadata(&mut self, modules: &[Module]) -> Result<()> {
+    fn encode_and_write_metadata(&mut self, modules: &mut [Module]) -> Result<()> {
         if !self.write_metadata {
             tracing::debug!("package_metadata_writing_disabled");
             return Ok(());
@@ -318,8 +317,20 @@ where
         for module in modules {
             let cache_files = CacheFiles::new(&artefact_dir, &module.name);
 
+            let result = if self.cached_warnings.should_use() {
+                metadata::encode(&module.ast.type_info)
+            } else {
+                // Dependency packages don't get warnings persisted as the
+                // programmer doesn't want to be told every time about warnings they
+                // cannot fix directly.
+                let warnings = std::mem::take(&mut module.ast.type_info.warnings);
+                let result = metadata::encode(&module.ast.type_info);
+                module.ast.type_info.warnings = warnings;
+                result
+            };
+
             // Write cache file
-            let bytes = ModuleEncoder::new(&module.ast.type_info).encode()?;
+            let bytes = result.expect("Failed to serialise module cache");
             self.io.write_bytes(&cache_files.cache_path, &bytes)?;
 
             // Write cache metadata
@@ -332,24 +343,6 @@ where
             };
             self.io
                 .write_bytes(&cache_files.meta_path, &info.to_binary())?;
-
-            let cache_inline = bincode::serde::encode_to_vec(
-                &module.ast.type_info.inline_functions,
-                bincode::config::legacy(),
-            )
-            .expect("Failed to serialise inline functions");
-            self.io.write_bytes(&cache_files.inline_path, &cache_inline);
-
-            // Write warnings.
-            // Dependency packages don't get warnings persisted as the
-            // programmer doesn't want to be told every time about warnings they
-            // cannot fix directly.
-            if self.cached_warnings.should_use() {
-                let warnings = &module.ast.type_info.warnings;
-                let data = bincode::serde::encode_to_vec(warnings, bincode::config::legacy())
-                    .expect("Serialise warnings");
-                self.io.write_bytes(&cache_files.warnings_path, &data)?;
-            }
         }
         Ok(())
     }
