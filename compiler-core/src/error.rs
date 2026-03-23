@@ -868,15 +868,16 @@ impl Error {
         use crate::type_::Error as TypeError;
         match self {
             Error::IncorrectHexOneTimePassword => {
-                let text = "That MFA code was rejected by Hex, please try again.
+                let text =
+                    "That two-factor authentication code was rejected by Hex, please try again.
 
 If you need to reconfigure your Hex two-factor security it can be done
 via the Hex website: https://hex.pm/dashboard/security
 "
-                .into();
+                    .into();
 
                 vec![Diagnostic {
-                    title: "Incorrect MFA code".into(),
+                    title: "Incorrect two-factor authentication code".into(),
                     text,
                     level: Level::Error,
                     location: None,
@@ -3256,6 +3257,25 @@ UTF-codepoint pattern matching.",
                         location: Some(Location {
                             label: Label {
                                 text: Some("This is not a record constructor".into()),
+                                span: *location,
+                            },
+                            path: path.clone(),
+                            src: src.clone(),
+                            extra_labels: vec![],
+                        }),
+                    },
+
+                    TypeError::RecordUpdateVariantWithNoFields { location } => Diagnostic {
+                        title: "Invalid record constructor".into(),
+                        text: wrap(
+                            "Only constructors with at least one labelled \
+field can be used with the update syntax.",
+                        ),
+                        hint: None,
+                        level: Level::Error,
+                        location: Some(Location {
+                            label: Label {
+                                text: Some("This constructor has no labelled fields".into()),
                                 span: *location,
                             },
                             path: path.clone(),

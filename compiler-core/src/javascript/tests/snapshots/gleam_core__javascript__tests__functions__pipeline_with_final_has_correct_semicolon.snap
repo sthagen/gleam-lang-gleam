@@ -1,0 +1,32 @@
+---
+source: compiler-core/src/javascript/tests/functions.rs
+expression: "\npub fn main() {\n  1 |> echo\n  { 1 + 2 } * 3\n}\n"
+---
+----- SOURCE CODE
+
+pub fn main() {
+  1 |> echo
+  { 1 + 2 } * 3
+}
+
+
+----- COMPILED JAVASCRIPT
+import * as $stdlib$dict from "../../gleam_stdlib/gleam/dict.mjs";
+import {
+  Empty as $Empty,
+  NonEmpty as $NonEmpty,
+  CustomType as $CustomType,
+  bitArraySlice,
+  bitArraySliceToInt,
+  BitArray as $BitArray,
+  List as $List,
+  UtfCodepoint as $UtfCodepoint,
+} from "../gleam.mjs";
+
+export function main() {
+  let _pipe = 1;
+  echo(_pipe, undefined, "src/module.gleam", 3);
+  return (1 + 2) * 3;
+}
+
+// ...omitted code from `templates/echo.mjs`...

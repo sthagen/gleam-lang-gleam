@@ -680,6 +680,22 @@ pub enum Error {
     LowercaseBoolPattern {
         location: SrcSpan,
     },
+
+    /// When we try writing a record update using a variant that has no
+    /// labelled fields.
+    ///
+    /// ```gleam
+    /// pub type Wibble {
+    ///   Wibble(Int, String)
+    /// }
+    ///
+    /// Wibble(..one)
+    /// //^^^^ Wibble has no fields, record update makes no sense here!
+    /// ```
+    ///
+    RecordUpdateVariantWithNoFields {
+        location: SrcSpan,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1133,6 +1149,19 @@ pub enum Warning {
     UnusedRecursiveArgument {
         location: SrcSpan,
     },
+    /// This happens when destructuring a bit array integer segment with a size
+    /// that is bigger than 52 bits.
+    /// ```gleam
+    /// <<n:size(125)>>
+    /// ```
+    /// On the JS target this would try and build an integer with 152 bits,
+    /// while the maximum size is 52 bits, resulting in some confusing
+    /// truncations.
+    ///
+    JavaScriptBitArrayUnsafeInt {
+        location: SrcSpan,
+        size: BigInt,
+    },
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
@@ -1334,6 +1363,7 @@ impl Error {
             | Error::PrivateOpaqueType { location }
             | Error::SrcImportingDevDependency { location, .. }
             | Error::ExternalTypeWithConstructors { location, .. }
+            | Error::RecordUpdateVariantWithNoFields { location }
             | Error::LowercaseBoolPattern { location } => location.start,
             Error::UnknownLabels { unknown, .. } => {
                 unknown.iter().map(|(_, s)| s.start).min().unwrap_or(0)
@@ -1406,6 +1436,7 @@ impl Warning {
                 second: location, ..
             }
             | Warning::RedundantComparison { location, .. }
+            | Warning::JavaScriptBitArrayUnsafeInt { location, .. }
             | Warning::UnusedRecursiveArgument { location, .. } => *location,
         }
     }

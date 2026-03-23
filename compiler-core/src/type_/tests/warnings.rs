@@ -4830,3 +4830,77 @@ pub fn main(x) {
 }",
     );
 }
+
+#[test]
+fn record_update_with_all_wrong_fields_produces_no_warnings_1() {
+    assert_no_warnings!(
+        "
+pub type Wibble {
+  Wibble(a: Int, b: Bool)
+}
+
+pub fn main() {
+  let original = Wibble(a: 1, b: True)
+  Wibble(..original, c: 2)
+}
+",
+    );
+}
+
+#[test]
+fn record_update_with_all_wrong_fields_produces_no_warnings_2() {
+    assert_no_warnings!(
+        "
+pub type Wibble {
+  Wibble(a: Int, b: Bool)
+}
+
+pub fn main() {
+  let original = Wibble(a: 1, b: True)
+  Wibble(..original, a: True)
+}
+",
+    );
+}
+
+#[test]
+fn record_update_with_wrong_types_but_all_fields_produces_warning() {
+    assert_warning!(
+        "
+pub type Wibble {
+  Wibble(a: Int, b: Bool)
+}
+
+pub fn main() {
+  let original = Wibble(a: 1, b: True)
+  Wibble(..original, a: True, b: 1)
+}
+"
+    );
+}
+
+#[test]
+fn bit_array_match_on_integer_over_js_limit() {
+    assert_js_warning!(
+        "
+pub fn go(x: BitArray) {
+    let <<number:123>> = x
+    number
+}
+"
+    );
+}
+
+#[test]
+fn bit_array_match_on_integer_over_js_limit_1() {
+    assert_js_warning!(
+        "
+pub fn go(x: BitArray) {
+  case x {
+    <<n:size(53)>> -> n
+    _ -> 1
+  }
+}
+"
+    );
+}
