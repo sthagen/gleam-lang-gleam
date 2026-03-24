@@ -100,6 +100,10 @@
 
 ### Bug fixes
 
+- Fixed a bug that would result in not being able to publish a package if some
+  non-ASCII characters were used in field names other than `description`.
+  ([Niklas Kirschall](https://github.com/nkxxll))
+
 - Fixed a bug where the compiler would crash when trying to read the cache for
   modules containing large constants.
   ([Surya Rose](https://github.com/GearsDatapacks))
@@ -116,6 +120,9 @@
 - Fixed a bug where semicolons would not be properly added to pipelines in
   generated JavaScript code, leading to runtime errors in certain circumstances.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed the formatting of some errors' hints to properly wrap.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ## v1.15.1 - 2026-03-17
 
