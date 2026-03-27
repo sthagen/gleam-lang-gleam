@@ -1003,7 +1003,20 @@ forward slash and must not end with a slash."
             Error::ModuleDoesNotExist { module, suggestion } => {
                 let hint = match suggestion {
                     Some(suggestion) => format!("Did you mean `{suggestion}`?"),
-                    None => format!("Try creating the file `src/{module}.gleam`."),
+                    None => {
+                        // If the module ends with "_dev", it should be created in the "dev"
+                        // directory, if it ends with "_test", it should be created in the "test"
+                        // directory, and otherwise it should be created in "src" directory
+                        let directory = if module.ends_with("_dev") {
+                            "dev"
+                        } else if module.ends_with("_test") {
+                            "test"
+                        } else {
+                            "src"
+                        };
+
+                        format!("Try creating the file `{directory}/{module}.gleam`.")
+                    }
                 };
                 vec![Diagnostic {
                     title: "Module does not exist".into(),
@@ -2581,6 +2594,22 @@ a label or use a record constructor.",
                                 }),
                             }
                         }
+                    },
+
+                    TypeError::QualifiedTypeMissingName { location } => Diagnostic {
+                        title: "Invalid type".into(),
+                        text: "".into(),
+                        hint: None,
+                        level: Level::Error,
+                        location: Some(Location {
+                            label: Label {
+                                text: Some("This is not a valid type".into()),
+                                span: *location,
+                            },
+                            path: path.clone(),
+                            src: src.clone(),
+                            extra_labels: vec![],
+                        }),
                     },
 
                     TypeError::UnknownType {

@@ -79,6 +79,30 @@
   defaulting to "can only modify a release up to one hour after publication"
   ([David Matz](https://github.com/d-matz))
 
+- The `gleam publish` command now has documentation for its options.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The `gleam hex retire` command now accepts three flags `--package`,
+  `--version`, and `--reason` instead of positional arguments.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The `gleam hex unretire` command now accepts two flags `--package`, and
+  `--version` instead of positional arguments.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The `gleam hex owner transfer` command now accepts a flag `--package` instead
+  of a positional argument.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The `gleam docs build` command no longer recompiles all the project's
+  dependencies every single time it is run.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The build tool will now suggest to create a module in dev` or `test`
+  directory, if that missing module is a dev module or a test module
+  respectively.
+  ([Andrey Kozhev](https://github.com/ankddev))
+
 ### Language server
 
 - The "extract variable" code action can now pick better names for variables in
@@ -113,9 +137,34 @@
   record when writing a record update.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The language server no longer shows completions for values when editing a
+  qualified type.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 ### Formatter
 
 - The formatter no longer moves comments out of type annotations.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The formatting of long nested tuples has been improved.
+  Previously the formatter would split only the last tuple:
+  ```gleam
+  #(#(wibble, wobble), #(some_long_tuple, passed_as_last_argument))
+  // after format:
+  #(#(wibble, wobble), #(
+    some_long_tuple,
+    passed_as_last_argument
+  ))
+  ```
+  But now it favours first splitting each element onto its own line:
+  ```gleam
+  #(#(wibble, wobble), #(some_long_tuple, passed_as_last_argument))
+  // after format:
+  #(
+    #(wibble, wobble),
+    #(some_long_tuple, passed_as_last_argument)
+  )
+  ```
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Bug fixes

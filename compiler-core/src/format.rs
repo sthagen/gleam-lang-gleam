@@ -752,16 +752,19 @@ impl<'comments> Formatter<'comments> {
 
     fn type_ast_constructor<'a>(
         &mut self,
-        module: &'a Option<(EcoString, SrcSpan)>,
-        name: &'a str,
+        name: &'a TypeAstConstructorName,
         arguments: &'a [TypeAst],
         location: &SrcSpan,
-        _name_location: &SrcSpan,
     ) -> Document<'a> {
-        let head = module
-            .as_ref()
-            .map(|(qualifier, _)| qualifier.to_doc().append(".").append(name))
-            .unwrap_or_else(|| name.to_doc());
+        let head = match name {
+            TypeAstConstructorName::Unqualified { name, .. } => name.to_doc(),
+            TypeAstConstructorName::Qualified { module, name, .. } => {
+                module.to_doc().append(".").append(
+                    name.as_ref()
+                        .map_or(nil(), |(name, _name_location)| name.to_doc()),
+                )
+            }
+        };
 
         if arguments.is_empty() {
             head
@@ -779,11 +782,9 @@ impl<'comments> Formatter<'comments> {
             TypeAst::Constructor(TypeAstConstructor {
                 name,
                 arguments,
-                module,
                 location,
-                name_location,
                 start_parentheses: _,
-            }) => self.type_ast_constructor(module, name, arguments, location, name_location),
+            }) => self.type_ast_constructor(name, arguments, location),
 
             TypeAst::Fn(TypeAstFn {
                 arguments,
@@ -849,11 +850,15 @@ impl<'comments> Formatter<'comments> {
             .append(line().append(self.type_ast(type_)).group().nest(INDENT))
     }
 
-    fn fn_arg<'a, A>(&mut self, arg: &'a Arg<A>) -> Document<'a> {
-        let comments = self.pop_comments(arg.location.start);
-        let doc = match &arg.annotation {
-            None => arg.names.to_doc(),
-            Some(a) => arg.names.to_doc().append(": ").append(self.type_ast(a)),
+    fn fn_arg<'a, A>(&mut self, argument: &'a Arg<A>) -> Document<'a> {
+        let comments = self.pop_comments(argument.location.start);
+        let doc = match &argument.annotation {
+            None => argument.names.to_doc(),
+            Some(a) => argument
+                .names
+                .to_doc()
+                .append(": ")
+                .append(self.type_ast(a)),
         }
         .group();
         commented(doc, comments)
@@ -1055,10 +1060,10 @@ impl<'comments> Formatter<'comments> {
         )
     }
 
-    fn expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
-        let comments = self.pop_comments(expr.start_byte_index());
+    fn expr<'a>(&mut self, expression: &'a UntypedExpr) -> Document<'a> {
+        let comments = self.pop_comments(expression.start_byte_index());
 
-        let document = match expr {
+        let document = match expression {
             UntypedExpr::Panic { message, .. } => {
                 self.append_as_message("panic".to_doc(), PrecedingAs::Keyword, message.as_deref())
             }
@@ -1273,8 +1278,8 @@ impl<'comments> Formatter<'comments> {
         spread: Option<SrcSpan>,
         location: &SrcSpan,
     ) -> Document<'a> {
-        fn is_breakable(expr: &UntypedPattern) -> bool {
-            match expr {
+        fn is_breakable(expression: &UntypedPattern) -> bool {
+            match expression {
                 Pattern::Tuple { .. } | Pattern::List { .. } | Pattern::BitArray { .. } => true,
                 Pattern::Constructor { arguments, .. } => !arguments.is_empty(),
                 Pattern::Int { .. }
@@ -1331,7 +1336,7 @@ impl<'comments> Formatter<'comments> {
         arguments: &'a [CallArg<UntypedExpr>],
         location: &SrcSpan,
     ) -> Document<'a> {
-        let expr = match fun {
+        let expression = match fun {
             UntypedExpr::PipeLine { .. } => break_block(self.expr(fun)),
 
             UntypedExpr::BinOp { .. }
@@ -1358,11 +1363,11 @@ impl<'comments> Formatter<'comments> {
 
         let arity = arguments.len();
         self.append_inlinable_wrapped_arguments(
-            expr,
+            expression,
             arguments,
             location,
-            |argument| &argument.value,
-            |self_, arg| self_.call_arg(arg, arity),
+            |argument| is_breakable_argument(&argument.value, arguments.len()),
+            |self_, argument| self_.call_arg(argument, arity),
         )
     }
 
@@ -1390,8 +1395,10 @@ impl<'comments> Formatter<'comments> {
             "#".to_doc(),
             elements,
             location,
-            |e| e,
-            |self_, e| self_.comma_separated_item(e, elements.len()),
+            |expression| {
+                !expression.is_tuple() && is_breakable_argument(expression, elements.len())
+            },
+            |self_, expression| self_.comma_separated_item(expression, elements.len()),
         )
     }
 
@@ -1400,23 +1407,23 @@ impl<'comments> Formatter<'comments> {
     // resulting document will try to first split that before splitting all the
     // other arguments.
     // This is used for function calls and tuples.
-    fn append_inlinable_wrapped_arguments<'a, 'b, T, ToExpr, ToDoc>(
+    fn append_inlinable_wrapped_arguments<'a, 'b, T, Predicate, ToDoc>(
         &mut self,
         doc: Document<'a>,
         values: &'b [T],
         location: &SrcSpan,
-        to_expr: ToExpr,
+        is_breakable_argument: Predicate,
         to_doc: ToDoc,
     ) -> Document<'a>
     where
         T: HasLocation,
         T: std::fmt::Debug,
-        ToExpr: Fn(&T) -> &UntypedExpr,
+        Predicate: Fn(&T) -> bool,
         ToDoc: Fn(&mut Self, &'b T) -> Document<'a>,
     {
         match init_and_last(values) {
             Some((initial_values, last_value))
-                if is_breakable_argument(to_expr(last_value), values.len())
+                if is_breakable_argument(last_value)
                     && !self.any_comments(last_value.location().start)
                     && !self.any_comment_between(last_value.location().end, location.end) =>
             {
@@ -1503,11 +1510,14 @@ impl<'comments> Formatter<'comments> {
             constructor_doc,
             &pieces,
             location,
-            |arg| match arg {
-                UntypedRecordUpdatePiece::Argument(arg) => &arg.value,
-                UntypedRecordUpdatePiece::Record(record) => record.base.as_ref(),
+            |argument| {
+                let expression = match argument {
+                    UntypedRecordUpdatePiece::Argument(argument) => &argument.value,
+                    UntypedRecordUpdatePiece::Record(record) => &record.base,
+                };
+                is_breakable_argument(expression, pieces.len())
             },
-            |this, arg| match arg {
+            |this, argument| match argument {
                 UntypedRecordUpdatePiece::Argument(arg) => this.record_update_arg(arg),
                 UntypedRecordUpdatePiece::Record(record) => {
                     let comments = this.pop_comments(record.location.start);
@@ -1537,16 +1547,18 @@ impl<'comments> Formatter<'comments> {
         let docs = pieces
             .iter()
             .map(|piece| match piece {
-                RecordUpdatePiece::Argument(arg) => {
-                    let comments = self.pop_comments(arg.location.start);
-                    let doc = match arg {
-                        _ if arg.uses_label_shorthand() => arg.label.as_str().to_doc().append(":"),
-                        _ => arg
+                RecordUpdatePiece::Argument(argument) => {
+                    let comments = self.pop_comments(argument.location.start);
+                    let doc = match argument {
+                        _ if argument.uses_label_shorthand() => {
+                            argument.label.as_str().to_doc().append(":")
+                        }
+                        _ => argument
                             .label
                             .as_str()
                             .to_doc()
                             .append(": ")
-                            .append(self.const_expr(&arg.value))
+                            .append(self.const_expr(&argument.value))
                             .group(),
                     };
                     commented(doc, comments)
@@ -1697,14 +1709,14 @@ impl<'comments> Formatter<'comments> {
         let pipeline_end = expressions.last().location().end;
         let try_to_keep_on_one_line = !self.spans_multiple_lines(pipeline_start, pipeline_end);
 
-        for expr in expressions.iter().skip(1) {
-            let comments = self.pop_comments(expr.location().start);
-            let doc = if let UntypedExpr::Fn { kind, body, .. } = expr
+        for expression in expressions.iter().skip(1) {
+            let comments = self.pop_comments(expression.location().start);
+            let doc = if let UntypedExpr::Fn { kind, body, .. } = expression
                 && kind.is_capture()
             {
                 self.fn_capture(body, FnCapturePosition::RightHandSideOfPipe)
             } else {
-                self.expr(expr)
+                self.expr(expression)
             };
             let doc = if nest_pipe { doc.nest(INDENT) } else { doc };
             let space = if try_to_keep_on_one_line {
@@ -1715,7 +1727,7 @@ impl<'comments> Formatter<'comments> {
             let pipe = space.append(commented("|> ".to_doc(), comments));
             let pipe = if nest_pipe { pipe.nest(INDENT) } else { pipe };
             docs.push(pipe);
-            docs.push(self.operator_side(doc, 4, expr.bin_op_precedence()));
+            docs.push(self.operator_side(doc, 4, expression.bin_op_precedence()));
         }
 
         if try_to_keep_on_one_line {
@@ -1756,11 +1768,10 @@ impl<'comments> Formatter<'comments> {
             //     wibble |> wobble
             //     list.map([], wobble)
             //
-            (FnCapturePosition::RightHandSideOfPipe | FnCapturePosition::EverywhereElse, [arg])
-                if arg.is_capture_hole() && arg.label.is_none() =>
-            {
-                self.expr(fun)
-            }
+            (
+                FnCapturePosition::RightHandSideOfPipe | FnCapturePosition::EverywhereElse,
+                [argument],
+            ) if argument.is_capture_hole() && argument.label.is_none() => self.expr(fun),
 
             // The capture is on the right hand side of a pipe and its first
             // argument it an unlabelled capture hole:
@@ -1771,17 +1782,17 @@ impl<'comments> Formatter<'comments> {
             //
             //     wibble |> wobble(woo)
             //
-            (FnCapturePosition::RightHandSideOfPipe, [arg, rest @ ..])
-                if arg.is_capture_hole() && arg.label.is_none() =>
+            (FnCapturePosition::RightHandSideOfPipe, [argument, rest @ ..])
+                if argument.is_capture_hole() && argument.label.is_none() =>
             {
-                let expr = self.expr(fun);
+                let expression = self.expr(fun);
                 let arity = rest.len();
                 self.append_inlinable_wrapped_arguments(
-                    expr,
+                    expression,
                     rest,
                     location,
-                    |arg| &arg.value,
-                    |self_, arg| self_.call_arg(arg, arity),
+                    |argument| is_breakable_argument(&argument.value, rest.len()),
+                    |self_, argument| self_.call_arg(argument, arity),
                 )
             }
 
@@ -1792,14 +1803,14 @@ impl<'comments> Formatter<'comments> {
                 FnCapturePosition::RightHandSideOfPipe | FnCapturePosition::EverywhereElse,
                 arguments,
             ) => {
-                let expr = self.expr(fun);
+                let expression = self.expr(fun);
                 let arity = arguments.len();
                 self.append_inlinable_wrapped_arguments(
-                    expr,
+                    expression,
                     arguments,
                     location,
-                    |arg| &arg.value,
-                    |self_, arg| self_.call_arg(arg, arity),
+                    |argument| is_breakable_argument(&argument.value, arguments.len()),
+                    |self_, argument| self_.call_arg(argument, arity),
                 )
             }
         }
@@ -1836,13 +1847,13 @@ impl<'comments> Formatter<'comments> {
                          ..
                      }| {
                         let arg_comments = self.pop_comments(location.start);
-                        let arg = match label {
+                        let argument = match label {
                             Some((_, l)) => l.to_doc().append(": ").append(self.type_ast(ast)),
                             None => self.type_ast(ast),
                         };
 
                         commented(
-                            self.doc_comments(location.start).append(arg).group(),
+                            self.doc_comments(location.start).append(argument).group(),
                             arg_comments,
                         )
                     },
@@ -1930,15 +1941,15 @@ impl<'comments> Formatter<'comments> {
         doc.append(inner).append(line()).append("}")
     }
 
-    fn call_arg<'a>(&mut self, arg: &'a CallArg<UntypedExpr>, arity: usize) -> Document<'a> {
-        self.format_call_arg(arg, expr_call_arg_formatting, |this, value| {
+    fn call_arg<'a>(&mut self, argument: &'a CallArg<UntypedExpr>, arity: usize) -> Document<'a> {
+        self.format_call_arg(argument, expr_call_arg_formatting, |this, value| {
             this.comma_separated_item(value, arity)
         })
     }
 
     fn format_call_arg<'a, A, F, G>(
         &mut self,
-        arg: &'a CallArg<A>,
+        argument: &'a CallArg<A>,
         figure_formatting: F,
         format_value: G,
     ) -> Document<'a>
@@ -1946,15 +1957,15 @@ impl<'comments> Formatter<'comments> {
         F: Fn(&'a CallArg<A>) -> CallArgFormatting<'a, A>,
         G: Fn(&mut Self, &'a A) -> Document<'a>,
     {
-        match figure_formatting(arg) {
+        match figure_formatting(argument) {
             CallArgFormatting::Unlabelled(value) => format_value(self, value),
             CallArgFormatting::ShorthandLabelled(label) => {
-                let comments = self.pop_comments(arg.location.start);
+                let comments = self.pop_comments(argument.location.start);
                 let label = label.as_ref().to_doc().append(":");
                 commented(label, comments)
             }
             CallArgFormatting::Labelled(label, value) => {
-                let comments = self.pop_comments(arg.location.start);
+                let comments = self.pop_comments(argument.location.start);
                 let label = label.as_ref().to_doc().append(": ");
                 let value = format_value(self, value);
                 commented(label, comments).append(value)
@@ -1962,24 +1973,24 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    fn record_update_arg<'a>(&mut self, arg: &'a UntypedRecordUpdateArg) -> Document<'a> {
-        let comments = self.pop_comments(arg.location.start);
-        match arg {
+    fn record_update_arg<'a>(&mut self, argument: &'a UntypedRecordUpdateArg) -> Document<'a> {
+        let comments = self.pop_comments(argument.location.start);
+        match argument {
             // Argument supplied with a label shorthand.
-            _ if arg.uses_label_shorthand() => {
-                commented(arg.label.as_str().to_doc().append(":"), comments)
+            _ if argument.uses_label_shorthand() => {
+                commented(argument.label.as_str().to_doc().append(":"), comments)
             }
             // Labelled argument.
             _ => {
-                let doc = arg
+                let doc = argument
                     .label
                     .as_str()
                     .to_doc()
                     .append(": ")
-                    .append(self.expr(&arg.value))
+                    .append(self.expr(&argument.value))
                     .group();
 
-                if arg.value.is_binop() || arg.value.is_pipeline() {
+                if argument.value.is_binop() || argument.value.is_pipeline() {
                     commented(doc, comments).nest(INDENT)
                 } else {
                     commented(doc, comments)
@@ -2014,21 +2025,21 @@ impl<'comments> Formatter<'comments> {
         .append(index)
     }
 
-    fn case_clause_value<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
-        match expr {
+    fn case_clause_value<'a>(&mut self, expression: &'a UntypedExpr) -> Document<'a> {
+        match expression {
             UntypedExpr::Fn { .. }
             | UntypedExpr::List { .. }
             | UntypedExpr::Tuple { .. }
             | UntypedExpr::BitArray { .. } => {
-                let expression_comments = self.pop_comments(expr.location().start);
-                let expression_doc = self.expr(expr);
+                let expression_comments = self.pop_comments(expression.location().start);
+                let expression_doc = self.expr(expression);
                 match printed_comments(expression_comments, true) {
                     Some(comments) => line().append(comments).append(expression_doc).nest(INDENT),
                     None => " ".to_doc().append(expression_doc),
                 }
             }
 
-            UntypedExpr::Case { .. } => line().append(self.expr(expr)).nest(INDENT),
+            UntypedExpr::Case { .. } => line().append(self.expr(expression)).nest(INDENT),
 
             UntypedExpr::Block {
                 statements,
@@ -2050,17 +2061,17 @@ impl<'comments> Formatter<'comments> {
             | UntypedExpr::Echo { .. }
             | UntypedExpr::RecordUpdate { .. }
             | UntypedExpr::NegateBool { .. }
-            | UntypedExpr::NegateInt { .. } => {
-                break_("", " ").append(self.expr(expr).group()).nest(INDENT)
-            }
+            | UntypedExpr::NegateInt { .. } => break_("", " ")
+                .append(self.expr(expression).group())
+                .nest(INDENT),
         }
         .next_break_fits(NextBreakFitsMode::Disabled)
         .group()
     }
 
-    fn assigned_value<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
-        match expr {
-            UntypedExpr::Case { .. } => " ".to_doc().append(self.expr(expr)).group(),
+    fn assigned_value<'a>(&mut self, expression: &'a UntypedExpr) -> Document<'a> {
+        match expression {
+            UntypedExpr::Case { .. } => " ".to_doc().append(self.expr(expression)).group(),
             UntypedExpr::Int { .. }
             | UntypedExpr::Float { .. }
             | UntypedExpr::String { .. }
@@ -2080,7 +2091,7 @@ impl<'comments> Formatter<'comments> {
             | UntypedExpr::BitArray { .. }
             | UntypedExpr::RecordUpdate { .. }
             | UntypedExpr::NegateBool { .. }
-            | UntypedExpr::NegateInt { .. } => self.case_clause_value(expr),
+            | UntypedExpr::NegateInt { .. } => self.case_clause_value(expression),
         }
     }
 
@@ -2607,8 +2618,8 @@ impl<'comments> Formatter<'comments> {
         .group()
     }
 
-    fn pattern_call_arg<'a>(&mut self, arg: &'a CallArg<UntypedPattern>) -> Document<'a> {
-        self.format_call_arg(arg, pattern_call_arg_formatting, |this, value| {
+    fn pattern_call_arg<'a>(&mut self, argument: &'a CallArg<UntypedPattern>) -> Document<'a> {
+        self.format_call_arg(argument, pattern_call_arg_formatting, |this, value| {
             this.pattern(value)
         })
     }
@@ -2689,16 +2700,19 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    fn constant_call_arg<'a, A, B>(&mut self, arg: &'a CallArg<Constant<A, B>>) -> Document<'a> {
-        self.format_call_arg(arg, constant_call_arg_formatting, |this, value| {
+    fn constant_call_arg<'a, A, B>(
+        &mut self,
+        argument: &'a CallArg<Constant<A, B>>,
+    ) -> Document<'a> {
+        self.format_call_arg(argument, constant_call_arg_formatting, |this, value| {
             this.const_expr(value)
         })
     }
 
-    fn negate_bool<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
-        match expr {
+    fn negate_bool<'a>(&mut self, expression: &'a UntypedExpr) -> Document<'a> {
+        match expression {
             UntypedExpr::NegateBool { value, .. } => self.expr(value),
-            UntypedExpr::BinOp { .. } => "!".to_doc().append(wrap_block(self.expr(expr))),
+            UntypedExpr::BinOp { .. } => "!".to_doc().append(wrap_block(self.expr(expression))),
             UntypedExpr::Int { .. }
             | UntypedExpr::Float { .. }
             | UntypedExpr::String { .. }
@@ -2717,15 +2731,15 @@ impl<'comments> Formatter<'comments> {
             | UntypedExpr::Echo { .. }
             | UntypedExpr::BitArray { .. }
             | UntypedExpr::RecordUpdate { .. }
-            | UntypedExpr::NegateInt { .. } => docvec!["!", self.expr(expr)],
+            | UntypedExpr::NegateInt { .. } => docvec!["!", self.expr(expression)],
         }
     }
 
-    fn negate_int<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
-        match expr {
+    fn negate_int<'a>(&mut self, expression: &'a UntypedExpr) -> Document<'a> {
+        match expression {
             UntypedExpr::NegateInt { value, .. } => self.expr(value),
             UntypedExpr::Int { value, .. } if value.starts_with('-') => self.int(&value[1..]),
-            UntypedExpr::BinOp { .. } => "- ".to_doc().append(self.expr(expr)),
+            UntypedExpr::BinOp { .. } => "- ".to_doc().append(self.expr(expression)),
 
             UntypedExpr::Int { .. }
             | UntypedExpr::Float { .. }
@@ -2745,7 +2759,7 @@ impl<'comments> Formatter<'comments> {
             | UntypedExpr::Echo { .. }
             | UntypedExpr::BitArray { .. }
             | UntypedExpr::RecordUpdate { .. }
-            | UntypedExpr::NegateBool { .. } => docvec!["-", self.expr(expr)],
+            | UntypedExpr::NegateBool { .. } => docvec!["-", self.expr(expression)],
         }
     }
 
@@ -2855,9 +2869,9 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    fn bit_array_segment_expr<'a>(&mut self, expr: &'a UntypedExpr) -> Document<'a> {
-        match expr {
-            UntypedExpr::BinOp { .. } => wrap_block(self.expr(expr)),
+    fn bit_array_segment_expr<'a>(&mut self, expression: &'a UntypedExpr) -> Document<'a> {
+        match expression {
+            UntypedExpr::BinOp { .. } => wrap_block(self.expr(expression)),
 
             UntypedExpr::Int { .. }
             | UntypedExpr::Float { .. }
@@ -2878,7 +2892,7 @@ impl<'comments> Formatter<'comments> {
             | UntypedExpr::RecordUpdate { .. }
             | UntypedExpr::NegateBool { .. }
             | UntypedExpr::NegateInt { .. }
-            | UntypedExpr::Block { .. } => self.expr(expr),
+            | UntypedExpr::Block { .. } => self.expr(expression),
         }
     }
 
@@ -3521,8 +3535,8 @@ pub fn comments_before<'a>(
     )
 }
 
-fn is_breakable_argument(expr: &UntypedExpr, arity: usize) -> bool {
-    match expr {
+fn is_breakable_argument(expression: &UntypedExpr, arity: usize) -> bool {
+    match expression {
         // A call is only breakable if it is the only argument
         UntypedExpr::Call { .. } => arity == 1,
 
@@ -3556,11 +3570,14 @@ enum CallArgFormatting<'a, A> {
     Labelled(&'a EcoString, &'a A),
 }
 
-fn expr_call_arg_formatting(arg: &CallArg<UntypedExpr>) -> CallArgFormatting<'_, UntypedExpr> {
-    match arg {
+fn expr_call_arg_formatting(argument: &CallArg<UntypedExpr>) -> CallArgFormatting<'_, UntypedExpr> {
+    match argument {
         // An argument supplied using label shorthand syntax.
-        _ if arg.uses_label_shorthand() => CallArgFormatting::ShorthandLabelled(
-            arg.label.as_ref().expect("label shorthand with no label"),
+        _ if argument.uses_label_shorthand() => CallArgFormatting::ShorthandLabelled(
+            argument
+                .label
+                .as_ref()
+                .expect("label shorthand with no label"),
         ),
         // A labelled argument.
         CallArg {
@@ -3574,12 +3591,15 @@ fn expr_call_arg_formatting(arg: &CallArg<UntypedExpr>) -> CallArgFormatting<'_,
 }
 
 fn pattern_call_arg_formatting(
-    arg: &CallArg<UntypedPattern>,
+    argument: &CallArg<UntypedPattern>,
 ) -> CallArgFormatting<'_, UntypedPattern> {
-    match arg {
+    match argument {
         // An argument supplied using label shorthand syntax.
-        _ if arg.uses_label_shorthand() => CallArgFormatting::ShorthandLabelled(
-            arg.label.as_ref().expect("label shorthand with no label"),
+        _ if argument.uses_label_shorthand() => CallArgFormatting::ShorthandLabelled(
+            argument
+                .label
+                .as_ref()
+                .expect("label shorthand with no label"),
         ),
         // A labelled argument.
         CallArg {
@@ -3593,12 +3613,15 @@ fn pattern_call_arg_formatting(
 }
 
 fn constant_call_arg_formatting<A, B>(
-    arg: &CallArg<Constant<A, B>>,
+    argument: &CallArg<Constant<A, B>>,
 ) -> CallArgFormatting<'_, Constant<A, B>> {
-    match arg {
+    match argument {
         // An argument supplied using label shorthand syntax.
-        _ if arg.uses_label_shorthand() => CallArgFormatting::ShorthandLabelled(
-            arg.label.as_ref().expect("label shorthand with no label"),
+        _ if argument.uses_label_shorthand() => CallArgFormatting::ShorthandLabelled(
+            argument
+                .label
+                .as_ref()
+                .expect("label shorthand with no label"),
         ),
         // A labelled argument.
         CallArg {

@@ -6857,3 +6857,38 @@ fn multiple_tuple_field_access_are_not_put_in_a_block() {
 "
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/4212
+#[test]
+fn tuple_inside_tuple_is_broken_nicely() {
+    assert_format_rewrite!(
+        "pub fn main() {
+  #(#(some_long_name, unbalanced(shift, before)), #(shift, unbalanced(shift, after)))
+}
+",
+        "pub fn main() {
+  #(
+    #(some_long_name, unbalanced(shift, before)),
+    #(shift, unbalanced(shift, after)),
+  )
+}
+"
+    );
+}
+
+// Louis explicitly said this should be formatted like this!
+// https://github.com/gleam-lang/gleam/issues/4212#issuecomment-2628890917
+#[test]
+fn tuple_with_non_tuple_as_last_argument() {
+    assert_format!(
+        "pub fn main() {
+  #(value, fn(attr) {
+    attr
+    |> dynamic.int
+    |> result.map(Value)
+    |> result.map(AttributeChanged)
+  })
+}
+"
+    );
+}
