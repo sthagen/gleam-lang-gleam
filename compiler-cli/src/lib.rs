@@ -88,15 +88,13 @@ use gleam_core::{
     paths::ProjectPaths,
     version::COMPILER_VERSION,
 };
-use std::str::FromStr;
 
 use camino::Utf8PathBuf;
 
 use clap::{
     Args, Parser, Subcommand,
-    builder::{PossibleValuesParser, Styles, TypedValueParser, styling},
+    builder::{Styles, styling},
 };
-use strum::VariantNames;
 
 #[derive(Args, Debug, Clone)]
 struct UpdateOptions {
@@ -316,6 +314,7 @@ enum Command {
         #[arg(short, long, ignore_case = true, help = target_doc())]
         target: Option<Target>,
 
+        /// Which runtime to use
         #[arg(long, ignore_case = true, help = runtime_doc())]
         runtime: Option<Runtime>,
 
@@ -339,6 +338,7 @@ enum Command {
         #[arg(short, long, ignore_case = true, help = target_doc())]
         target: Option<Target>,
 
+        /// Which runtime to use
         #[arg(long, ignore_case = true, help = runtime_doc())]
         runtime: Option<Runtime>,
 
@@ -354,6 +354,7 @@ enum Command {
         #[arg(short, long, ignore_case = true, help = target_doc())]
         target: Option<Target>,
 
+        /// Which runtime to use
         #[arg(long, ignore_case = true, help = runtime_doc())]
         runtime: Option<Runtime>,
 
@@ -431,12 +432,13 @@ fn template_doc() -> &'static str {
     "The template to use"
 }
 
-fn target_doc() -> String {
-    format!("The platform to target ({})", Target::VARIANTS.join("|"))
+fn target_doc() -> &'static str {
+    "The platform to target"
 }
 
-fn runtime_doc() -> String {
-    format!("The runtime to target ({})", Runtime::VARIANTS.join("|"))
+fn runtime_doc() -> &'static str {
+    "The JavaScript runtime to target. This is only available on the \
+    JavaScript target"
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -451,14 +453,14 @@ pub enum ExportTarget {
     TypescriptPrelude,
     /// Information on the modules, functions, and types in the project in JSON format
     PackageInterface {
-        #[arg(long = "out", required = true)]
         /// The path to write the JSON file to
+        #[arg(long = "out", required = true)]
         output: Utf8PathBuf,
     },
     /// Package information (gleam.toml) in JSON format
     PackageInformation {
-        #[arg(long = "out", required = true)]
         /// The path to write the JSON file to
+        #[arg(long = "out", required = true)]
         output: Utf8PathBuf,
     },
 }
@@ -553,7 +555,7 @@ enum Hex {
         #[arg(long)]
         version: String,
         /// The reason for the retirement
-        #[arg(long, value_parser = PossibleValuesParser::new(RetirementReason::VARIANTS).map(|s| RetirementReason::from_str(&s).unwrap()))]
+        #[arg(long)]
         reason: RetirementReason,
         message: Option<String>,
     },
@@ -646,6 +648,7 @@ enum Docs {
         #[arg(long)]
         open: bool,
 
+        /// Which compilation target to use
         #[arg(short, long, ignore_case = true, help = target_doc())]
         target: Option<Target>,
     },

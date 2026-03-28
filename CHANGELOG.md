@@ -49,6 +49,20 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The compiler now emits a helpful error message when source code contains an invalid unicode character that looks similar to a correct character.
+
+  ```
+  error: Syntax error
+    ┌─ /src/parse/error.gleam:1:20
+    │
+  1 │ pub fn main() { #(1‚ 2) }
+    │                    ^ Unexpected character
+
+  This looks like ascii comma, but it is actually the unicode low single
+  comma quotation mark.
+  ```
+  ([Louis Pilfold](https://github.com/lpil))
+
 - The compiler now emits more efficient code when matching on single-character
   string prefixes on the JavaScript target. For example, the `glance` package
   is now nearly 30% faster on the JavaScript target:
@@ -101,6 +115,14 @@
 - The build tool will now suggest to create a module in dev` or `test`
   directory, if that missing module is a dev module or a test module
   respectively.
+  ([Andrey Kozhev](https://github.com/ankddev))
+
+- Now all options with declared variants have consistent representation of
+  possible values.
+  ([Andrey Kozhev](https://github.com/ankddev))
+
+- Documentation for `--target` option has been improved to include more
+  details.
   ([Andrey Kozhev](https://github.com/ankddev))
 
 ### Language server

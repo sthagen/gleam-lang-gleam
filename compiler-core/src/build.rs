@@ -32,6 +32,7 @@ use crate::{
     type_,
 };
 use camino::Utf8PathBuf;
+use clap::ValueEnum;
 use ecow::EcoString;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,7 @@ use vec1::Vec1;
     Debug,
     Serialize,
     Deserialize,
+    ValueEnum,
     EnumString,
     EnumVariantNames,
     EnumIter,
@@ -55,12 +57,16 @@ use vec1::Vec1;
     Eq,
 )]
 #[strum(serialize_all = "lowercase")]
+#[clap(rename_all = "lower")]
+#[serde(rename_all = "lowercase")]
 pub enum Target {
-    #[strum(serialize = "erlang", serialize = "erl")]
-    #[serde(rename = "erlang", alias = "erl")]
+    #[strum(serialize = "erl")]
+    #[serde(alias = "erl")]
+    #[clap(alias = "erl")]
     Erlang,
-    #[strum(serialize = "javascript", serialize = "js")]
-    #[serde(rename = "javascript", alias = "js")]
+    #[strum(serialize = "js")]
+    #[serde(alias = "js")]
+    #[clap(alias = "js")]
     JavaScript,
 }
 
@@ -125,17 +131,26 @@ impl Codegen {
 }
 
 #[derive(
-    Debug, Serialize, Deserialize, EnumString, EnumVariantNames, Clone, Copy, PartialEq, Eq,
+    Debug,
+    Serialize,
+    Deserialize,
+    EnumString,
+    EnumVariantNames,
+    ValueEnum,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
 )]
+#[clap(rename_all = "lower")]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum Runtime {
-    #[strum(serialize = "nodejs", serialize = "node")]
-    #[serde(rename = "nodejs", alias = "node")]
+    #[strum(serialize = "node")]
+    #[serde(alias = "node")]
+    #[clap(alias = "node")]
     NodeJs,
-    #[strum(serialize = "deno")]
-    #[serde(rename = "deno")]
     Deno,
-    #[strum(serialize = "bun")]
-    #[serde(rename = "bun")]
     Bun,
 }
 
