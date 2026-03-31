@@ -76,6 +76,9 @@ pub enum TypedExpr {
         type_: Arc<Type>,
         fun: Box<Self>,
         arguments: Vec<CallArg<Self>>,
+        /// Specifies the source position of the argument list, if present. Can
+        /// be None in cases where the function call is part of a pipeline.
+        open_parenthesis: Option<u32>,
     },
 
     BinOp {

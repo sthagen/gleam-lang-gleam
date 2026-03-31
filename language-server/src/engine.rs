@@ -45,8 +45,8 @@ use super::{
         GenerateVariant, InlineVariable, InterpolateString, LetAssertToCase, MergeCaseBranches,
         PatternMatchOnValue, RedundantTupleInCaseSubject, RemoveBlock, RemoveEchos,
         RemovePrivateOpaque, RemoveUnreachableCaseClauses, RemoveUnusedImports,
-        UseLabelShorthandSyntax, WrapInBlock, code_action_add_missing_patterns,
-        code_action_convert_qualified_constructor_to_unqualified,
+        UnwrapAnonymousFunction, UseLabelShorthandSyntax, WrapInAnonymousFunction, WrapInBlock,
+        code_action_add_missing_patterns, code_action_convert_qualified_constructor_to_unqualified,
         code_action_convert_unqualified_constructor_to_qualified, code_action_import_module,
         code_action_inexhaustive_let_to_case,
     },
@@ -468,6 +468,8 @@ where
             actions.extend(ExtractFunction::new(module, &lines, &params).code_actions());
             GenerateDynamicDecoder::new(module, &lines, &params, &mut actions, &this.compiler)
                 .code_actions();
+            actions.extend(WrapInAnonymousFunction::new(module, &lines, &params).code_actions());
+            actions.extend(UnwrapAnonymousFunction::new(module, &lines, &params).code_actions());
             GenerateJsonEncoder::new(
                 module,
                 &lines,
@@ -1689,7 +1691,7 @@ fn hover_for_constructor(
     }
 }
 
-// Returns true if any part of either range overlaps with the other.
+/// Returns true if any part of either range overlaps with the other.
 pub fn overlaps(a: Range, b: Range) -> bool {
     position_within(a.start, b)
         || position_within(a.end, b)
@@ -1697,13 +1699,65 @@ pub fn overlaps(a: Range, b: Range) -> bool {
         || position_within(b.end, a)
 }
 
-// Returns true if a range is contained within another.
+/// Returns true if the first range is within the second range.
+/// The ranges might touch on their extremes and still be considered one within
+/// the other!
+///
+/// `within(a, b)` is true in all of these cases:
+///
+/// - ```txt
+///   |------| b
+///     |---| a
+///   ```
+/// - ```txt
+///   |------| b
+///   |---| a
+///   ```
+/// - ```txt
+///   |------| b
+///      |---| a
+///   ```
+/// - ```txt
+///   |------| b
+///   |------| a
+///   ```
+///
 pub fn within(a: Range, b: Range) -> bool {
     position_within(a.start, b) && position_within(a.end, b)
 }
 
+/// Returns true if the first range is completely within the second range.
+/// The range cannot have any extreme in common to be considered completely
+/// within another.
+///
+/// `completely_within(a, b)` is true this case:
+///
+/// - ```txt
+///   |------| b
+///     |---| a
+///   ```
+///
+/// And `completely_within(a, b)` is false in all these cases:
+///
+/// - ```txt
+///   |------| b
+///   |---| a
+///   ```
+/// - ```txt
+///   |------| b
+///      |---| a
+///   ```
+/// - ```txt
+///   |------| b
+///   |------| a
+///   ```
+///
+pub fn completely_within(a: Range, b: Range) -> bool {
+    a.start > b.start && a.start < b.end && a.end > b.start && a.end < b.end
+}
+
 // Returns true if a position is within a range.
-fn position_within(position: Position, range: Range) -> bool {
+pub fn position_within(position: Position, range: Range) -> bool {
     position >= range.start && position <= range.end
 }
 

@@ -957,7 +957,7 @@ where
                     }
                 }
                 _ => {
-                    if self.maybe_one(&Token::LeftParen).is_some() {
+                    if let Some((left_paren, _)) = self.maybe_one(&Token::LeftParen) {
                         let start = expr.location().start;
                         match self.maybe_one(&Token::DotDot) {
                             Some((dot_s, _)) => {
@@ -992,7 +992,7 @@ where
                                 // Call
                                 let arguments = self.parse_fn_arguments()?;
                                 let (_, end) = self.expect_one(&Token::RightParen)?;
-                                expr = make_call(expr, arguments, start, end)?;
+                                expr = make_call(expr, arguments, start, end, left_paren)?;
                             }
                         }
                     } else {
@@ -3835,194 +3835,61 @@ where
     }
 
     fn expect_bit_array_size(&mut self) -> Result<BitArraySize<()>, ParseError> {
-        let left = match self.next_tok() {
-            Some((start, Token::Name { name }, end)) => BitArraySize::Variable {
+        let mut opstack = vec![];
+        let mut estack: Vec<BitArraySize<()>> = vec![];
+
+        estack.push(self.parse_bit_array_size_unit()?);
+
+        loop {
+            let Some((op_s, token, op_e)) = self.tok0.take() else {
+                break;
+            };
+            let Some(prec) = token_to_bit_array_size_operator(&token).map(|op| op.precedence())
+            else {
+                self.tok0 = Some((op_s, token, op_e));
+                break;
+            };
+
+            self.advance();
+            let _ = handle_op(
+                Some(((op_s, token, op_e), prec)),
+                &mut opstack,
+                &mut estack,
+                &reduce_bit_array_size,
+            );
+
+            estack.push(self.parse_bit_array_size_unit()?);
+        }
+
+        Ok(
+            handle_op(None, &mut opstack, &mut estack, &reduce_bit_array_size)
+                .expect("bit array size expression stack should not be empty"),
+        )
+    }
+
+    fn parse_bit_array_size_unit(&mut self) -> Result<BitArraySize<()>, ParseError> {
+        match self.next_tok() {
+            Some((start, Token::Name { name }, end)) => Ok(BitArraySize::Variable {
                 location: SrcSpan { start, end },
                 name,
                 constructor: None,
                 type_: (),
-            },
-            Some((start, Token::Int { value, int_value }, end)) => BitArraySize::Int {
+            }),
+            Some((start, Token::Int { value, int_value }, end)) => Ok(BitArraySize::Int {
                 location: SrcSpan { start, end },
                 value,
                 int_value,
-            },
+            }),
             Some((start, Token::LeftBrace, _)) => {
                 let inner = self.expect_bit_array_size()?;
                 let (_, end) = self.expect_one(&Token::RightBrace)?;
 
-                BitArraySize::Block {
+                Ok(BitArraySize::Block {
                     location: SrcSpan { start, end },
                     inner: Box::new(inner),
-                }
+                })
             }
-            _ => return self.next_tok_unexpected(vec!["A variable name or an integer".into()]),
-        };
-
-        let Some((start, token, end)) = self.tok0.take() else {
-            return Ok(left);
-        };
-
-        match token {
-            Token::Plus => {
-                _ = self.next_tok();
-                let right = self.expect_bit_array_size()?;
-
-                Ok(self.bit_array_size_binary_operator(left, right, IntOperator::Add))
-            }
-            Token::Minus => {
-                _ = self.next_tok();
-                let right = self.expect_bit_array_size()?;
-
-                Ok(self.bit_array_size_binary_operator(left, right, IntOperator::Subtract))
-            }
-            Token::Star => {
-                _ = self.next_tok();
-                let right = self.expect_bit_array_size()?;
-
-                Ok(
-                    self.bit_array_size_high_precedence_operator(
-                        left,
-                        right,
-                        IntOperator::Multiply,
-                    ),
-                )
-            }
-            Token::Slash => {
-                _ = self.next_tok();
-                let right = self.expect_bit_array_size()?;
-
-                Ok(self.bit_array_size_high_precedence_operator(left, right, IntOperator::Divide))
-            }
-            Token::Percent => {
-                _ = self.next_tok();
-                let right = self.expect_bit_array_size()?;
-
-                Ok(self.bit_array_size_high_precedence_operator(
-                    left,
-                    right,
-                    IntOperator::Remainder,
-                ))
-            }
-            Token::Name { .. }
-            | Token::UpName { .. }
-            | Token::DiscardName { .. }
-            | Token::Int { .. }
-            | Token::Float { .. }
-            | Token::String { .. }
-            | Token::CommentDoc { .. }
-            | Token::LeftParen
-            | Token::RightParen
-            | Token::LeftSquare
-            | Token::RightSquare
-            | Token::LeftBrace
-            | Token::RightBrace
-            | Token::Less
-            | Token::Greater
-            | Token::LessEqual
-            | Token::GreaterEqual
-            | Token::PlusDot
-            | Token::MinusDot
-            | Token::StarDot
-            | Token::SlashDot
-            | Token::LessDot
-            | Token::GreaterDot
-            | Token::LessEqualDot
-            | Token::GreaterEqualDot
-            | Token::Concatenate
-            | Token::Colon
-            | Token::Comma
-            | Token::Hash
-            | Token::Bang
-            | Token::Equal
-            | Token::EqualEqual
-            | Token::NotEqual
-            | Token::Vbar
-            | Token::VbarVbar
-            | Token::AmperAmper
-            | Token::LtLt
-            | Token::GtGt
-            | Token::Pipe
-            | Token::Dot
-            | Token::RArrow
-            | Token::LArrow
-            | Token::DotDot
-            | Token::At
-            | Token::EndOfFile
-            | Token::CommentNormal
-            | Token::CommentModule
-            | Token::NewLine
-            | Token::As
-            | Token::Assert
-            | Token::Auto
-            | Token::Case
-            | Token::Const
-            | Token::Delegate
-            | Token::Derive
-            | Token::Echo
-            | Token::Else
-            | Token::Fn
-            | Token::If
-            | Token::Implement
-            | Token::Import
-            | Token::Let
-            | Token::Macro
-            | Token::Opaque
-            | Token::Panic
-            | Token::Pub
-            | Token::Test
-            | Token::Todo
-            | Token::Type
-            | Token::Use => {
-                self.tok0 = Some((start, token, end));
-                Ok(left)
-            }
-        }
-    }
-
-    fn bit_array_size_binary_operator(
-        &self,
-        left: BitArraySize<()>,
-        right: BitArraySize<()>,
-        operator: IntOperator,
-    ) -> BitArraySize<()> {
-        let start = left.location().start;
-        let end = right.location().end;
-
-        BitArraySize::BinaryOperator {
-            left: Box::new(left),
-            right: Box::new(right),
-            operator,
-            location: SrcSpan { start, end },
-        }
-    }
-
-    fn bit_array_size_high_precedence_operator(
-        &self,
-        left: BitArraySize<()>,
-        right: BitArraySize<()>,
-        operator: IntOperator,
-    ) -> BitArraySize<()> {
-        match right {
-            BitArraySize::Int { .. }
-            | BitArraySize::Variable { .. }
-            | BitArraySize::Block { .. } => {
-                self.bit_array_size_binary_operator(left, right, operator)
-            }
-            // This operator has the highest precedence of the possible operators
-            // for bit array size patterns. So, `a * b + c` should be parsed as
-            // `(a * b) + c`. If the right-hand side of this operator is another
-            // operator, we rearrange it to ensure correct precedence.
-            BitArraySize::BinaryOperator {
-                operator: right_operator,
-                left: middle,
-                right,
-                ..
-            } => self.bit_array_size_binary_operator(
-                self.bit_array_size_binary_operator(left, *middle, operator),
-                *right,
-                right_operator,
-            ),
+            _ => self.next_tok_unexpected(vec!["A variable name or an integer".into()]),
         }
     }
 
@@ -4866,6 +4733,87 @@ fn tok_to_binop(t: &Token) -> Option<BinOp> {
         | Token::Use => None,
     }
 }
+
+fn token_to_bit_array_size_operator(t: &Token) -> Option<IntOperator> {
+    match t {
+        Token::Plus => Some(IntOperator::Add),
+        Token::Minus => Some(IntOperator::Subtract),
+        Token::Star => Some(IntOperator::Multiply),
+        Token::Slash => Some(IntOperator::Divide),
+        Token::Percent => Some(IntOperator::Remainder),
+        Token::Name { .. }
+        | Token::UpName { .. }
+        | Token::DiscardName { .. }
+        | Token::Int { .. }
+        | Token::Float { .. }
+        | Token::String { .. }
+        | Token::CommentDoc { .. }
+        | Token::LeftParen
+        | Token::RightParen
+        | Token::LeftSquare
+        | Token::RightSquare
+        | Token::LeftBrace
+        | Token::RightBrace
+        | Token::Less
+        | Token::Greater
+        | Token::LessEqual
+        | Token::GreaterEqual
+        | Token::PlusDot
+        | Token::MinusDot
+        | Token::StarDot
+        | Token::SlashDot
+        | Token::LessDot
+        | Token::GreaterDot
+        | Token::LessEqualDot
+        | Token::GreaterEqualDot
+        | Token::Concatenate
+        | Token::Colon
+        | Token::Comma
+        | Token::Hash
+        | Token::Bang
+        | Token::Equal
+        | Token::EqualEqual
+        | Token::NotEqual
+        | Token::Vbar
+        | Token::VbarVbar
+        | Token::AmperAmper
+        | Token::LtLt
+        | Token::GtGt
+        | Token::Pipe
+        | Token::Dot
+        | Token::RArrow
+        | Token::LArrow
+        | Token::DotDot
+        | Token::At
+        | Token::EndOfFile
+        | Token::CommentNormal
+        | Token::CommentModule
+        | Token::NewLine
+        | Token::As
+        | Token::Assert
+        | Token::Auto
+        | Token::Case
+        | Token::Const
+        | Token::Delegate
+        | Token::Derive
+        | Token::Echo
+        | Token::Else
+        | Token::Fn
+        | Token::If
+        | Token::Implement
+        | Token::Import
+        | Token::Let
+        | Token::Macro
+        | Token::Opaque
+        | Token::Panic
+        | Token::Pub
+        | Token::Test
+        | Token::Todo
+        | Token::Type
+        | Token::Use => None,
+    }
+}
+
 /// Simple-Precedence-Parser, perform reduction for expression
 fn do_reduce_expression(op: Spanned, estack: &mut Vec<UntypedExpr>) {
     match (estack.pop(), estack.pop()) {
@@ -4885,6 +4833,27 @@ fn do_reduce_clause_guard(op: Spanned, estack: &mut Vec<UntypedClauseGuard>) {
             estack.push(new_e);
         }
         _ => panic!("Tried to reduce without 2 guards"),
+    }
+}
+
+/// Simple-Precedence-Parser, perform reduction for bit array size expressions
+fn reduce_bit_array_size((_, token, _): Spanned, estack: &mut Vec<BitArraySize<()>>) {
+    let operator = token_to_bit_array_size_operator(&token)
+        .expect("only operator tokens are pushed onto the bit array size opstack");
+    match (estack.pop(), estack.pop()) {
+        (Some(right), Some(left)) => {
+            let location = SrcSpan {
+                start: left.location().start,
+                end: right.location().end,
+            };
+            estack.push(BitArraySize::BinaryOperator {
+                left: Box::new(left),
+                right: Box::new(right),
+                operator,
+                location,
+            });
+        }
+        _ => panic!("Tried to reduce bit array size without 2 operands"),
     }
 }
 
@@ -5029,6 +4998,7 @@ pub fn make_call(
     arguments: Vec<ParserArg>,
     start: u32,
     end: u32,
+    open_parenthesis: u32,
 ) -> Result<UntypedExpr, ParseError> {
     let mut hole_location = None;
 
@@ -5075,6 +5045,7 @@ pub fn make_call(
         location: SrcSpan { start, end },
         fun: Box::new(fun),
         arguments,
+        open_parenthesis,
     };
 
     match hole_location {

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- The language server now offers code actions to wrap a function reference in an
+  anonymous function, or to remove a trivial anonymous function, leaving its
+  contents. For example:
+
+  ```gleam
+  pub fn main() {
+    [-1, -2, -3] |> list.map(fn(a) { int.absolute_value(a) })
+                          // ^^ Activating the "Remove anonymous function"
+                          // code action here
+  }
+  ```
+
+  would result in:
+
+  ```gleam
+  pub fn main() {
+    [-1, -2, -3] |> list.map(int.absolute_value)
+  }
+  ```
+
+  while the other action would reverse the change. ([Eli Treuherz](http.github.com/treuherz))
+
 ### Compiler
 
 - The compiler now supports list prepending in constants. For example:
@@ -49,7 +71,8 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The compiler now emits a helpful error message when source code contains an invalid unicode character that looks similar to a correct character.
+- The compiler now emits a helpful error message when source code contains an
+  invalid unicode character that looks similar to a correct character.
 
   ```
   error: Syntax error
@@ -61,6 +84,7 @@
   This looks like ascii comma, but it is actually the unicode low single
   comma quotation mark.
   ```
+
   ([Louis Pilfold](https://github.com/lpil))
 
 - The compiler now emits more efficient code when matching on single-character
@@ -112,7 +136,19 @@
   dependencies every single time it is run.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The build tool will now suggest to create a module in dev` or `test`
+- The build tool now produces a nicer error message when trying to add a
+  package's version that doesn't exist. For example, running `gleam add wisp@11`
+  will now produce:
+
+  ```txt
+  error: Dependency resolution failed
+
+  The package `wisp` has no versions in the range >= 11.0.0 and < 12.0.0.
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The build tool will now suggest to create a module in the `dev` or `test`
   directory, if that missing module is a dev module or a test module
   respectively.
   ([Andrey Kozhev](https://github.com/ankddev))
@@ -121,11 +157,46 @@
   possible values.
   ([Andrey Kozhev](https://github.com/ankddev))
 
+- New Gleam packages are generated requiring >= 0.70.0 of `gleam_stdlib`.
+  ([Louis Pilfold](https://github.com/lpil))
+
 - Documentation for `--target` option has been improved to include more
   details.
   ([Andrey Kozhev](https://github.com/ankddev))
 
 ### Language server
+
+- The "extract function" code action can now be used in pipelines to extract a
+  part of one into a function. For example, triggering it here:
+
+  ```gleam
+  pub fn words() {
+    string
+    |> string.lowercase
+    // ^^^
+    |> string.replace(each: "jak", with: "lucy")
+    // ^^^ selecting these two steps of the pipeline
+    |> string.split(on: " ")
+  }
+  ```
+
+  Would result in the following code:
+
+  ```gleam
+  pub fn words() {
+    string
+    |> function
+    |> string.split(on: " ")
+  }
+
+  fn function(string: String) -> String {
+    string
+    |> string.lowercase
+    |> string.replace(each: "jak", with: "lucy")
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The "extract variable" code action can now pick better names for variables in
   case branches and blocks, ignoring unrelated names of variables in other
@@ -195,6 +266,11 @@
   non-ASCII characters were used in field names other than `description`.
   ([Niklas Kirschall](https://github.com/nkxxll))
 
+- Fixed a bug where arithmetic operators in bit array size expressions were
+  not left-associative, causing `a - b - c` to be evaluated as
+  `a - (b - c)` instead of `(a - b) - c`.
+  ([Daniele Scaratti](https://github.com/lupodevelop))
+
 - Fixed a bug where the compiler would crash when trying to read the cache for
   modules containing large constants.
   ([Surya Rose](https://github.com/GearsDatapacks))
@@ -215,6 +291,11 @@
 - Fixed the formatting of some errors' hints to properly wrap.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a bug where the JavaScript code generator could produce duplicate `let`
+  declarations for internal variables after a `case` expression whose subject
+  directly matches one of the branches.
+  ([Eyup Can Akman](https://github.com/eyupcanakman))
+
 ## v1.15.1 - 2026-03-17
 
 ### Bug fixes
@@ -226,4 +307,12 @@
 
 - Fixed a bug where the "Add missing type parameter" code action could be
   triggered on types that do not exist instead of type variables.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the "Add missing patterns" code action could end up deleting
+  comments inside an incomplete case expression.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where some functions could be formatted to be longer than 80
+  characters.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))

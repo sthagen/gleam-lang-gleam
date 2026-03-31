@@ -140,6 +140,8 @@ const EXTRACT_FUNCTION: &str = "Extract function";
 const MERGE_CASE_BRANCHES: &str = "Merge case branches";
 const ADD_MISSING_TYPE_PARAMETER: &str = "Add missing type parameter";
 const REPLACE_UNDERSCORE_WITH_TYPE: &str = "Replace `_` with type";
+const WRAP_IN_ANONYMOUS_FUNCTION: &str = "Wrap in anonymous function";
+const UNWRAP_ANONYMOUS_FUNCTION: &str = "Remove anonymous function wrapper";
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range:expr $(,)?) => {
@@ -2752,6 +2754,44 @@ fn add_missing_patterns_bool() {
         "
 pub fn main(bool: Bool) {
   case bool {}
+}
+",
+        find_position_of("case").select_until(find_position_of("bool {"))
+    );
+}
+
+#[test]
+fn add_missing_patterns_does_not_remove_comment() {
+    assert_code_action!(
+        ADD_MISSING_PATTERNS,
+        "
+pub fn main(bool: Bool) {
+  case bool {
+    // Here is some comment that should not be deleted
+  }
+}
+",
+        find_position_of("case").select_until(find_position_of("bool {"))
+    );
+}
+
+#[test]
+fn add_missing_patterns_does_not_remove_comment_2() {
+    assert_code_action!(
+        ADD_MISSING_PATTERNS,
+        "
+pub fn main(bool: Bool) {
+  case bool {
+    // Here is some comment that should not be deleted
+
+    // Here is some other separate comment!
+    // And loads of white space that has to be deleted.
+
+
+
+
+
+  }
 }
 ",
         find_position_of("case").select_until(find_position_of("bool {"))
@@ -7400,6 +7440,27 @@ pub fn add(n, m) { n + m }
 }
 
 #[test]
+fn expand_function_capture_in_pipeline() {
+    assert_code_action!(
+        EXPAND_FUNCTION_CAPTURE,
+        "pub fn main() {
+  1 |> wibble(2, _) |> wobble
+}
+
+fn wibble(a, b) {
+  todo
+}
+
+fn wobble(i) {
+  todo
+}
+
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
 fn generate_dynamic_decoder() {
     assert_code_action!(
         GENERATE_DYNAMIC_DECODER,
@@ -11468,6 +11529,202 @@ pub fn main() {
 }
 
 #[test]
+fn extract_entire_pipeline() {
+    assert_code_action!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  True
+  |> wibble
+  |> wobble
+}
+
+fn wibble(_) { 1 }
+fn wobble(_) { 1.0 }
+"#,
+        find_position_of("True").select_until(find_position_of("wobble"))
+    );
+}
+
+#[test]
+fn extract_starting_steps_of_pipeline() {
+    assert_code_action!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  True
+  |> wibble
+  |> wobble
+}
+
+fn wibble(_) { 1 }
+fn wobble(_) { 1.0 }
+"#,
+        find_position_of("True").select_until(find_position_of("wibble"))
+    );
+}
+
+#[test]
+fn extract_starting_steps_of_pipeline_with_argument() {
+    assert_code_action!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  let something = 1
+
+  True
+  |> wibble(something)
+  |> wobble
+}
+
+fn wibble(_, _) { 1 }
+fn wobble(_) { 1.0 }
+"#,
+        find_position_of("True").select_until(find_position_of("wibble"))
+    );
+}
+
+#[test]
+fn extract_final_steps_of_pipeline() {
+    assert_code_action!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  True
+  |> wibble
+  |> wobble
+}
+
+fn wibble(_) { 1 }
+fn wobble(_) { 1.0 }
+"#,
+        find_position_of("wibble").select_until(find_position_of("wobble"))
+    );
+}
+
+#[test]
+fn extract_final_steps_of_pipeline_with_arguments() {
+    assert_code_action!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  let something = 1
+
+  True
+  |> wibble
+  |> wobble(something)
+}
+
+fn wibble(_) { 1 }
+fn wobble(_, _) { 1.0 }
+"#,
+        find_position_of("wibble").select_until(find_position_of("wobble"))
+    );
+}
+
+#[test]
+fn extract_middle_steps_of_pipeline() {
+    assert_code_action!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  True
+  |> wibble
+  |> wobble
+  |> woo
+}
+
+fn wibble(_) { 1 }
+fn wobble(_) { 1.0 }
+fn woo(_) { [] }
+"#,
+        find_position_of("wibble").select_until(find_position_of("wobble"))
+    );
+}
+
+#[test]
+fn extract_middle_steps_of_pipeline_with_arguments() {
+    assert_code_action!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  let something = 1
+
+  True
+  |> wibble(1)
+  |> wobble(something)
+  |> woo
+}
+
+fn wibble(_, _) { 1 }
+fn wobble(_, _) { 1.0 }
+fn woo(_) { [] }
+"#,
+        find_position_of("wibble").select_until(find_position_of("wobble"))
+    );
+}
+
+#[test]
+fn cannot_extract_a_single_starting_step_as_function() {
+    assert_no_code_actions!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  True
+  |> wibble
+  |> wobble
+  |> woo
+}
+
+fn wibble(_, _) { 1 }
+fn wobble(_, _) { 1.0 }
+fn woo(_) { [] }
+"#,
+        find_position_of("True").to_selection()
+    );
+}
+
+#[test]
+fn cannot_extract_a_single_middle_step_as_function() {
+    assert_no_code_actions!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  True
+  |> wibble
+  |> wobble
+  |> woo
+}
+
+fn wibble(_, _) { 1 }
+fn wobble(_, _) { 1.0 }
+fn woo(_) { [] }
+"#,
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn cannot_extract_a_single_final_step_as_function() {
+    assert_no_code_actions!(
+        EXTRACT_FUNCTION,
+        r#"
+pub fn main() {
+  True
+  |> wibble
+  |> wobble
+  |> woo
+}
+
+fn wibble(_, _) { 1 }
+fn wobble(_, _) { 1.0 }
+fn woo(_) { [] }
+"#,
+        find_position_of("woo").to_selection()
+    );
+}
+
+#[test]
 fn no_code_action_to_extract_function_when_expression_is_not_fully_selected() {
     assert_no_code_actions!(
         EXTRACT_FUNCTION,
@@ -12717,6 +12974,22 @@ pub fn wibble() -> _ {
 }
 
 #[test]
+fn wrap_uncalled_function_in_anonymous_function() {
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  op
+}
+
+fn op(i) {
+  todo
+}
+",
+        find_position_of("op").to_selection()
+    );
+}
+
+#[test]
 fn replace_nested_underscore_with_generic_type() {
     assert_code_action!(
         REPLACE_UNDERSCORE_WITH_TYPE,
@@ -12726,6 +12999,22 @@ pub fn wibble() -> Result(a, _) {
 }
     "#,
         find_position_of("_").to_selection()
+    );
+}
+
+#[test]
+fn wrap_uncalled_constructor_in_anonymous_function() {
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  Record
+}
+
+type Record {
+  Record(i: Int)
+}
+",
+        find_position_of("Record").to_selection()
     );
 }
 
@@ -12743,6 +13032,24 @@ pub fn wibble() -> Result(Result(_, Nil), Int) {
 }
 
 #[test]
+fn wrap_call_arg_in_anonymous_function() {
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "import gleam/list
+
+pub fn main() {
+  list.map([1, 2, 3], op)
+}
+
+fn op(i: Int) -> Int {
+  todo
+}
+",
+        find_position_of("op").to_selection()
+    );
+}
+
+#[test]
 fn replace_nested_underscore_in_let_annotation() {
     assert_code_action!(
         REPLACE_UNDERSCORE_WITH_TYPE,
@@ -12752,6 +13059,22 @@ pub fn wibble() {
 }
     "#,
         find_position_of("_").to_selection()
+    );
+}
+
+#[test]
+fn wrap_function_in_anonymous_function_without_shadowing() {
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  int
+}
+
+fn int(i: Int) {
+  todo
+}
+",
+        find_position_of("int").to_selection()
     );
 }
 
@@ -12804,5 +13127,355 @@ pub fn wibble() {
 }
     "#,
         find_position_of("_").to_selection()
+    );
+}
+
+#[test]
+fn wrap_assignment_in_anonymous_function() {
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  let op = op_factory(1, 2, 3)
+}
+
+fn op_factory(a: Int, b: Int, c: Int) -> fn(Int) -> Int {
+  todo
+}
+",
+        find_position_of("op_factory").to_selection()
+    );
+}
+
+#[test]
+fn wrap_imported_function_in_anonymous_function() {
+    let source = "import gleam/list
+import gleam/int
+
+pub fn main() {
+  list.map([1, 2, 3], int.is_even)
+}
+";
+
+    let int_source = "pub fn is_even(int) { int % 2 == 0 }";
+
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        TestProject::for_source(source).add_module("gleam/int", int_source),
+        find_position_of("int.is_even").to_selection()
+    );
+}
+
+#[test]
+fn dont_wrap_anonymous_function_in_anonymous_function() {
+    assert_no_code_actions!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  let f = fn(in) { ception(in) }
+}
+
+",
+        find_position_of("fn(in)").to_selection()
+    );
+}
+
+#[test]
+fn wrap_pipeline_step_in_anonymous_function() {
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  1 |> wibble |> wobble
+}
+
+fn wibble(i) {
+  todo
+}
+
+fn wobble(i) {
+  todo
+}
+
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn wrap_final_pipeline_step_in_anonymous_function() {
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  1 |> wibble |> wobble
+}
+
+fn wibble(i) {
+  todo
+}
+
+fn wobble(i) {
+  todo
+}
+
+",
+        find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn wrap_record_field_in_anonymous_function() {
+    assert_code_action!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  let r = Record(wibble)
+}
+
+type Record {
+  Record(wibbler: fn(Int) -> Int)
+}
+
+fn wibble(v) {
+  todo
+}
+
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn dont_wrap_functions_that_are_already_being_called() {
+    assert_no_code_actions!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  wibble(1)
+}
+
+fn wibble(i) {
+  todo
+}
+
+",
+        find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_trivial_anonymous_function() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "import gleam/list
+
+pub fn main() {
+  list.map([1, 2, 3], fn(int) { op(int) })
+}
+
+fn op(i: Int) -> Int {
+  todo
+}
+",
+        find_position_of("fn(int)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_trivial_anonymous_function_with_bad_spacing() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "import gleam/list
+
+pub fn main() {
+  list.map([1, 2, 3], fn (int)  {
+
+    op(int)
+
+        })
+}
+
+fn op(i: Int) -> Int {
+  todo
+}
+",
+        find_position_of("fn (int)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_nested_anonymous_function() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  fn(do) { fn(re){ mi(re) }(do) }
+}
+
+fn mi(v) {
+  todo
+}
+",
+        find_position_of("fn(re)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_with_labelled_args() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  fn(a, b) { op(first: a, second: b) }
+}
+
+fn op(first a, second b) {
+  todo
+}
+",
+        find_position_of("fn(a, b)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_with_labelled_and_unlabelled_args() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  fn(a, b, c) { op(a, second: b, third: c) }
+}
+
+fn op(a, second b, third c) {
+  todo
+}
+",
+        find_position_of("fn(a, b, c)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_with_labelled_args_out_of_order() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  fn(a, b) { op(second: b, first: a) }
+}
+
+fn op(first a, second b) {
+  todo
+}
+",
+        find_position_of("fn(a, b)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_with_comment_after() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  fn(a) {
+    op(a)
+    // look out!
+  }
+}
+
+fn op(a) {
+  todo
+}
+",
+        find_position_of("fn(a)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_with_comment_on_line() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  fn(a) {
+    op(a) // look out!
+  }
+}
+
+fn op(a) {
+  todo
+}
+",
+        find_position_of("fn(a)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_with_comment_on_head_line() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  fn(a) { // look out!
+    op(a)
+  }
+}
+
+fn op(a) {
+  todo
+}
+",
+        find_position_of("fn(a)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_with_comments_before() {
+    assert_code_action!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  fn(a) {
+    // look out,
+    // there's a comment!
+
+    // another comment!
+    //here's one without a leading space
+      // here's one indented wrong
+  // here's one indented even wronger
+    op(a)
+  }
+}
+
+fn op(a) {
+  todo
+}
+",
+        find_position_of("fn(a)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_unavailable_when_args_discarded() {
+    assert_no_code_actions!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "import gleam/list
+
+pub fn main() {
+  list.index_map([1, 2, 3], fn(_, int) { op(int) })
+}
+
+fn op(i: Int) -> Int {
+  todo
+}
+",
+        find_position_of("fn(_, int)").to_selection()
+    );
+}
+
+#[test]
+fn unwrap_anonymous_function_unavailable_with_different_args() {
+    assert_no_code_actions!(
+        UNWRAP_ANONYMOUS_FUNCTION,
+        "import gleam/list
+
+const another_int = 7
+
+pub fn main() {
+  list.map([1, 2, 3], fn(int) { op(another_int) })
+}
+
+fn op(i: Int) -> Int {
+  todo
+}
+",
+        find_position_of("fn(int)").to_selection()
     );
 }

@@ -31,6 +31,8 @@ use itertools::Itertools;
 use lsp_types::{CodeAction, CodeActionKind, CodeActionParams, Position, Range, TextEdit, Url};
 use vec1::{Vec1, vec1};
 
+use crate::engine::{completely_within, position_within};
+
 use super::{
     TextEdits,
     compiler::LspProjectCompiler,
@@ -102,6 +104,28 @@ fn count_indentation(code: &str, line_numbers: &LineNumbers, line: u32) -> usize
     }
 
     indent_size
+}
+
+// Given a string and a position in it, if the position points to whitespace,
+// this function returns the next position which doesn't.
+fn next_nonwhitespace(string: &EcoString, position: u32) -> u32 {
+    let mut n = position;
+    let mut chars = string[position as usize..].chars();
+    while chars.next().is_some_and(char::is_whitespace) {
+        n += 1;
+    }
+    n
+}
+
+// Given a string and a position in it, if the position points after whitespace,
+// this function returns the previous position which doesn't.
+fn previous_nonwhitespace(string: &EcoString, position: u32) -> u32 {
+    let mut n = position;
+    let mut chars = string[..position as usize].chars();
+    while chars.next_back().is_some_and(char::is_whitespace) {
+        n -= 1;
+    }
+    n
 }
 
 /// Code action to remove literal tuples in case subjects, essentially making
@@ -919,6 +943,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
         type_: &'ast Arc<Type>,
         fun: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
+        open_parenthesis: &'ast Option<u32>,
     ) {
         let call_range = self.edits.src_span_to_lsp_range(*location);
         if !within(self.params.range, call_range) {
@@ -943,7 +968,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
         // we're inside a nested call.
         let previous = self.use_right_hand_side_location;
         self.use_right_hand_side_location = None;
-        ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments);
+        ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments, open_parenthesis);
         self.use_right_hand_side_location = previous;
     }
 
@@ -1298,8 +1323,17 @@ pub fn code_action_add_missing_patterns(
                 }
             }
 
-            // Remove any blank spaces/lines between the start brace and end brace
-            edits.delete(SrcSpan::new(start_brace_location, insert_at));
+            // We remove any blank spaces/lines between the end of the last
+            // comment inside the case expression and the insertion point.
+            // If there's no comments we remove all empty space in between the
+            // two braces
+            let deletion_start = module
+                .extra
+                .last_comment_between(start_brace_location, insert_at)
+                .map(|src_span| src_span.end)
+                .unwrap_or(start_brace_location);
+
+            edits.delete(SrcSpan::new(deletion_start, insert_at));
             edits.insert(insert_at, format!("\n{indent}"));
         }
 
@@ -1447,7 +1481,7 @@ impl<'ast> ast::visit::Visit<'ast> for AddAnnotations<'_> {
         let location = match kind {
             // Function captures don't need any type annotations
             FunctionLiteralKind::Capture { .. } => return,
-            FunctionLiteralKind::Anonymous { head } => head,
+            FunctionLiteralKind::Anonymous { head, .. } => head,
             FunctionLiteralKind::Use { location } => location,
         };
 
@@ -4155,11 +4189,13 @@ impl<'ast> ast::visit::Visit<'ast> for ExpandFunctionCapture<'ast> {
     }
 }
 
+/// A set of variable names used in some gleam. Useful for passing to [NameGenerator::reserve_variable_names].
 struct VariablesNames {
     names: HashSet<EcoString>,
 }
 
 impl VariablesNames {
+    /// Creates a `VariableNames` by collecting all variables used in a list of statements.
     fn from_statements(statements: &[TypedStatement]) -> Self {
         let mut variables = Self {
             names: HashSet::new(),
@@ -4168,6 +4204,16 @@ impl VariablesNames {
         for statement in statements {
             variables.visit_typed_statement(statement);
         }
+        variables
+    }
+
+    /// Creates a `VariableNames` by collecting all variables used within an expression.
+    fn from_expression(expression: &TypedExpr) -> Self {
+        let mut variables = Self {
+            names: HashSet::new(),
+        };
+
+        variables.visit_typed_expr(expression);
         variables
     }
 }
@@ -6377,6 +6423,7 @@ impl<'ast> ast::visit::Visit<'ast> for GenerateFunction<'ast> {
         type_: &'ast Arc<Type>,
         fun: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
+        argument_parentheses: &'ast Option<u32>,
     ) {
         // If the function being called is invalid we need to generate a
         // function that has the proper labels.
@@ -6433,8 +6480,14 @@ impl<'ast> ast::visit::Visit<'ast> for GenerateFunction<'ast> {
                 | TypedExpr::Invalid { .. } => {}
             }
         }
-
-        ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments);
+        ast::visit::visit_typed_expr_call(
+            self,
+            location,
+            type_,
+            fun,
+            arguments,
+            argument_parentheses,
+        );
     }
 }
 
@@ -6749,6 +6802,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for GenerateVariant<'ast, IO> {
         type_: &'ast Arc<Type>,
         fun: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
+        open_parenthesis: &'ast Option<u32>,
     ) {
         // If the function being called is invalid we need to generate a
         // function that has the proper labels.
@@ -6762,7 +6816,14 @@ impl<'ast, IO> ast::visit::Visit<'ast> for GenerateVariant<'ast, IO> {
                 );
             }
         } else {
-            ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments);
+            ast::visit::visit_typed_expr_call(
+                self,
+                location,
+                type_,
+                fun,
+                arguments,
+                open_parenthesis,
+            );
         }
     }
 
@@ -7284,12 +7345,7 @@ impl<'a> InlineVariable<'a> {
         }
 
         let mut location = assignment.location;
-
-        let mut chars = self.module.code[location.end as usize..].chars();
-        // Delete any whitespace after the removed statement
-        while chars.next().is_some_and(char::is_whitespace) {
-            location.end += 1;
-        }
+        location.end = next_nonwhitespace(&self.module.code, location.end);
 
         self.edits.delete(location);
 
@@ -7547,6 +7603,7 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertToPipe<'ast> {
         _type_: &'ast Arc<Type>,
         fun: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
+        _open_parenthesis: &'ast Option<u32>,
     ) {
         if arguments.iter().any(|arg| arg.is_capture_hole()) {
             return;
@@ -9612,15 +9669,30 @@ impl<'ast> ast::visit::Visit<'ast> for AddOmittedLabels<'ast> {
         type_: &'ast Arc<Type>,
         fun: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
+        open_parenthesis: &'ast Option<u32>,
     ) {
         let called_function_range = self.edits.src_span_to_lsp_range(fun.location());
         if !within(self.params.range, called_function_range) {
-            ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments);
+            ast::visit::visit_typed_expr_call(
+                self,
+                location,
+                type_,
+                fun,
+                arguments,
+                open_parenthesis,
+            );
             return;
         }
 
         let Some(field_map) = fun.field_map() else {
-            ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments);
+            ast::visit::visit_typed_expr_call(
+                self,
+                location,
+                type_,
+                fun,
+                arguments,
+                open_parenthesis,
+            );
             return;
         };
         let argument_index_to_label = field_map.indices_to_labels();
@@ -9707,9 +9779,13 @@ pub struct ExtractFunction<'a> {
     /// a statement is the last in a block or function, we need to track that
     /// manually.
     last_statement_location: Option<SrcSpan>,
+    /// When visiting a pipeline step, this will hold the type of the value
+    /// returned by the previous step (if any!)
+    previous_pipeline_assignment_type: Option<Arc<Type>>,
 }
 
 /// Information about a section of code we are extracting as a function.
+#[derive(Debug)]
 struct ExtractedFunction<'a> {
     /// A list of parameters which need to be passed to the extracted function.
     /// These are any variables used in the extracted code, which are defined
@@ -9736,7 +9812,31 @@ impl<'a> ExtractedFunction<'a> {
     fn location(&self) -> SrcSpan {
         match &self.value {
             ExtractedValue::Expression(expression) => expression.location(),
-            ExtractedValue::Statements { location, .. } => *location,
+            ExtractedValue::Statements { location, .. }
+            | ExtractedValue::PipelineSteps { location, .. } => *location,
+        }
+    }
+
+    /// If the extracted function is a series of pipeline steps, this adds to it
+    /// the given pipeline step, otherwise leaving it unchanged.
+    /// If the extracted function was indeed a pipeline, this will return `true`,
+    /// otherwise it returns `false`.
+    ///
+    fn try_add_pipeline_step(&mut self, step_type: Arc<Type>, step_location: SrcSpan) {
+        if let ExtractedFunction {
+            value:
+                ExtractedValue::PipelineSteps {
+                    location,
+                    before_first: _,
+                    return_type,
+                },
+            ..
+        } = self
+        {
+            // If we're extracting this pipeline and the final step is included
+            // in the selection we want to add it to the extracted steps
+            *return_type = step_type;
+            *location = location.merge(&step_location);
         }
     }
 }
@@ -9748,6 +9848,26 @@ enum ExtractedValue<'a> {
         location: SrcSpan,
         position: StatementPosition,
     },
+    PipelineSteps {
+        location: SrcSpan,
+        /// The type of the value produced by the pipeline steps that will be
+        /// piped into the extracted function. Could be none if the steps we're
+        /// extracting include the first step, in that case there would be
+        /// nothing that is fed into it.
+        before_first: Option<Arc<Type>>,
+        /// The type returned by the extracted steps.
+        return_type: Arc<Type>,
+    },
+}
+
+impl ExtractedValue<'_> {
+    fn location(&self) -> SrcSpan {
+        match self {
+            ExtractedValue::Expression(typed_expr) => typed_expr.location(),
+            ExtractedValue::Statements { location, .. }
+            | ExtractedValue::PipelineSteps { location, .. } => *location,
+        }
+    }
 }
 
 /// When we are extracting multiple statements, there are two possible cases:
@@ -9810,6 +9930,7 @@ impl<'a> ExtractFunction<'a> {
             function: None,
             function_end_position: None,
             last_statement_location: None,
+            previous_pipeline_assignment_type: None,
         }
     }
 
@@ -9832,10 +9953,10 @@ impl<'a> ExtractFunction<'a> {
         };
 
         match extracted.value {
-            // If we extract a block, it isn't very helpful to have the body of the
-            // extracted function just be a single block expression, so instead we
-            // extract the statements inside the block. For example, the following
-            // code:
+            // If we extract a block, it isn't very helpful to have the body of
+            // the extracted function just be a single block expression, so
+            // instead we extract the statements inside the block. For example,
+            // the following code:
             //
             // ```gleam
             // pub fn main() {
@@ -9964,6 +10085,17 @@ impl<'a> ExtractFunction<'a> {
                 type_,
                 extracted.parameters,
                 end,
+            ),
+            ExtractedValue::PipelineSteps {
+                location,
+                before_first,
+                return_type,
+            } => self.extract_pipeline_steps(
+                location,
+                end,
+                extracted.parameters,
+                before_first,
+                return_type,
             ),
         }
 
@@ -10337,6 +10469,91 @@ impl<'a> ExtractFunction<'a> {
         self.edits.insert(function_end, function);
     }
 
+    fn extract_pipeline_steps(
+        &mut self,
+        location: SrcSpan,
+        function_end: u32,
+        parameters: Vec<(EcoString, Arc<Type>)>,
+        before_first: Option<Arc<Type>>,
+        return_type: Arc<Type>,
+    ) {
+        let name = self.function_name();
+        let code = code_at(self.module, location);
+        let arguments = parameters.iter().map(|(name, _)| name.clone()).join(", ");
+        let replacement = match before_first {
+            Some(_) if parameters.is_empty() => format!("{name}"),
+            Some(_) | None => format!("{name}({arguments})"),
+        };
+        self.edits.replace(location, replacement);
+
+        // When extracting something out of the middle of a pipeline the
+        // function we produce will produce a single value as output but could
+        // take multiple values as input:
+        //
+        // ```gleam
+        // wibble
+        // |> wobble(a)   // extracting this
+        // |> woo(b)      //
+        // |> something
+        // ```
+        //
+        // It will take the type returned by `wibble`, `a`, and `b` as input,
+        // and produce the value returned by `woo` as output:
+        //
+        // ```gleam
+        // wibble
+        // |> function(a, b)
+        // |> something
+        // ```
+        //
+        // If the steps extracted are at the beginning of the pipeline, then it
+        // won't take that additional argument!
+        //
+        // ```gleam
+        // wibble         // extracting these
+        // |> wobble(a)   //
+        // |> woo(b)      //
+        // |> something
+        // ```
+        //
+        // Becomes:
+        //
+        // ```gleam
+        // function(a, b)
+        // |> something
+        // ```
+
+        let mut type_printer = Printer::new(&self.module.ast.names);
+        let return_type = type_printer.print_type(&return_type);
+        let first_argument = before_first.map(|type_of_first_argument| {
+            let mut generator = NameGenerator::new();
+            for (name, _) in parameters.iter() {
+                generator.add_used_name(name.clone());
+            }
+            let first_argument_name = generator.generate_name_from_type(&type_of_first_argument);
+            (first_argument_name, type_of_first_argument.clone())
+        });
+        let parameters = first_argument
+            .clone()
+            .into_iter()
+            .chain(parameters)
+            .map(|(name, type_)| eco_format!("{name}: {}", type_printer.print_type(&type_)))
+            .join(", ");
+
+        let code = if let Some((first_argument_name, _)) = first_argument {
+            format!("{first_argument_name}\n  |> {code}")
+        } else {
+            code.trim_start_matches("|>").to_string()
+        };
+        let function = format!(
+            "\n\nfn {name}({parameters}) -> {return_type} {{
+  {code}
+}}"
+        );
+
+        self.edits.insert(function_end, function);
+    }
+
     /// When a variable is referenced, we need to decide if we need to do anything
     /// to ensure that the reference is still valid after extracting a function.
     /// If the variable is defined outside the extracted function, but used inside
@@ -10387,8 +10604,8 @@ impl<'a> ExtractFunction<'a> {
         variables.push((name.clone(), type_.clone()));
     }
 
-    fn can_extract(&self, location: SrcSpan) -> bool {
-        let expression_range = self.edits.src_span_to_lsp_range(location);
+    fn can_extract_expression(&self, expression: &TypedExpr) -> bool {
+        let expression_range = self.edits.src_span_to_lsp_range(expression.location());
         let selected_range = self.params.range;
 
         // If the selected range doesn't touch the expression at all, then there
@@ -10397,37 +10614,87 @@ impl<'a> ExtractFunction<'a> {
             return false;
         }
 
-        // Determine whether the selected range falls completely within the
-        // expression. For example:
-        // ```gleam
-        // pub fn main() {
-        //   let something = {
-        //     let a = 1
-        //     let b = 2
-        //     let c = a + b
-        //   //^ The user has selected from here
-        //     let d = a * b
-        //     c / d
-        //     //  ^ Until here
-        //   }
-        // }
-        // ```
-        //
-        // Here, the selected range does overlap with the `let something`
-        // statement; but we don't want to extract that whole statement! The
-        // user only wanted to extract the statements inside the block. So if
-        // the selected range falls completely within the expression, we ignore
-        // it and traverse the tree further until we find exactly what the user
-        // selected.
-        //
-        let selected_within_expression = selected_range.start > expression_range.start
-            && selected_range.start < expression_range.end
-            && selected_range.end > expression_range.start
-            && selected_range.end < expression_range.end;
+        match expression {
+            TypedExpr::Pipeline {
+                first_value,
+                finally,
+                ..
+            } => {
+                // We can extract a pipeline as a whole only if the selection
+                // spans all of its steps!
+                let first_step = self.edits.src_span_to_lsp_range(first_value.location);
+                let last_step = self.edits.src_span_to_lsp_range(finally.location());
+                position_within(selected_range.start, first_step)
+                    && position_within(selected_range.end, last_step)
+            }
 
-        // If the selected range is completely within the expression, we don't
-        // want to extract it.
-        !selected_within_expression
+            TypedExpr::Int { .. }
+            | TypedExpr::Float { .. }
+            | TypedExpr::String { .. }
+            | TypedExpr::Block { .. }
+            | TypedExpr::Var { .. }
+            | TypedExpr::Fn { .. }
+            | TypedExpr::List { .. }
+            | TypedExpr::Call { .. }
+            | TypedExpr::BinOp { .. }
+            | TypedExpr::Case { .. }
+            | TypedExpr::RecordAccess { .. }
+            | TypedExpr::PositionalAccess { .. }
+            | TypedExpr::ModuleSelect { .. }
+            | TypedExpr::Tuple { .. }
+            | TypedExpr::TupleIndex { .. }
+            | TypedExpr::Todo { .. }
+            | TypedExpr::Panic { .. }
+            | TypedExpr::Echo { .. }
+            | TypedExpr::BitArray { .. }
+            | TypedExpr::RecordUpdate { .. }
+            | TypedExpr::NegateBool { .. }
+            | TypedExpr::NegateInt { .. }
+            | TypedExpr::Invalid { .. } => !completely_within(selected_range, expression_range),
+        }
+    }
+
+    fn can_extract_statement(&self, statement: &TypedStatement) -> bool {
+        match statement {
+            ast::Statement::Expression(expression) => self.can_extract_expression(expression),
+
+            // Determine whether the selected range falls completely within the
+            // expression. For example:
+            // ```gleam
+            // pub fn main() {
+            //   let something = {
+            //     let a = 1
+            //     let b = 2
+            //     let c = a + b
+            //   //^ The user has selected from here
+            //     let d = a * b
+            //     c / d
+            //     //  ^ Until here
+            //   }
+            // }
+            // ```
+            //
+            // Here, the selected range does overlap with the `let something`
+            // statement; but we don't want to extract that whole statement! The
+            // user only wanted to extract the statements inside the block. So if
+            // the selected range falls completely within the expression, we ignore
+            // it and traverse the tree further until we find exactly what the user
+            // selected.
+            //
+            // If the selected range is completely within the expression, we don't
+            // want to extract it.
+            ast::Statement::Assignment(_) | ast::Statement::Use(_) | ast::Statement::Assert(_) => {
+                let statement_range = self.edits.src_span_to_lsp_range(statement.location());
+                let selected_range = self.params.range;
+
+                // If the selected range doesn't touch the statement at all, then there
+                // is no reason to extract it.
+                if !overlaps(statement_range, selected_range) {
+                    return false;
+                }
+                !completely_within(selected_range, statement_range)
+            }
+        }
     }
 }
 
@@ -10464,7 +10731,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
         // not desired.
         if self.function.is_none() {
             // If this expression is fully selected, we mark it as being extracted.
-            if self.can_extract(expression.location()) {
+            if self.can_extract_expression(expression) {
                 self.function = Some(ExtractedFunction::new(ExtractedValue::Expression(
                     expression,
                 )));
@@ -10476,7 +10743,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
     fn visit_typed_statement(&mut self, statement: &'ast TypedStatement) {
         let statement_location = statement.location();
 
-        if self.can_extract(statement_location) {
+        if self.can_extract_statement(statement) {
             let is_in_tail_position =
                 self.last_statement_location
                     .is_some_and(|last_statement_location| {
@@ -10496,11 +10763,20 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
 
             match &mut self.function {
                 None => {
-                    self.function = Some(ExtractedFunction::new(ExtractedValue::Statements {
-                        location: statement_location,
-                        position,
-                    }));
+                    self.function = match statement {
+                        TypedStatement::Expression(TypedExpr::Pipeline { .. }) => None,
+                        TypedStatement::Assert(_)
+                        | TypedStatement::Assignment(_)
+                        | TypedStatement::Expression(_)
+                        | TypedStatement::Use(_) => {
+                            Some(ExtractedFunction::new(ExtractedValue::Statements {
+                                location: statement_location,
+                                position,
+                            }))
+                        }
+                    }
                 }
+
                 // If we have already chosen an expression to extract, that means
                 // that this statement is within the already extracted expression,
                 // so we don't want to extract this instead.
@@ -10509,8 +10785,8 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                     ..
                 }) => {}
                 // If we are selecting multiple statements, this statement should
-                // be included within list, so we merge the spans to ensure it
-                // is included.
+                // be included within that list, so we merge the spans to ensure
+                // it is included.
                 Some(ExtractedFunction {
                     value:
                         ExtractedValue::Statements {
@@ -10522,9 +10798,74 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                     *location = location.merge(&statement_location);
                     *extracted_position = position;
                 }
+                Some(ExtractedFunction {
+                    value: value @ ExtractedValue::PipelineSteps { .. },
+                    ..
+                }) => {
+                    // If we were extracting a pipeline, but end up selecting
+                    // some statement that is not part of it, then we go back to
+                    // selecting a batch of statements.
+                    *value = ExtractedValue::Statements {
+                        location: value.location(),
+                        position,
+                    }
+                }
             }
         }
         ast::visit::visit_typed_statement(self, statement);
+    }
+
+    fn visit_typed_expr_pipeline(
+        &mut self,
+        _location: &'ast SrcSpan,
+        first_value: &'ast TypedPipelineAssignment,
+        assignments: &'ast [(TypedPipelineAssignment, PipelineAssignmentKind)],
+        finally: &'ast TypedExpr,
+        _finally_kind: &'ast PipelineAssignmentKind,
+    ) {
+        self.previous_pipeline_assignment_type = None;
+        self.visit_typed_pipeline_assignment(first_value);
+
+        self.previous_pipeline_assignment_type = Some(first_value.type_());
+        for (assignment, _kind) in assignments {
+            self.visit_typed_pipeline_assignment(assignment);
+            self.previous_pipeline_assignment_type = Some(assignment.type_());
+        }
+
+        // If we're selecting a pipeline and the selection ends on its final step
+        // we want to include that as well into the extracted bit.
+        let final_step_range = self.edits.src_span_to_lsp_range(finally.location());
+        if let Some(extracted_function) = &mut self.function
+            && position_within(self.params.range.end, final_step_range)
+        {
+            extracted_function.try_add_pipeline_step(finally.type_(), finally.location());
+        };
+
+        self.visit_typed_expr(finally);
+        self.previous_pipeline_assignment_type = None;
+    }
+
+    fn visit_typed_pipeline_assignment(&mut self, assignment: &'ast TypedPipelineAssignment) {
+        // In order to be extracted, a pipeline step must be overlapping with
+        // the cursor selection!
+        let assignment_range = self.edits.src_span_to_lsp_range(assignment.location);
+        if !overlaps(self.params.range, assignment_range) {
+            return;
+        }
+
+        match &mut self.function {
+            None => {
+                self.function = Some(ExtractedFunction::new(ExtractedValue::PipelineSteps {
+                    location: assignment.location,
+                    before_first: self.previous_pipeline_assignment_type.clone(),
+                    return_type: assignment.type_(),
+                }));
+            }
+            Some(extracted_function) => {
+                extracted_function.try_add_pipeline_step(assignment.type_(), assignment.location)
+            }
+        }
+        ast::visit::visit_typed_pipeline_assignment(self, assignment);
     }
 
     fn visit_typed_expr_var(
@@ -11054,5 +11395,323 @@ impl<'ast> ast::visit::Visit<'ast> for ReplaceUnderscoreWithType<'ast> {
                 location: *location,
             })
         }
+    }
+}
+
+/// Code action to turn a function used as a reference into a one-statement anonymous function.
+///
+/// For example, if the code action was used on `op` here:
+///
+/// ```gleam
+/// list.map([1, 2, 3], op)
+/// ```
+///
+/// it would become:
+///
+/// ```gleam
+/// list.map([1, 2, 3], fn(int) {
+///   op(int)
+/// })
+/// ```
+pub struct WrapInAnonymousFunction<'a> {
+    module: &'a Module,
+    line_numbers: &'a LineNumbers,
+    params: &'a CodeActionParams,
+    functions: Vec<FunctionToWrap>,
+}
+
+/// Helper struct, a target for [WrapInAnonymousFunction].
+struct FunctionToWrap {
+    location: SrcSpan,
+    arguments: Vec<Arc<Type>>,
+    variables_names: VariablesNames,
+}
+
+impl<'a> WrapInAnonymousFunction<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            line_numbers,
+            params,
+            functions: vec![],
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let mut actions = Vec::with_capacity(self.functions.len());
+        for target in self.functions {
+            let mut name_generator = NameGenerator::new();
+            name_generator.reserve_variable_names(target.variables_names);
+            let arguments = target
+                .arguments
+                .iter()
+                .map(|t| name_generator.generate_name_from_type(t))
+                .join(", ");
+
+            let mut edits = TextEdits::new(self.line_numbers);
+            edits.insert(target.location.start, format!("fn({arguments}) {{ "));
+            edits.insert(target.location.end, format!("({arguments}) }}"));
+
+            CodeActionBuilder::new("Wrap in anonymous function")
+                .kind(CodeActionKind::REFACTOR_REWRITE)
+                .changes(self.params.text_document.uri.clone(), edits.edits)
+                .push_to(&mut actions);
+        }
+        actions
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for WrapInAnonymousFunction<'ast> {
+    fn visit_typed_expr(&mut self, expression: &'ast TypedExpr) {
+        let expression_range = src_span_to_lsp_range(expression.location(), self.line_numbers);
+        if !overlaps(self.params.range, expression_range) {
+            return;
+        }
+
+        let is_excluded = if let TypedExpr::Fn { kind, .. } = expression {
+            kind.is_anonymous() || kind.is_capture()
+        } else {
+            false
+        };
+
+        if let Type::Fn { arguments, .. } = &*expression.type_()
+            && !is_excluded
+        {
+            self.functions.push(FunctionToWrap {
+                location: expression.location(),
+                arguments: arguments.clone(),
+                variables_names: VariablesNames::from_expression(expression),
+            });
+        };
+
+        ast::visit::visit_typed_expr(self, expression);
+    }
+
+    /// We don't want to apply to functions that are being explicitly called
+    /// already, so we need to intercept visits to function calls and bounce
+    /// them out again so they don't end up in our impl for visit_typed_expr.
+    /// Otherwise this is the same as [].
+    fn visit_typed_expr_call(
+        &mut self,
+        _location: &'ast SrcSpan,
+        _type: &'ast Arc<Type>,
+        fun: &'ast TypedExpr,
+        arguments: &'ast [TypedCallArg],
+        _argument_parentheses: &'ast Option<u32>,
+    ) {
+        // We only need to do this interception for explicit calls, so if any
+        // of our arguments are explicit we re-enter the visitor as usual.
+        if arguments.iter().any(|a| a.is_implicit()) {
+            self.visit_typed_expr(fun);
+        } else {
+            // We still want to visit other nodes nested in the function being
+            // called so we bounce the call back out.
+            ast::visit::visit_typed_expr(self, fun);
+        }
+
+        for argument in arguments {
+            self.visit_typed_call_arg(argument);
+        }
+    }
+}
+
+/// Code action to unwrap trivial one-statement anonymous functions into just a
+/// reference to the function called
+///
+/// For example, if the code action was used on the anonymous function here:
+///
+/// ```gleam
+/// list.map([1, 2, 3], fn(int) {
+///   op(int)
+/// })
+/// ```
+///
+/// it would become:
+///
+/// ```gleam
+/// list.map([1, 2, 3], op)
+/// ```
+pub struct UnwrapAnonymousFunction<'a> {
+    module: &'a Module,
+    line_numbers: &'a LineNumbers,
+    params: &'a CodeActionParams,
+    functions: Vec<FunctionToUnwrap>,
+}
+
+/// Helper struct, a target for [UnwrapAnonymousFunction]
+struct FunctionToUnwrap {
+    /// Location of the anonymous function to apply the action to.
+    outer_function: SrcSpan,
+    /// Location of the opening brace of the anonymous function.
+    outer_function_body_start: u32,
+    /// Location of the function being called inside the anonymous function.
+    /// This will be all that's left after the action, plus any comments.
+    inner_function: SrcSpan,
+    // Location of the opening parenthesis of the inner function's argument list.
+    inner_function_arguments_start: u32,
+}
+
+impl<'a> UnwrapAnonymousFunction<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            line_numbers,
+            params,
+            functions: vec![],
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let mut actions = Vec::with_capacity(self.functions.len());
+        for function in &self.functions {
+            let mut edits = TextEdits::new(self.line_numbers);
+
+            // We need to delete the anonymous function's head and the opening
+            // brace but preserve comments between it and the inner function call.
+            // We set our endpoint at the start of the function body, and move
+            // it on through any whitespace.
+            let head_deletion_end =
+                next_nonwhitespace(&self.module.code, function.outer_function_body_start + 1);
+            edits.delete(SrcSpan {
+                start: function.outer_function.start,
+                end: head_deletion_end,
+            });
+
+            // Delete the inner function call's arguments.
+            edits.delete(SrcSpan {
+                start: function.inner_function_arguments_start,
+                end: function.inner_function.end,
+            });
+
+            // To delete the tail we remove the function end (the '}') and any
+            // whitespace before it.
+            let tail_deletion_start =
+                previous_nonwhitespace(&self.module.code, function.outer_function.end - 1);
+            edits.delete(SrcSpan {
+                start: tail_deletion_start,
+                end: function.outer_function.end,
+            });
+
+            CodeActionBuilder::new("Remove anonymous function wrapper")
+                .kind(CodeActionKind::REFACTOR_REWRITE)
+                .changes(self.params.text_document.uri.clone(), edits.edits)
+                .push_to(&mut actions);
+        }
+        actions
+    }
+
+    /// If an anonymous function can be unwrapped, save it to our list
+    ///
+    /// We need to ensure our subjects:
+    /// - are anonymous function literals (not captures)
+    /// - only contain a single statement
+    /// - that statement is a function call
+    /// - that call's arguments exactly match the arguments of the enclosing
+    ///   function
+    fn register_function(
+        &mut self,
+        location: &'a SrcSpan,
+        kind: &'a FunctionLiteralKind,
+        arguments: &'a [TypedArg],
+        body: &'a Vec1<TypedStatement>,
+    ) {
+        let function_range = src_span_to_lsp_range(*location, self.line_numbers);
+        if !overlaps(self.params.range, function_range) {
+            return;
+        }
+
+        let outer_body = match kind {
+            FunctionLiteralKind::Anonymous { head, .. } => SrcSpan::new(
+                next_nonwhitespace(&self.module.code, head.end),
+                location.end,
+            ),
+            _ => return,
+        };
+
+        // We can only apply to anonymous functions containing a single function call
+        let [
+            TypedStatement::Expression(TypedExpr::Call {
+                location: call_location,
+                arguments: call_arguments,
+                open_parenthesis: Some(arguments_start),
+                ..
+            }),
+        ] = body.as_slice()
+        else {
+            return;
+        };
+
+        // We need the existing argument list for the fn to be a 1:1 match for
+        // the args we pass to the called function, so we need to collect the
+        // names used in both lists and check they're equal.
+
+        let outer_argument_names = arguments.iter().map(|a| match &a.names {
+            ArgNames::Named { name, .. } => Some(name),
+            // We can bail out early if any arguments are discarded, since
+            // they couldn't match those actually used.
+            ArgNames::Discard { .. } => None,
+            // Anonymous functions can't have labelled arguments.
+            ArgNames::NamedLabelled { .. } => unreachable!(),
+            ArgNames::LabelledDiscard { .. } => unreachable!(),
+        });
+
+        let inner_argument_names = call_arguments.iter().map(|a| match &a.value {
+            TypedExpr::Var { name, .. } => Some(name),
+            // We can bail out early if any of these aren't variables, since
+            // they couldn't match the inputs.
+            _ => None,
+        });
+
+        if !inner_argument_names.eq(outer_argument_names) {
+            return;
+        }
+
+        self.functions.push(FunctionToUnwrap {
+            outer_function: *location,
+            outer_function_body_start: outer_body.start,
+            inner_function: *call_location,
+            inner_function_arguments_start: *arguments_start,
+        })
+    }
+}
+
+impl<'ast> ast::visit::Visit<'ast> for UnwrapAnonymousFunction<'ast> {
+    fn visit_typed_expr_fn(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        kind: &'ast FunctionLiteralKind,
+        arguments: &'ast [TypedArg],
+        body: &'ast Vec1<TypedStatement>,
+        return_annotation: &'ast Option<ast::TypeAst>,
+    ) {
+        let function_range = src_span_to_lsp_range(*location, self.line_numbers);
+        if !overlaps(self.params.range, function_range) {
+            return;
+        }
+
+        self.register_function(location, kind, arguments, body);
+
+        ast::visit::visit_typed_expr_fn(
+            self,
+            location,
+            type_,
+            kind,
+            arguments,
+            body,
+            return_annotation,
+        )
     }
 }

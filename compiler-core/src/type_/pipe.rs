@@ -22,7 +22,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
     fn new(expr_typer: &'a mut ExprTyper<'b, 'c>, size: usize, first: TypedExpr, end: u32) -> Self {
         let first_type = first.type_();
         let first_location = first.location();
-        let first_value = new_pipeline_assignment(expr_typer, first);
+        let first_value = new_pipeline_assignment(expr_typer, first, first_location);
         Self {
             size,
             expr_typer,
@@ -82,6 +82,8 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
         let mut finally = None;
 
         for (i, call) in expressions.into_iter().enumerate() {
+            let step_location = call.location();
+
             if self.expr_typer.previous_panics {
                 self.expr_typer
                     .warn_for_unreachable_code(call.location(), PanicPosition::PreviousExpression);
@@ -117,6 +119,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
                             arguments,
                             type_: return_type,
                             fun: Box::new(func),
+                            open_parenthesis: None,
                         },
                     )
                 }
@@ -212,7 +215,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
             if i + 2 == self.size {
                 finally = Some((call, kind));
             } else {
-                self.push_assignment(call, kind);
+                self.push_assignment(call, step_location, kind);
             }
         }
 
@@ -269,10 +272,15 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
     }
 
     /// Push an assignment for the value on the left hand side of the pipe
-    fn push_assignment(&mut self, expression: TypedExpr, kind: PipelineAssignmentKind) {
+    fn push_assignment(
+        &mut self,
+        expression: TypedExpr,
+        call_location: SrcSpan,
+        kind: PipelineAssignmentKind,
+    ) {
         self.argument_type = expression.type_();
         self.argument_location = expression.location();
-        let assignment = new_pipeline_assignment(self.expr_typer, expression);
+        let assignment = new_pipeline_assignment(self.expr_typer, expression, call_location);
         self.assignments.push((assignment, kind));
     }
 
@@ -294,6 +302,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
             type_,
             arguments,
             fun: Box::new(function),
+            open_parenthesis: None,
         };
         let arguments = vec![self.untyped_left_hand_value_variable_call_argument()];
         // TODO: use `.with_unify_error_situation(UnifyErrorSituation::PipeTypeMismatch)`
@@ -312,6 +321,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
             type_,
             arguments,
             fun: Box::new(function),
+            open_parenthesis: None,
         }
     }
 
@@ -339,6 +349,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
             type_,
             arguments,
             fun: Box::new(fun),
+            open_parenthesis: None,
         }
     }
 
@@ -377,6 +388,7 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
             type_: return_type,
             fun: function,
             arguments: vec![self.typed_left_hand_value_variable_call_argument()],
+            open_parenthesis: None,
         }
     }
 
@@ -428,8 +440,8 @@ impl<'a, 'b, 'c> PipeTyper<'a, 'b, 'c> {
 fn new_pipeline_assignment(
     expr_typer: &mut ExprTyper<'_, '_>,
     expression: TypedExpr,
+    location: SrcSpan,
 ) -> TypedPipelineAssignment {
-    let location = expression.location();
     // Insert the variable for use in type checking the rest of the pipeline
     expr_typer.environment.insert_local_variable(
         PIPE_VARIABLE.into(),
