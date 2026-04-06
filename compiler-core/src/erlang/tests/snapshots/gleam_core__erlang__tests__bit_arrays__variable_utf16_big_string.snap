@@ -1,12 +1,11 @@
 ---
 source: compiler-core/src/erlang/tests/bit_arrays.rs
-expression: "const bit_size = 8\npub fn main() {\n  let a = <<10:size(bit_size)>>\n  a\n}\n"
+expression: "\npub fn go(wibble: String) {\n  <<wibble:utf16-big>>\n}\n"
 ---
 ----- SOURCE CODE
-const bit_size = 8
-pub fn main() {
-  let a = <<10:size(bit_size)>>
-  a
+
+pub fn go(wibble: String) {
+  <<wibble:utf16-big>>
 }
 
 
@@ -14,10 +13,9 @@ pub fn main() {
 -module(my@mod).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "project/test/my/mod.gleam").
--export([main/0]).
+-export([go/1]).
 
 -file("project/test/my/mod.gleam", 2).
--spec main() -> bitstring().
-main() ->
-    A = <<10:(erlang:max(0, 8))>>,
-    A.
+-spec go(binary()) -> bitstring().
+go(Wibble) ->
+    <<(unicode:characters_to_binary(Wibble, utf8, {utf16, big}))/binary>>.

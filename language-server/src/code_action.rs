@@ -9813,6 +9813,7 @@ impl<'a> ExtractedFunction<'a> {
         match &self.value {
             ExtractedValue::Expression(expression) => expression.location(),
             ExtractedValue::Statements { location, .. }
+            | ExtractedValue::Use { location, .. }
             | ExtractedValue::PipelineSteps { location, .. } => *location,
         }
     }
@@ -9848,6 +9849,12 @@ enum ExtractedValue<'a> {
         location: SrcSpan,
         position: StatementPosition,
     },
+    /// We're extracting a single use statement. We need this special case to
+    /// properly handle the statements inside of them.
+    Use {
+        location: SrcSpan,
+        type_: Arc<Type>,
+    },
     PipelineSteps {
         location: SrcSpan,
         /// The type of the value produced by the pipeline steps that will be
@@ -9865,7 +9872,8 @@ impl ExtractedValue<'_> {
         match self {
             ExtractedValue::Expression(typed_expr) => typed_expr.location(),
             ExtractedValue::Statements { location, .. }
-            | ExtractedValue::PipelineSteps { location, .. } => *location,
+            | ExtractedValue::PipelineSteps { location, .. }
+            | ExtractedValue::Use { location, .. } => *location,
         }
     }
 }
@@ -10076,7 +10084,9 @@ impl<'a> ExtractFunction<'a> {
                 extracted.returned_variables,
                 end,
             ),
-            ExtractedValue::Statements {
+
+            ExtractedValue::Use { location, type_ }
+            | ExtractedValue::Statements {
                 location,
                 position: StatementPosition::Tail { type_ },
             } => self.extract_code_in_tail_position(
@@ -10655,6 +10665,15 @@ impl<'a> ExtractFunction<'a> {
     }
 
     fn can_extract_statement(&self, statement: &TypedStatement) -> bool {
+        let statement_range = self.edits.src_span_to_lsp_range(statement.location());
+        let selected_range = self.params.range;
+
+        // If the selected range doesn't touch the statement at all, then there
+        // is no reason to extract it.
+        if !overlaps(statement_range, selected_range) {
+            return false;
+        }
+
         match statement {
             ast::Statement::Expression(expression) => self.can_extract_expression(expression),
 
@@ -10683,16 +10702,21 @@ impl<'a> ExtractFunction<'a> {
             //
             // If the selected range is completely within the expression, we don't
             // want to extract it.
-            ast::Statement::Assignment(_) | ast::Statement::Use(_) | ast::Statement::Assert(_) => {
-                let statement_range = self.edits.src_span_to_lsp_range(statement.location());
-                let selected_range = self.params.range;
-
-                // If the selected range doesn't touch the statement at all, then there
-                // is no reason to extract it.
-                if !overlaps(statement_range, selected_range) {
-                    return false;
-                }
+            ast::Statement::Use(_) | ast::Statement::Assert(_) => {
                 !completely_within(selected_range, statement_range)
+            }
+
+            // We can only extract a whole let statement if the assignment
+            // part itself is selected. If the only part being selected is the
+            // expression then the right call is not extracting the whole
+            // statement but just the expression.
+            ast::Statement::Assignment(assignment) => {
+                let value_range = self
+                    .edits
+                    .src_span_to_lsp_range(assignment.value.location());
+
+                !within(selected_range, value_range)
+                    && !completely_within(selected_range, statement_range)
             }
         }
     }
@@ -10767,14 +10791,38 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                         TypedStatement::Expression(TypedExpr::Pipeline { .. }) => None,
                         TypedStatement::Assert(_)
                         | TypedStatement::Assignment(_)
-                        | TypedStatement::Expression(_)
-                        | TypedStatement::Use(_) => {
+                        | TypedStatement::Expression(_) => {
                             Some(ExtractedFunction::new(ExtractedValue::Statements {
                                 location: statement_location,
                                 position,
                             }))
                         }
+                        TypedStatement::Use(use_) => {
+                            Some(ExtractedFunction::new(ExtractedValue::Use {
+                                location: use_.call.location(),
+                                type_: statement.type_(),
+                            }))
+                        }
                     }
+                }
+
+                // If we're extracting something that is withing a use expression
+                // we don't need to change anything
+                Some(ExtractedFunction {
+                    value: ExtractedValue::Use { location, .. },
+                    ..
+                }) if location.contains_span(statement_location) => {}
+                // Otherwise it means we're extracting multiple statements
+                // _including_ some use expression, we fallback to extracting
+                // multiple statements
+                Some(ExtractedFunction {
+                    value: value @ ExtractedValue::Use { .. },
+                    ..
+                }) => {
+                    *value = ExtractedValue::Statements {
+                        location: value.location().merge(&statement_location),
+                        position,
+                    };
                 }
 
                 // If we have already chosen an expression to extract, that means

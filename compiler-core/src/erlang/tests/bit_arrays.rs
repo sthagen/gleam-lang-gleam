@@ -358,3 +358,171 @@ pub fn main() -> Nil {
 "#
     );
 }
+
+#[test]
+fn size_8_literal_test() {
+    assert_erl!(
+        "pub fn size_8_literal_test() {
+  <<257:size(8)>>
+}"
+    );
+}
+
+#[test]
+fn size_8_variable_test() {
+    assert_erl!(
+        "pub fn size_8_variable_test() {
+  let i = 257
+  <<i:size(8)>>
+}"
+    );
+}
+
+#[test]
+fn size_16_literal_test() {
+    assert_erl!(
+        "pub fn size_16_literal_test() {
+  <<257:size(16)>>
+}"
+    );
+}
+
+#[test]
+fn size_16_variable_test() {
+    assert_erl!(
+        "pub fn size_16_variable_test() {
+  let i = 257
+  <<i:size(16)>>
+}"
+    );
+}
+
+#[test]
+fn size_unit_test() {
+    assert_erl!(
+        "pub fn size_16_variable_test() {
+  let i = 257
+  <<i:size(4)-unit(16)>>
+}"
+    );
+}
+
+#[test]
+fn negative_size_test() {
+    assert_erl!(
+        "pub fn size_16_variable_test() {
+  let i = 257
+  <<i:size(-1)>>
+}"
+    );
+}
+
+#[test]
+fn literal_utf8_string() {
+    assert_erl!(
+        r#"
+pub fn go() {
+  <<"wibble":utf8>>
+}
+"#
+    )
+}
+
+#[test]
+fn variable_utf8_string() {
+    assert_erl!(
+        r#"
+pub fn go(wibble: String) {
+  <<wibble:utf8>>
+}
+"#
+    )
+}
+
+#[test]
+fn literal_utf16_little_string() {
+    assert_erl!(
+        r#"
+pub fn go() {
+  <<"wibble":utf16-little>>
+}
+"#
+    )
+}
+
+#[test]
+fn variable_utf16_little_string() {
+    assert_erl!(
+        r#"
+pub fn go(wibble: String) {
+  <<wibble:utf16-little>>
+}
+"#
+    )
+}
+
+#[test]
+fn literal_utf16_big_string() {
+    assert_erl!(
+        r#"
+pub fn go() {
+  <<"wibble":utf16-big>>
+}
+"#
+    )
+}
+
+#[test]
+fn variable_utf16_big_string() {
+    assert_erl!(
+        r#"
+pub fn go(wibble: String) {
+  <<wibble:utf16-big>>
+}
+"#
+    )
+}
+
+#[test]
+fn literal_utf32_little_string() {
+    assert_erl!(
+        r#"
+pub fn go() {
+  <<"wibble":utf32-little>>
+}
+"#
+    )
+}
+
+#[test]
+fn variable_utf32_little_string() {
+    assert_erl!(
+        r#"
+pub fn go(wibble: String) {
+  <<wibble:utf32-little>>
+}
+"#
+    )
+}
+
+#[test]
+fn literal_utf32_big_string() {
+    assert_erl!(
+        r#"
+pub fn go() {
+  <<"wibble":utf32-big>>
+}
+"#
+    )
+}
+
+#[test]
+fn variable_utf32_big_string() {
+    assert_erl!(
+        r#"
+pub fn go(wibble: String) {
+  <<wibble:utf32-big>>
+}
+"#
+    )
+}

@@ -190,7 +190,8 @@
   }
   ```
 
-  while the other action would reverse the change. ([Eli Treuherz](http.github.com/treuherz))
+  while the other action would reverse the change.
+  ([Eli Treuherz](http.github.com/treuherz))
 
 - The "extract function" code action can now be used in pipelines to extract a
   part of one into a function. For example, triggering it here:
@@ -219,6 +220,40 @@
     string
     |> string.lowercase
     |> string.replace(each: "jak", with: "lucy")
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The "extract function" code action can now be used to extract the right hand
+  side of an assignment into its own function. For example, triggering it here:
+
+  ```gleam
+  pub fn personal_blog() {
+    let introduction =
+      html.main([], [
+        html.h1([], [html.text("Hello, world!")]),
+        html.p([], [html.text("Gleam is cool")])
+      ])
+    //^^^ Triggering "extract function" on this expression
+
+    html.body([introduction, blog_posts()])
+  }
+  ```
+
+  Would result in the following code:
+
+  ```gleam
+  pub fn personal_blog() {
+    let introduction = function()
+    html.body([introduction, blog_posts()])
+  }
+
+  pub fn function() {
+    html.main([], [
+      html.h1([], [html.text("Hello, world!")]),
+      html.p([], [html.text("Gleam is cool")])
+    ])
   }
   ```
 
@@ -267,6 +302,7 @@
 
 - The formatting of long nested tuples has been improved.
   Previously the formatter would split only the last tuple:
+
   ```gleam
   #(#(wibble, wobble), #(some_long_tuple, passed_as_last_argument))
   // after format:
@@ -275,7 +311,9 @@
     passed_as_last_argument
   ))
   ```
+
   But now it favours first splitting each element onto its own line:
+
   ```gleam
   #(#(wibble, wobble), #(some_long_tuple, passed_as_last_argument))
   // after format:
@@ -284,6 +322,11 @@
     #(some_long_tuple, passed_as_last_argument)
   )
   ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where some functions could be formatted to be longer than 80
+  characters.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Bug fixes
@@ -314,7 +357,28 @@
   generated JavaScript code, leading to runtime errors in certain circumstances.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- Fixed a bug where the compiler would not generate the correct code on the
+  Erlang target for bit array string segments with the `utf16` and `utf32`
+  option.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Fixed the formatting of some errors' hints to properly wrap.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where box drawing characters would not use the same monospace font
+  as all other characters inside code blocks in the generated documentation.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the "Add missing type parameter" code action could be
+  triggered on types that do not exist instead of type variables.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the "Add missing patterns" code action could end up deleting
+  comments inside an incomplete case expression.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the "Extract function" could generate invalid code when
+  triggered on a use statement inside a block.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Fixed a bug where the JavaScript code generator could produce duplicate `let`
@@ -330,15 +394,3 @@
   offset 0 instead of the slice's actual byte offset, causing sliced bit arrays
   to read from the wrong position in the underlying buffer on JavaScript.
   ([John Downey](https://github.com/jtdowney))
-
-- Fixed a bug where the "Add missing type parameter" code action could be
-  triggered on types that do not exist instead of type variables.
-  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
-
-- Fixed a bug where the "Add missing patterns" code action could end up deleting
-  comments inside an incomplete case expression.
-  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
-
-- Fixed a bug where some functions could be formatted to be longer than 80
-  characters.
-  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
