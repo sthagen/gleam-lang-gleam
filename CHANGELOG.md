@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## v1.16.0-rc1 - 2026-0424
 
 ### Compiler
+
+- The compiler now reports all errors and warnings it can find in modules that
+  do not depend on each other, while previously it would always stop at the
+  first module with an error.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The compiler now supports list prepending in constants. For example:
 
@@ -168,11 +173,19 @@
 - New Gleam packages are generated requiring >= 0.70.0 of `gleam_stdlib`.
   ([Louis Pilfold](https://github.com/lpil))
 
+- `gleam.toml` files with invalid dependency names now raise an error
+  immediately when the file is parsed.
+  ([Louis Pilfold](https://github.com/lpil))
+
 - Documentation for `--target` option has been improved to include more
   details.
   ([Andrey Kozhev](https://github.com/ankddev))
 
 ### Language server
+
+- The language server will now show a diagnostic if you have a file open that
+  could not be analysed due to its dependencies failing to compile.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The language server now offers code actions to wrap a function reference in an
   anonymous function, or to remove a trivial anonymous function, leaving its
@@ -329,11 +342,11 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+### Bug fixes
+
 - Fixed a bug where some functions could be formatted to be longer than 80
   characters.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
-
-### Bug fixes
 
 - Fixed a bug that would result in not being able to publish a package if some
   non-ASCII characters were used in field names other than `description`.
@@ -384,6 +397,10 @@
 - Fixed a bug where the "Extract function" could generate invalid code when
   triggered on a use statement inside a block.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where constants referenced in a bit-array pattern's size option
+  would report as unused.
+  ([Louis Pilfold](https://github.com/lpil))
 
 - Fixed a bug where the JavaScript code generator could produce duplicate `let`
   declarations for internal variables after a `case` expression whose subject
