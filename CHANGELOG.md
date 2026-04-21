@@ -1,10 +1,16 @@
 # Changelog
 
-## Unreleased
+## v1.16.0-rc3 - 2026-04-20
 
 ### Build tool
 
 - New Gleam packages are now generated requiring `>= 1.0.0` of `gleam_stdlib`.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+### Bug fixes
+
+- Fixed a bug where certain invalid programs would type check if they contained
+  many mutually recursive functions.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
 ## v1.16.0-rc2 - 2026-04-14
