@@ -5696,6 +5696,28 @@ fn extract_variable() {
 }
 
 #[test]
+fn extract_can_extract_number_used_as_call_argument() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+  wibble(label: 1)
+}"#,
+        find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn extract_can_extract_bool_used_as_call_argument() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"pub fn main() {
+  wibble(label: True)
+}"#,
+        find_position_of("True").to_selection()
+    );
+}
+
+#[test]
 fn extract_variable_ignores_names_in_other_branches() {
     assert_code_action!(
         EXTRACT_VARIABLE,
@@ -7370,6 +7392,48 @@ fn do_not_extract_top_level_expression_in_let_statement() {
 }
 "#,
         find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn allow_extracting_multiple_selects() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"
+pub fn go(wibble: Wibble) {
+    [
+        wibble.wobble.wubble.woo,
+        todo as "something else",
+    ]
+}
+
+pub type Wibble { Wibble(wobble: Wobble) }
+pub type Wobble { Wobble(wubble: Wubble) }
+pub type Wubble { Wubble(woo: Int) }
+"#,
+        find_position_of("wibble")
+            .nth_occurrence(2)
+            .select_until(find_position_of("woo"))
+    );
+}
+
+#[test]
+fn allow_extracting_part_of_multiple_selects() {
+    assert_code_action!(
+        EXTRACT_VARIABLE,
+        r#"
+pub fn go(wibble: Wibble) {
+    [
+        wibble.wobble.wubble.woo,
+        todo as "something else",
+    ]
+}
+
+pub type Wibble { Wibble(wobble: Wobble) }
+pub type Wobble { Wobble(wubble: Wubble) }
+pub type Wubble { Wubble(woo: Int) }
+"#,
+        find_position_of("wubble").to_selection()
     );
 }
 
