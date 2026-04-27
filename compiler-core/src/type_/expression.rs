@@ -6,10 +6,10 @@ use crate::{
         Arg, Assert, Assignment, AssignmentKind, BinOp, BitArrayOption, BitArraySegment,
         CAPTURE_VARIABLE, CallArg, Clause, ClauseGuard, Constant, FunctionLiteralKind, HasLocation,
         ImplicitCallArgOrigin, InvalidExpression, Layer, RECORD_UPDATE_VARIABLE,
-        RecordBeingUpdated, SrcSpan, Statement, TodoKind, TypeAst, TypedArg, TypedAssert,
-        TypedAssignment, TypedClause, TypedClauseGuard, TypedConstant, TypedExpr,
-        TypedMultiPattern, TypedStatement, USE_ASSIGNMENT_VARIABLE, UntypedArg, UntypedAssert,
-        UntypedAssignment, UntypedClause, UntypedClauseGuard, UntypedConstant,
+        RecordBeingUpdated, RecordUpdateAssignment, SrcSpan, Statement, TodoKind, TypeAst,
+        TypedArg, TypedAssert, TypedAssignment, TypedClause, TypedClauseGuard, TypedConstant,
+        TypedExpr, TypedMultiPattern, TypedStatement, USE_ASSIGNMENT_VARIABLE, UntypedArg,
+        UntypedAssert, UntypedAssignment, UntypedClause, UntypedClauseGuard, UntypedConstant,
         UntypedConstantBitArraySegment, UntypedExpr, UntypedExprBitArraySegment,
         UntypedMultiPattern, UntypedStatement, UntypedUse, UntypedUseAssignment, Use,
         UseAssignment,
@@ -577,6 +577,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             kind,
             location: warning_location,
             type_: type_.clone(),
+            names: self.environment.names.clone(),
         });
 
         self.purity = Purity::Impure;
@@ -1672,6 +1673,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         }
 
                         Constant::Int { .. }
+                        | Constant::Todo { .. }
                         | Constant::Tuple { .. }
                         | Constant::List { .. }
                         | Constant::Record { .. }
@@ -3048,7 +3050,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             .clone();
 
         // infer the record being updated
-        let record = self.infer_or_error(*record.base)?;
+        let record = self.infer(*record.base);
         let record_location = record.location();
         let record_type = record.type_();
 
@@ -3058,17 +3060,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             // We create an Assignment for the old record expression and will
             // use a Var expression to refer back to it while constructing the
             // arguments.
-            let record_assignment = Assignment {
-                location: record_location,
-                pattern: Pattern::Variable {
-                    location: record_location,
-                    name: RECORD_UPDATE_VARIABLE.into(),
-                    type_: record_type.clone(),
-                    origin: VariableOrigin::generated(),
-                },
-                annotation: None,
-                compiled_case: CompiledCase::failure(),
-                kind: AssignmentKind::Generated,
+            let record_assignment = RecordUpdateAssignment {
+                name: RECORD_UPDATE_VARIABLE.into(),
                 value: record,
             };
 
@@ -3209,8 +3202,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     FieldAccessUsage::RecordUpdate,
                 )?;
 
-                unify(variant.arg_type(index), record_access.type_()).map_err(|e| {
-                    convert_incompatible_fields_error(e, RecordField::Labelled(label.clone()))
+                unify(variant.arg_type(index), record_access.type_()).map_err(|error| {
+                    convert_incompatible_fields_error(error, RecordField::Labelled(label.clone()))
                 })?;
 
                 implicit_arguments.push((
@@ -3257,8 +3250,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                             .importable_modules
                             .get(module)
                             .and_then(|module| module.accessors.get(name))
-                            .filter(|a| {
-                                a.publicity.is_importable()
+                            .filter(|accessors_map| {
+                                accessors_map.publicity.is_importable()
                                     || module == &self.environment.current_module
                             })
                             .and_then(|accessors_map| {
@@ -3303,8 +3296,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     type_: type_.clone(),
                 };
 
-                unify(variant.arg_type(index), type_.clone()).map_err(|e| {
-                    convert_incompatible_fields_error(e, RecordField::Unlabelled(index))
+                unify(variant.arg_type(index), type_.clone()).map_err(|error| {
+                    convert_incompatible_fields_error(error, RecordField::Unlabelled(index))
                 })?;
 
                 implicit_arguments.push((
@@ -3381,9 +3374,10 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             }
         };
 
-        // Check that the record type unifies with the return type of the constructor, and is
-        // not some unrelated other type. This should not affect our returned type, so we
-        // instantiate a new copy of the generic return type for our value constructor.
+        // Check that the record type unifies with the return type of the
+        // constructor, and is not some unrelated other type.
+        // This should not affect our returned type, so we instantiate a new
+        // copy of the generic return type for our value constructor.
         let return_type_copy = match value_constructor.type_.as_ref() {
             Type::Fn { return_, .. } => self.instantiate(return_.clone(), &mut hashmap![]),
             Type::Named { .. } | Type::Var { .. } | Type::Tuple { .. } => {
@@ -3406,8 +3400,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             });
         }
 
-        // if we know the record that is being spread, and it does match the one being constructed,
-        // we can safely perform this record update due to variant inference.
+        // if we know the record that is being spread, and it does match the one
+        // being constructed, we can safely perform this record update due to
+        // variant inference.
         if record_index.is_some_and(|index| index == variant_index) {
             self.track_feature_usage(FeatureKind::RecordUpdateVariantInference, record.location());
             return Ok(RecordUpdateVariant {
@@ -3419,8 +3414,9 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
         // We definitely know that we can't do this record update safely.
         //
-        // If we know the variant of the value being spread, and it doesn't match the
-        // one being constructed, we can tell the user that it's always wrong
+        // If we know the variant of the value being spread, and it doesn't
+        // match the one being constructed, we can tell the user that it's
+        // always wrong.
         if record_index.is_some() {
             let Type::Named {
                 module: record_module,
@@ -3445,8 +3441,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             });
         }
 
-        // If we don't have information about the variant being spread, we tell the user
-        // that it's not safe to update it as it could be any variant
+        // If we don't have information about the variant being spread, we tell
+        // the user that it's not safe to update it as it could be any variant.
         Err(Error::UnsafeRecordUpdate {
             location: record.location(),
             reason: UnsafeRecordUpdateReason::UnknownVariant {
@@ -3867,6 +3863,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     | Constant::BitArray { .. }
                     | Constant::Var { .. }
                     | Constant::StringConcatenation { .. }
+                    | Constant::Todo { .. }
                     | Constant::Invalid { .. } => typed_record,
                 };
 
@@ -4329,6 +4326,31 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 }
             }
 
+            Constant::Todo {
+                location, message, ..
+            } => {
+                let type_ = self.new_unbound_var();
+                let message = message.map(|message| {
+                    let message = self.infer_const(&None, *message);
+                    if let Err(error) = unify(string(), message.type_()) {
+                        self.problems
+                            .error(convert_unify_error(error, message.location()))
+                    }
+                    Box::new(message)
+                });
+
+                // Constant todos always result in a compile time error, this
+                // way the developer has to remember to change them before
+                // running their code!
+                self.problems.error(Error::TodoConstant { location });
+
+                Constant::Todo {
+                    location,
+                    type_,
+                    message,
+                }
+            }
+
             Constant::Invalid { .. } => panic!("invalid constants can not be in an untyped ast"),
         }
     }
@@ -4418,6 +4440,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         let type_ = list(element_type);
 
         let tail = if let Some(tail) = tail {
+            self.track_feature_usage(FeatureKind::ConstantListWithTail, location);
             let tail = self.infer_const(&None, *tail);
             if let Err(error) = unify(type_.clone(), tail.type_()) {
                 self.problems
@@ -5270,6 +5293,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             | Constant::RecordUpdate { .. }
             | Constant::BitArray { .. }
             | Constant::StringConcatenation { .. }
+            | Constant::Todo { .. }
             | Constant::Invalid { .. } => (),
         }
     }
@@ -5281,7 +5305,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 fn invalid_with_annotated_type(constant: TypedConstant, new_type: Arc<Type>) -> TypedConstant {
     // In case the types cannot be unified we change the inferred we
     // return a constant where the type matches the annotated one.
-    // This can help minimise fals positive later on!
+    // This can help minimise false positive later on!
     match constant {
         // For simple variants that don't carry their own type we
         // replace them with an invalid constant with the same
@@ -5294,6 +5318,16 @@ fn invalid_with_annotated_type(constant: TypedConstant, new_type: Arc<Type>) -> 
             location,
             type_: new_type,
             extra_information: None,
+        },
+
+        // Todos should never result in type errors like this one, but just to
+        // be safe rather than panicking we replace the type with the new one.
+        Constant::Todo {
+            location, message, ..
+        } => TypedConstant::Todo {
+            location,
+            type_: new_type,
+            message,
         },
 
         // In all other cases we don't want to lose information on

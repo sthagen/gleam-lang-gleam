@@ -43,7 +43,8 @@ use crate::{
     ast::{
         BitArraySize, RecordBeingUpdated, TypeAstConstructorName, TypedBitArraySize,
         TypedConstantBitArraySegment, TypedDefinitions, TypedImport, TypedTailPattern,
-        TypedTypeAlias, typed::InvalidExpression,
+        TypedTypeAlias,
+        typed::{InvalidExpression, RecordUpdateAssignment},
     },
     exhaustiveness::CompiledCase,
     parse::LiteralFloatValue,
@@ -330,7 +331,7 @@ pub trait Visit<'ast> {
         &mut self,
         location: &'ast SrcSpan,
         type_: &'ast Arc<Type>,
-        record: &'ast Option<Box<TypedAssignment>>,
+        record: &'ast Option<Box<RecordUpdateAssignment>>,
         constructor: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
     ) {
@@ -661,6 +662,15 @@ pub trait Visit<'ast> {
         visit_typed_constant(self, constant);
     }
 
+    fn visit_typed_constant_todo(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        message: &'ast Option<Box<TypedConstant>>,
+    ) {
+        visit_typed_constant_todo(self, location, type_, message);
+    }
+
     fn visit_typed_constant_int(
         &mut self,
         location: &'ast SrcSpan,
@@ -918,6 +928,15 @@ fn visit_typed_constant_int<'a, V: Visit<'a> + ?Sized>(
     // No further traversal needed for constant ints
 }
 
+pub fn visit_typed_constant_todo<'a, V: Visit<'a> + ?Sized>(
+    _v: &mut V,
+    _location: &'a SrcSpan,
+    _type_: &'a Arc<Type>,
+    _message: &'a Option<Box<TypedConstant>>,
+) {
+    // No further traversal needed for constant todos
+}
+
 pub fn visit_typed_module<'a, V>(v: &mut V, module: &'a TypedModule)
 where
     V: Visit<'a> + ?Sized,
@@ -1102,6 +1121,11 @@ where
 
 pub fn visit_typed_constant<'a, V: Visit<'a> + ?Sized>(v: &mut V, constant: &'a TypedConstant) {
     match constant {
+        super::Constant::Todo {
+            location,
+            type_,
+            message,
+        } => v.visit_typed_constant_todo(location, type_, message),
         super::Constant::Int {
             location,
             value,
@@ -1673,7 +1697,7 @@ pub fn visit_typed_expr_record_update<'a, V>(
     v: &mut V,
     _location: &'a SrcSpan,
     _type_: &'a Arc<Type>,
-    record: &'a Option<Box<TypedAssignment>>,
+    record: &'a Option<Box<RecordUpdateAssignment>>,
     constructor: &'a TypedExpr,
     arguments: &'a [TypedCallArg],
 ) where
@@ -1681,7 +1705,7 @@ pub fn visit_typed_expr_record_update<'a, V>(
 {
     v.visit_typed_expr(constructor);
     if let Some(record) = record {
-        v.visit_typed_assignment(record);
+        v.visit_typed_expr(&record.value);
     }
     for argument in arguments {
         v.visit_typed_call_arg(argument);

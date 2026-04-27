@@ -19,6 +19,37 @@ fn todo_warning_test() {
     assert_warning!("pub fn main() { 1 == todo }");
 }
 
+// https://github.com/gleam-lang/gleam/issues/4164
+#[test]
+fn todo_uses_the_appropriate_type_name() {
+    assert_warning!(
+        "
+pub fn curry(_f: fn(a, b) -> c) -> fn(a) -> fn(b) -> c {
+  fn(_a: a) {
+    todo
+  }
+}"
+    );
+}
+
+#[test]
+fn todo_uses_the_appropriate_type_name_2() {
+    assert_warning!(
+        (
+            "wibble",
+            "
+            pub type Wibble
+            pub fn consume(wibble: Wibble) -> Nil { todo }
+        "
+        ),
+        "
+import wibble
+pub fn main() {
+  wibble.consume(todo)
+}"
+    );
+}
+
 // https://github.com/gleam-lang/gleam/issues/1669
 #[test]
 fn todo_warning_correct_location() {
@@ -4832,6 +4863,32 @@ pub fn main(x) {
 }
 
 #[test]
+fn constant_list_prepending_requires_v1_16_warning() {
+    assert_warnings_with_gleam_version!(
+        Range::higher_than(Version::new(1, 0, 0)),
+        "
+pub const one = []
+pub const other = [1, 2, ..one]
+",
+    );
+}
+
+#[test]
+fn constant_list_prepending_in_guard_requires_v1_16_warning() {
+    assert_warnings_with_gleam_version!(
+        Range::higher_than(Version::new(1, 0, 0)),
+        "
+fn go(x) {
+  case x {
+    [1, ..] if [1, ..x] == x -> Nil
+    _ -> Nil
+  }
+}
+",
+    );
+}
+
+#[test]
 fn record_update_with_all_wrong_fields_produces_no_warnings_1() {
     assert_no_warnings!(
         "
@@ -4919,5 +4976,15 @@ pub fn run(data) {
   }
 }
         "#
+    );
+}
+
+#[test]
+fn constant_used_in_todo_message_counts_as_used() {
+    assert_no_warnings!(
+        "
+const wibble = 1
+pub const wobble = todo as wibble
+"
     );
 }

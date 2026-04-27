@@ -5939,6 +5939,21 @@ fn extract_variable_does_not_extract_echo() {
 }
 
 #[test]
+fn extract_variable_does_not_extract_record_constructor_in_record_update() {
+    assert_no_code_actions!(
+        EXTRACT_VARIABLE,
+        r#"
+pub fn main() {
+  Wibble(..todo, a: 1)
+}
+
+pub type Wibble { Wibble(a: Int, b: Int) }
+"#,
+        find_position_of("Wibble").to_selection()
+    );
+}
+
+#[test]
 fn extract_variable_does_not_extract_assignment() {
     assert_no_code_actions!(
         EXTRACT_VARIABLE,
@@ -7842,6 +7857,24 @@ fn maybe_wibble() { Ok(Wobble) }
 
 ",
         find_position_of("something").to_selection()
+    );
+}
+
+#[test]
+// https://github.com/gleam-lang/gleam/issues/5648
+fn pattern_match_on_variable_defined_inside_anonymous_function() {
+    assert_code_action!(
+        PATTERN_MATCH_ON_VARIABLE,
+        "
+pub fn main() {
+  let outcome = apply(#(Ok(1), Nil), fn(pair) {
+    let #(result, nil) = pair
+  })
+}
+
+fn apply(a, f) { f(a) }
+",
+        find_position_of("result").to_selection()
     );
 }
 
@@ -13176,6 +13209,77 @@ fn op(i) {
 }
 ",
         find_position_of("op").to_selection()
+    );
+}
+
+#[test]
+fn wrap_function_in_anonymous_function_does_not_trigger_if_selection_is_not_within_the_function() {
+    assert_no_code_actions!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  let a = 1
+  some_function
+  let b = 2
+  Nil
+}
+
+fn some_function(i) {
+  todo
+}
+",
+        find_position_of("1").select_until(find_position_of("2"))
+    );
+}
+
+#[test]
+fn wrap_function_in_anonymous_function_does_not_trigger_on_record_update() {
+    assert_no_code_actions!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  Wibble(..todo, a: 1)
+}
+
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("Wibble").to_selection()
+    );
+}
+
+#[test]
+fn wrap_function_in_anonymous_function_does_not_trigger_on_invalid_record_update() {
+    assert_no_code_actions!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  Wibble(..todo, a: 1)
+}
+",
+        find_position_of("Wibble").to_selection()
+    );
+}
+
+#[test]
+fn wrap_function_in_anonymous_function_does_not_trigger_on_record_call() {
+    assert_no_code_actions!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  Wibble(1, 2)
+}
+
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("Wibble").to_selection()
+    );
+}
+
+#[test]
+fn wrap_function_in_anonymous_function_does_not_trigger_on_invalid_record_call() {
+    assert_no_code_actions!(
+        WRAP_IN_ANONYMOUS_FUNCTION,
+        "pub fn main() {
+  Wibble(1)
+}
+",
+        find_position_of("Wibble").to_selection()
     );
 }
 

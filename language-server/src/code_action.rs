@@ -3507,6 +3507,46 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
         ast::visit::visit_typed_expr_call(self, location, type_, fun, arguments, open_parenthesis);
     }
 
+    fn visit_typed_expr_record_update(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        record: &'ast Option<Box<ast::RecordUpdateAssignment>>,
+        constructor: &'ast TypedExpr,
+        arguments: &'ast [TypedCallArg],
+    ) {
+        // Record updates need some extra care. If we're inspecting a record
+        // update like this one: `Wibble(..wobble, woo)` and the cursor is over
+        // the constructor itself we never want to allow extracting it, or it
+        // would result in the following code:
+        //
+        // ```gleam
+        // Wibble(..wobble, woo)
+        // // ^^ Cursor here
+        //
+        // let wibble = Wibble
+        // wibble(..wobble, woo)
+        // // That's a bit silly!
+        // ```
+        let constructor_range = self.edits.src_span_to_lsp_range(constructor.location());
+        if within(self.params.range, constructor_range)
+            && constructor.is_record_constructor_function()
+        {
+            return;
+        }
+
+        // Otherwise we just keep visiting like usual, no special handling is
+        // required.
+        ast::visit::visit_typed_expr_record_update(
+            self,
+            location,
+            type_,
+            record,
+            constructor,
+            arguments,
+        );
+    }
+
     fn visit_typed_expr(&mut self, expr: &'ast TypedExpr) {
         let expr_location = expr.location();
         let expr_range = self.edits.src_span_to_lsp_range(expr_location);
@@ -5967,7 +6007,18 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
         }
 
         ast::visit::visit_typed_assignment(self, assignment);
-        if let Some((name, _, ref type_)) = self.pattern_variable_under_cursor {
+        if let Some((name, _, ref type_)) = self.pattern_variable_under_cursor
+            // We must make sure that no other value was selected while visiting
+            // this. If it were `Some` that means that we have found _another_
+            // variable to match on inside the assignmemt itself. For example:
+            // ```gleam
+            // let a = {
+            //   let b = todo
+            //   //  ^ We're matching on this, not the outer one!
+            // }
+            // ```
+            && self.selected_value.is_none()
+        {
             self.selected_value = Some(PatternMatchedValue::LetVariable {
                 variable_name: name,
                 variable_type: type_.clone(),
@@ -8783,7 +8834,6 @@ impl<'a> RemoveUnusedImports<'a> {
                 | type_::Warning::CaseMatchOnLiteralCollection { .. }
                 | type_::Warning::CaseMatchOnLiteralValue { .. }
                 | type_::Warning::OpaqueExternalType { .. }
-                | type_::Warning::InternalTypeLeak { .. }
                 | type_::Warning::RedundantAssertAssignment { .. }
                 | type_::Warning::AssertAssignmentOnImpossiblePattern { .. }
                 | type_::Warning::TodoOrPanicUsedAsFunction { .. }
@@ -11522,9 +11572,9 @@ impl<'ast> ast::visit::Visit<'ast> for ReplaceUnderscoreWithType<'ast> {
 /// ```
 pub struct WrapInAnonymousFunction<'a> {
     module: &'a Module,
-    line_numbers: &'a LineNumbers,
     params: &'a CodeActionParams,
     functions: Vec<FunctionToWrap>,
+    edits: TextEdits<'a>,
 }
 
 /// Helper struct, a target for [WrapInAnonymousFunction].
@@ -11542,8 +11592,8 @@ impl<'a> WrapInAnonymousFunction<'a> {
     ) -> Self {
         Self {
             module,
-            line_numbers,
             params,
+            edits: TextEdits::new(line_numbers),
             functions: vec![],
         }
     }
@@ -11558,16 +11608,20 @@ impl<'a> WrapInAnonymousFunction<'a> {
             let arguments = target
                 .arguments
                 .iter()
-                .map(|t| name_generator.generate_name_from_type(t))
+                .map(|type_| name_generator.generate_name_from_type(type_))
                 .join(", ");
 
-            let mut edits = TextEdits::new(self.line_numbers);
-            edits.insert(target.location.start, format!("fn({arguments}) {{ "));
-            edits.insert(target.location.end, format!("({arguments}) }}"));
+            self.edits
+                .insert(target.location.start, format!("fn({arguments}) {{ "));
+            self.edits
+                .insert(target.location.end, format!("({arguments}) }}"));
 
             CodeActionBuilder::new("Wrap in anonymous function")
                 .kind(CodeActionKind::REFACTOR_REWRITE)
-                .changes(self.params.text_document.uri.clone(), edits.edits)
+                .changes(
+                    self.params.text_document.uri.clone(),
+                    self.edits.edits.drain(..).collect(),
+                )
                 .push_to(&mut actions);
         }
         actions
@@ -11576,8 +11630,8 @@ impl<'a> WrapInAnonymousFunction<'a> {
 
 impl<'ast> ast::visit::Visit<'ast> for WrapInAnonymousFunction<'ast> {
     fn visit_typed_expr(&mut self, expression: &'ast TypedExpr) {
-        let expression_range = src_span_to_lsp_range(expression.location(), self.line_numbers);
-        if !overlaps(self.params.range, expression_range) {
+        let expression_range = self.edits.src_span_to_lsp_range(expression.location());
+        if !within(self.params.range, expression_range) {
             return;
         }
 
@@ -11611,7 +11665,7 @@ impl<'ast> ast::visit::Visit<'ast> for WrapInAnonymousFunction<'ast> {
     ) {
         // We only need to do this interception for explicit calls, so if any
         // of our arguments are explicit we re-enter the visitor as usual.
-        if arguments.iter().any(|a| a.is_implicit()) {
+        if arguments.iter().any(|argument| argument.is_implicit()) {
             self.visit_typed_expr(fun);
         } else {
             // We still want to visit other nodes nested in the function being
@@ -11622,6 +11676,41 @@ impl<'ast> ast::visit::Visit<'ast> for WrapInAnonymousFunction<'ast> {
         for argument in arguments {
             self.visit_typed_call_arg(argument);
         }
+    }
+
+    /// We don't want to apply this to record constructors used in a record
+    /// update.
+    fn visit_typed_expr_record_update(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        record: &'ast Option<Box<ast::RecordUpdateAssignment>>,
+        constructor: &'ast TypedExpr,
+        arguments: &'ast [TypedCallArg],
+    ) {
+        // If we're hovering the record constructor of an update and that is a
+        // simple record constructor, we don't want to offer the wrap in
+        // anonymous function code action:
+        //
+        // ```gleam
+        // Wibble(..wibble, a: 1)
+        // // ^^^ Wrap in anonymous function makes no sense on this!
+        // ```
+        let constructor_range = self.edits.src_span_to_lsp_range(constructor.location());
+        if within(self.params.range, constructor_range)
+            && constructor.is_record_constructor_function()
+        {
+            return;
+        }
+
+        ast::visit::visit_typed_expr_record_update(
+            self,
+            location,
+            type_,
+            record,
+            constructor,
+            arguments,
+        );
     }
 }
 

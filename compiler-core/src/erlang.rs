@@ -782,6 +782,7 @@ fn const_string_concatenate_argument<'a>(
         | Constant::RecordUpdate { .. }
         | Constant::BitArray { .. }
         | Constant::Var { .. }
+        | Constant::Todo { .. }
         | Constant::Invalid { .. } => const_inline(value, env),
     }
 }
@@ -884,6 +885,7 @@ fn const_segment<'a>(
             | Constant::RecordUpdate { .. }
             | Constant::Var { .. }
             | Constant::StringConcatenation { .. }
+            | Constant::Todo { .. }
             | Constant::Invalid { .. } => const_inline(value, env).surround("(", ")"),
         }
     };
@@ -1587,6 +1589,16 @@ fn let_assert<'a>(
     ]
 }
 
+/// Generates an the document for assigning to a pattern, for example:
+///
+/// ```erl
+/// {A, B} = Value
+/// Something = fun(atom)
+/// ```
+///
+/// This takes care of the left hand side being any kind of pattern.
+/// If you need to generate an assignment and you know the left hand side to be
+/// a variable name, then you can use the `simple_variable_let` function!
 fn let_<'a>(
     value: &'a TypedExpr,
     pattern: &'a TypedPattern,
@@ -1597,6 +1609,23 @@ fn let_<'a>(
         .print(pattern)
         .append(" = ")
         .append(body)
+}
+
+/// This is used to render a simple variable assignment in Erlang, there's cases
+/// when the left hand side of an assignment is known to be a variable with a
+/// simple name. In that case we don't have to go through `let_` which needs a
+/// whole pattern.
+///
+/// If you need to deal with a complex `let` where the left hand side is a
+/// generic pattern use the `let_` function.
+fn simple_variable_let<'a>(
+    name: &'a EcoString,
+    value: &'a TypedExpr,
+    environment: &mut Env<'a>,
+) -> Document<'a> {
+    let body = maybe_block_expr(value, environment).group();
+    let name = environment.next_local_var_name(name.as_str());
+    docvec![name, " = ", body]
 }
 
 fn float<'a>(value: &str) -> Document<'a> {
@@ -1726,18 +1755,36 @@ fn const_inline<'a>(literal: &'a TypedConstant, env: &mut Env<'a>) -> Document<'
         }
 
         Constant::List { elements, tail, .. } => {
-            let tail_elements = tail
-                .as_deref()
-                .and_then(|tail| tail.list_elements())
-                .unwrap_or_default();
-
-            join(
-                elements
-                    .iter()
-                    .chain(tail_elements)
-                    .map(|element| const_inline(element, env)),
-                break_(",", ", "),
-            )
+            match tail {
+                // There's no tail in the list, we join all the elements and
+                // call it a day.
+                None => join(
+                    elements.iter().map(|element| const_inline(element, env)),
+                    break_(",", ", "),
+                ),
+                Some(tail) => match tail.list_elements() {
+                    // There's a tail in the list whose elements are all known at
+                    // compile time. In this case we replace the tail with those
+                    // elements and create a single flat list.
+                    Some(tail_elements) => join(
+                        elements
+                            .iter()
+                            .chain(tail_elements)
+                            .map(|element| const_inline(element, env)),
+                        break_(",", ", "),
+                    ),
+                    // There's a tail in the list but we can't really tell what its
+                    // elements are at compile time. This means we have to use
+                    // erlang's syntax to append to a list.
+                    None => {
+                        let elements = join(
+                            elements.iter().map(|element| const_inline(element, env)),
+                            break_(",", ", "),
+                        );
+                        docvec![elements, " | ", const_inline(tail, env)]
+                    }
+                },
+            }
             .nest(INDENT)
             .surround("[", "]")
             .group()
@@ -1785,6 +1832,7 @@ fn const_inline<'a>(literal: &'a TypedConstant, env: &mut Env<'a>) -> Document<'
         }
 
         Constant::RecordUpdate { .. } => panic!("record updates should not reach code generation"),
+        Constant::Todo { .. } => panic!("todo constants should not reach code generation"),
         Constant::Invalid { .. } => panic!("invalid constants should not reach code generation"),
     }
 }
@@ -2022,6 +2070,7 @@ fn clause_guard_string_concatenate_argument<'a>(
             | Constant::RecordUpdate { .. }
             | Constant::BitArray { .. }
             | Constant::Var { .. }
+            | Constant::Todo { .. }
             | Constant::Invalid { .. } => docvec!["(", const_inline(literal, env), ")/binary"],
         },
 
@@ -2300,7 +2349,7 @@ fn docs_arguments_call<'a>(
 }
 
 fn record_update<'a>(
-    record: &'a Option<Box<TypedAssignment>>,
+    record: &'a Option<Box<RecordUpdateAssignment>>,
     constructor: &'a TypedExpr,
     arguments: &'a [TypedCallArg],
     env: &mut Env<'a>,
@@ -2309,7 +2358,7 @@ fn record_update<'a>(
 
     let document = match record.as_ref() {
         Some(record) => docvec![
-            assignment(record, env, Position::NotTail),
+            simple_variable_let(&record.name, &record.value, env),
             ",",
             line(),
             call(constructor, arguments, env)
@@ -3545,6 +3594,7 @@ fn find_referenced_private_functions(
     already_found: &mut im::HashSet<EcoString>,
 ) {
     match constant {
+        Constant::Todo { .. } => panic!("todo constants should not reach code generation"),
         Constant::Invalid { .. } => panic!("invalid constants should not reach code generation"),
         Constant::RecordUpdate { .. } => {
             panic!("record updates should not reach code generation")
@@ -3574,8 +3624,18 @@ fn find_referenced_private_functions(
             find_referenced_private_functions(right, already_found);
         }
 
-        Constant::Tuple { elements, .. } | Constant::List { elements, .. } => elements
+        Constant::Tuple { elements, .. } => elements
             .iter()
             .for_each(|element| find_referenced_private_functions(element, already_found)),
+
+        Constant::List { elements, tail, .. } => {
+            elements
+                .iter()
+                .for_each(|element| find_referenced_private_functions(element, already_found));
+
+            if let Some(tail) = tail {
+                find_referenced_private_functions(tail, already_found);
+            }
+        }
     }
 }
