@@ -75,6 +75,10 @@
 
   ([Daniele Scaratti](https://github.com/lupodevelop))
 
+- The package manager now has a specific error and automatic re-authentication
+  flow for when a Hex session has been revoked or has expired.
+  ([Sahil Upasane](https://github.com/404salad))
+
 ### Language server
 
 - The language server can now help with completions when typing a list's tail:
@@ -103,6 +107,10 @@
   ```
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server no longer shows completions for deprecated values from
+  dependencies.
+  ([Andrey Kozhev](https://github.com/ankddev))
 
 ### Formatter
 
