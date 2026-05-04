@@ -44,6 +44,13 @@
   raised in.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The compiler now normalizes remaining-bytes bit-array checks for the JavaScript
+  backend so `(bitSize - c) % 8 === 0` becomes `bitSize % 8 === 0` when the
+  constant offset `c` is congruent modulo 8. This produces more uniform
+  generated code for byte-aligned patterns.
+
+  ([Daniele Scaratti](https://github.com/lupodevelop))
+
 ### Build tool
 
 - The `gleam dev` command now accepts the `--no-print-progress` flag. When this
@@ -112,6 +119,30 @@
   dependencies.
   ([Andrey Kozhev](https://github.com/ankddev))
 
+- The language server now offers a code action to create unknown modules
+  when an import is added for a module that doesn't exist.
+
+  For example, if `import wobble/woo` is added to `src/wiggle.gleam`,
+  then a code action to create `src/wobble/woo.gleam` will be presented
+  when triggered over `import wobble/woo`.
+
+  ([Cory Forsstrom](https://github.com/tarkah))
+
+- The language server now supports finding references when triggered on an
+  aliased import. For example, in the following snippet, moving the cursor
+  over `log` and triggering "find references" will show all references of
+  `io.println()`.
+
+  ```gleam
+  import gleam/io.{println as log}
+  fn main() {
+    log("Hello, world!")
+  //^^^ trigger here
+  }
+  ```
+
+  ([Gavin Morrow](https://github.com/gavinmorrow))
+
 ### Formatter
 
 ### Bug fixes
@@ -149,3 +180,9 @@
 - Fixed a bug where the compiler would generate invalid code for guards using
   lists with a tail.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where enabling `javascript.typescript_declarations` or
+  `javascript.source_maps` wouldn't generate their additional files unless the
+  build directory was manually deleted. The compiler now automatically rebuilds
+  the project when this configuration changes.
+  ([daniellionel01](https://github.com/daniellionel01))
