@@ -545,7 +545,7 @@ pub fn code_action_inexhaustive_let_to_case(
         let mut text_edits = TextEdits::new(line_numbers);
 
         let range = text_edits.src_span_to_lsp_range(location);
-        if !overlaps(params.range, range) {
+        if !within(params.range, range) {
             return;
         }
 
@@ -1284,7 +1284,7 @@ pub fn code_action_add_missing_patterns(
     for (location, missing) in missing_patterns {
         let mut edits = TextEdits::new(line_numbers);
         let range = edits.src_span_to_lsp_range(location);
-        if !overlaps(params.range, range) {
+        if !within(params.range, range) {
             return;
         }
 
@@ -1815,7 +1815,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
         arguments_types: Option<Vec<Arc<Type>>>,
     ) {
         let range = src_span_to_lsp_range(*location, self.line_numbers);
-        if overlaps(self.params.range, range)
+        if within(self.params.range, range)
             && let Some(module_alias) = name.module_name()
             && let Some(name) = name.name()
             && let Some(import) = self.get_module_import(module_alias, name, ast::Layer::Type)
@@ -1846,7 +1846,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
         //  ↑
         // This allows us to offer a code action when hovering over the module name.
         let range = src_span_to_lsp_range(*location, self.line_numbers);
-        if overlaps(self.params.range, range)
+        if within(self.params.range, range)
             && let ModuleValueConstructor::Record {
                 name: constructor_name,
                 ..
@@ -1885,7 +1885,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
         type_: &'ast Arc<Type>,
     ) {
         let range = src_span_to_lsp_range(*location, self.line_numbers);
-        if overlaps(self.params.range, range)
+        if within(self.params.range, range)
             && let Some((module_alias, _)) = module
             && let Inferred::Known(_) = constructor
             && let Some(import) = self.get_module_import(module_alias, name, ast::Layer::Value)
@@ -1922,7 +1922,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
         record_constructor: &'ast Option<Box<ValueConstructor>>,
     ) {
         let range = src_span_to_lsp_range(*location, self.line_numbers);
-        if overlaps(self.params.range, range)
+        if within(self.params.range, range)
             && let Some((module_alias, _)) = module
             && let Some(import) = self.get_module_import(module_alias, name, ast::Layer::Value)
         {
@@ -1955,7 +1955,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
         type_: &'ast Arc<Type>,
     ) {
         let range = src_span_to_lsp_range(*location, self.line_numbers);
-        if overlaps(self.params.range, range)
+        if within(self.params.range, range)
             && let Some((module_alias, _)) = module
             && let Some(constructor) = constructor
             && let type_::ValueConstructorVariant::Record { .. } = &constructor.variant
@@ -2318,7 +2318,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
     ) {
         if !name.is_qualified()
             && let Some(name) = name.name()
-            && overlaps(
+            && within(
                 self.params.range,
                 src_span_to_lsp_range(*location, self.line_numbers),
             )
@@ -2336,7 +2336,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
         name: &'ast EcoString,
     ) {
         let range = src_span_to_lsp_range(*location, self.line_numbers);
-        if overlaps(self.params.range, range)
+        if within(self.params.range, range)
             && let Some(module_name) = match &constructor.variant {
                 type_::ValueConstructorVariant::ModuleConstant { module, .. }
                 | type_::ValueConstructorVariant::ModuleFn { module, .. }
@@ -2362,7 +2362,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
         type_: &'ast Arc<Type>,
     ) {
         if module.is_none()
-            && overlaps(
+            && within(
                 self.params.range,
                 src_span_to_lsp_range(*location, self.line_numbers),
             )
@@ -2396,7 +2396,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
         record_constructor: &'ast Option<Box<ValueConstructor>>,
     ) {
         if module.is_none()
-            && overlaps(
+            && within(
                 self.params.range,
                 src_span_to_lsp_range(*location, self.line_numbers),
             )
@@ -2433,7 +2433,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
         type_: &'ast Arc<Type>,
     ) {
         if module.is_none()
-            && overlaps(
+            && within(
                 self.params.range,
                 src_span_to_lsp_range(*location, self.line_numbers),
             )
@@ -4530,8 +4530,10 @@ impl<'a, IO> GenerateDynamicDecoder<'a, IO> {
 
 impl<'ast, IO> ast::visit::Visit<'ast> for GenerateDynamicDecoder<'ast, IO> {
     fn visit_typed_custom_type(&mut self, custom_type: &'ast ast::TypedCustomType) {
-        let range = self.edits.src_span_to_lsp_range(custom_type.location);
-        if !overlaps(self.params.range, range) {
+        let range = self
+            .edits
+            .src_span_to_lsp_range(custom_type.full_location());
+        if !within(self.params.range, range) {
             return;
         }
 
@@ -5179,8 +5181,10 @@ fn is_nil_like(type_: &Type) -> bool {
 
 impl<'ast> ast::visit::Visit<'ast> for GenerateJsonEncoder<'ast> {
     fn visit_typed_custom_type(&mut self, custom_type: &'ast ast::TypedCustomType) {
-        let range = self.edits.src_span_to_lsp_range(custom_type.location);
-        if !overlaps(self.params.range, range) {
+        let range = self
+            .edits
+            .src_span_to_lsp_range(custom_type.full_location());
+        if !within(self.params.range, range) {
             return;
         }
 
@@ -11070,6 +11074,58 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
         self.register_referenced_variable(name, type_, *location, *definition_location);
     }
 
+    fn visit_typed_expr_case(
+        &mut self,
+        location: &'ast SrcSpan,
+        type_: &'ast Arc<Type>,
+        subjects: &'ast [TypedExpr],
+        clauses: &'ast [ast::TypedClause],
+        compiled_case: &'ast CompiledCase,
+    ) {
+        let was_extracting_already = self.function.is_some();
+
+        // We first visit as usual...
+        ast::visit::visit_typed_expr_case(self, location, type_, subjects, clauses, compiled_case);
+
+        // But then we need to check we're in a situation where it actually makes
+        // sense to extract: if the cursor is entirely within the case (so it's
+        // not part of a bigger extracted chunk) and it spans over one of the
+        // branches' pattern or guard, then we don't want to allow extracting
+        // anything. Popping up the action would be confusing.
+        // For example:
+        //
+        // ```gleam
+        // case wibble {
+        //   Ok(_) -> todo
+        // //^^^^^^^^^^^^^ If I'm selecting this whole branch it makes no sense
+        //                 to propose extracting it as a function
+        //   _ if wibble -> todo
+        // //        ^^^^^^^^^^^ If I'm selecting this it makes no sense to
+        // //                    propose extracting it as a function
+        // }
+        // ```
+
+        // We were already extracting something, we don't want to render that
+        // choice null, this is just a part of a bigger piece being extracted.
+        if was_extracting_already {
+            return;
+        }
+
+        for clause in clauses {
+            let left_hand_side_location = SrcSpan {
+                start: clause.pattern_location().start,
+                end: clause.then.location().start - 1,
+            };
+            let left_hand_side_range = self.edits.src_span_to_lsp_range(left_hand_side_location);
+            // If there's any overlapping with one of the patterns, then we
+            // don't want to extract anything.
+            if overlaps(self.params.range, left_hand_side_range) {
+                self.function = None;
+                break;
+            }
+        }
+    }
+
     fn visit_typed_bit_array_size_variable(
         &mut self,
         location: &'ast SrcSpan,
@@ -11454,7 +11510,7 @@ impl<'ast> ast::visit::Visit<'ast> for AddMissingTypeParameter<'ast> {
             .src_span_to_lsp_range(custom_type.full_location());
 
         // Only continue, if the action was selected anywhere within the custom type definition.
-        if !overlaps(self.params.range, custom_type_range) {
+        if !within(self.params.range, custom_type_range) {
             return;
         }
 
@@ -11835,7 +11891,7 @@ impl<'a> UnwrapAnonymousFunction<'a> {
         body: &'a Vec1<TypedStatement>,
     ) {
         let function_range = src_span_to_lsp_range(*location, self.line_numbers);
-        if !overlaps(self.params.range, function_range) {
+        if !within(self.params.range, function_range) {
             return;
         }
 
@@ -11905,7 +11961,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnwrapAnonymousFunction<'ast> {
         return_annotation: &'ast Option<ast::TypeAst>,
     ) {
         let function_range = src_span_to_lsp_range(*location, self.line_numbers);
-        if !overlaps(self.params.range, function_range) {
+        if !within(self.params.range, function_range) {
             return;
         }
 

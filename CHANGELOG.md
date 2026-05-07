@@ -181,8 +181,57 @@
   lists with a tail.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a bug where the language server would suggest the "convert to case" code
+  action even when not explicitly hovering an inexhaustive let assignment.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would suggest the "add missing pattern"
+  code action even when not explicitly hovering an inexhaustive case expression.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would suggest the "unqualify" code
+  action even when not explicitly hovering a qualified value.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would suggest the "qualify" code
+  action even when not explicitly hovering an unqualified type or constructor.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would suggest the "generate dynamic
+  decoder" code action even when not explicitly hovering a custom type.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would suggest the "generate json
+  encoder" code action even when not explicitly hovering a custom type.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would suggest the "missing type
+  parameter" code action even when not explicitly hovering a custom type.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would suggest the "unwrap anonymous
+  function" code action even when not explicitly hovering a custom type.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the language server would suggest the "extract function"
+  code action even when selecting multiple branches of a case expression, or
+  patterns and guards of a case arm.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would not warn for ints over the safe
+  JavaScript limit in `BitArray` segments with a unit option.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would incorrectly warn for ints over the
+  safe JavaScript limit in `BitArray` byte segments that aren't ints.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Fixed a bug where enabling `javascript.typescript_declarations` or
   `javascript.source_maps` wouldn't generate their additional files unless the
   build directory was manually deleted. The compiler now automatically rebuilds
   the project when this configuration changes.
   ([daniellionel01](https://github.com/daniellionel01))
+
+- Fixed a bug where using the `bytes` and `unit` options together on a bit array
+  segment could generate incorrect code on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
