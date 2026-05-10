@@ -444,7 +444,29 @@ impl<'a> CasePrinter<'_, '_, 'a, '_> {
                         .current_scope_vars
                         .get(&assignment_var)
                         .copied();
-                    self.variables.expression_generator.current_scope_vars = old_scope;
+                    // Extend with variables from old scope
+                    self.variables
+                        .expression_generator
+                        .current_scope_vars
+                        .extend(old_scope.clone());
+
+                    // For binded variables inside body we need to check if
+                    // there is same-named variable in old scope. In this case
+                    // we need to register next available variable, so no
+                    // redeclaration occurs.
+                    if let Decision::Run { body } = fallback {
+                        for (variable, _) in body.bindings.iter() {
+                            if old_scope.get(variable).is_some() {
+                                let new_variable_name = self.variables.next_local_var(variable);
+
+                                let _ = self
+                                    .variables
+                                    .expression_generator
+                                    .current_scope_vars
+                                    .insert(new_variable_name, 0);
+                            }
+                        }
+                    }
                     if let Some(n) = counter {
                         let _ = self
                             .variables
