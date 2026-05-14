@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use lsp_types::{
-    CodeActionContext, CodeActionParams, DocumentChangeOperation, DocumentChanges,
-    PartialResultParams, Position, ResourceOp, Url, WorkDoneProgressParams,
+    CodeActionContext, CodeActionParams, DocumentChange, PartialResultParams, Position, Uri as Url,
+    WorkDoneProgressParams,
 };
 
 use super::*;
@@ -117,7 +117,7 @@ fn show_code_edits(tester: &TestProject<'_>, changed_files: HashMap<Url, String>
     }
 }
 
-fn format_code_action_file_operations<'a>(actions: &[lsp_types::CodeAction]) -> String {
+fn format_code_action_file_operations(actions: &[lsp_types::CodeAction]) -> String {
     // Display path the same on linux or windows so tests don't fail between targets
     let normalized_path = |uri: &Url| {
         format!(
@@ -137,36 +137,25 @@ fn format_code_action_file_operations<'a>(actions: &[lsp_types::CodeAction]) -> 
     actions
         .iter()
         .filter_map(|action| {
-            if let Some(DocumentChanges::Operations(operations)) = action
+            action
                 .edit
                 .as_ref()
                 .and_then(|edit| edit.document_changes.as_ref())
-            {
-                Some(operations)
-            } else {
-                None
-            }
         })
-        .flat_map(|operations| {
-            operations.into_iter().filter_map(|op| match op {
-                DocumentChangeOperation::Op(op) => Some(op),
-                DocumentChangeOperation::Edit(_) => None,
-            })
-        })
-        .map(|op| match op {
-            ResourceOp::Create(create) => {
-                format!("- Create {}", normalized_path(&create.uri))
+        .flatten()
+        .filter_map(|op| match op {
+            DocumentChange::CreateFile(create) => {
+                Some(format!("- Create {}", normalized_path(&create.uri)))
             }
-            ResourceOp::Rename(rename) => {
-                format!(
-                    "- Rename {} to {}",
-                    normalized_path(&rename.old_uri),
-                    normalized_path(&rename.new_uri)
-                )
+            DocumentChange::RenameFile(rename) => Some(format!(
+                "- Rename {} to {}",
+                normalized_path(&rename.old_uri),
+                normalized_path(&rename.new_uri)
+            )),
+            DocumentChange::DeleteFile(delete) => {
+                Some(format!("- Delete {}", normalized_path(&delete.uri)))
             }
-            ResourceOp::Delete(delete) => {
-                format!("- Delete {}", normalized_path(&delete.uri))
-            }
+            DocumentChange::TextDocumentEdit(_) => None,
         })
         .join("\n")
 }
@@ -210,6 +199,7 @@ const ADD_MISSING_TYPE_PARAMETER: &str = "Add missing type parameter";
 const REPLACE_UNDERSCORE_WITH_TYPE: &str = "Replace `_` with type";
 const WRAP_IN_ANONYMOUS_FUNCTION: &str = "Wrap in anonymous function";
 const UNWRAP_ANONYMOUS_FUNCTION: &str = "Remove anonymous function wrapper";
+const REMOVE_REDUNDANT_RECORD_UPDATE: &str = "Remove redundant record update";
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range_selector:expr $(,)?) => {
@@ -14236,5 +14226,104 @@ pub fn main() {
         "Create src/wibble/wobble.gleam",
         TestProject::for_source(code),
         find_position_of("main").to_selection()
+    );
+}
+
+#[test]
+fn remove_redundant_record_update_triggered_on_the_record_spread() {
+    assert_code_action!(
+        REMOVE_REDUNDANT_RECORD_UPDATE,
+        "
+pub fn go(record: Wibble) {
+  Wibble(..record, a: 1, b: 2)
+}
+
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("..").to_selection()
+    );
+}
+
+#[test]
+fn remove_redundant_record_update_triggered_on_the_record() {
+    assert_code_action!(
+        REMOVE_REDUNDANT_RECORD_UPDATE,
+        "
+pub fn go(record: Wibble) {
+  Wibble(..record, a: 1, b: 2)
+}
+
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("record").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn remove_redundant_record_update_triggered_anywhere_on_the_expression() {
+    assert_code_action!(
+        REMOVE_REDUNDANT_RECORD_UPDATE,
+        "
+pub fn go(record: Wibble) {
+  Wibble(..record, a: 1, b: 2)
+}
+
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("1").select_until(find_position_of("2"))
+    );
+}
+
+#[test]
+fn remove_redundant_record_update_does_not_trigger_if_update_is_not_redundant() {
+    assert_no_code_actions!(
+        REMOVE_REDUNDANT_RECORD_UPDATE,
+        "
+pub fn go(record: Wibble) {
+  Wibble(..record, a: 1)
+}
+
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("..record").to_selection()
+    );
+}
+
+#[test]
+fn remove_redundant_constant_record_update_triggered_on_the_record_spread() {
+    assert_code_action!(
+        REMOVE_REDUNDANT_RECORD_UPDATE,
+        "
+pub const updated = Wibble(..base, a: 1, b: 3)
+pub const base = Wibble(a: 1, b: 2)
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("..").to_selection()
+    );
+}
+
+#[test]
+fn remove_redundant_constant_record_update_triggered_on_the_record() {
+    assert_code_action!(
+        REMOVE_REDUNDANT_RECORD_UPDATE,
+        "
+pub const updated = Wibble(..base, a: 1, b: 3)
+pub const base = Wibble(a: 1, b: 2)
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("1").select_until(find_position_of("3"))
+    );
+}
+
+#[test]
+fn remove_redundant_constant_record_update_does_not_trigger_if_update_i_not_redundant() {
+    assert_no_code_actions!(
+        REMOVE_REDUNDANT_RECORD_UPDATE,
+        "
+pub const updated = Wibble(..base, a: 1)
+pub const base = Wibble(a: 1, b: 2)
+pub type Wibble { Wibble(a: Int, b: Int) }
+",
+        find_position_of("base").to_selection()
     );
 }

@@ -50,6 +50,11 @@
   generated code for byte-aligned patterns.
   ([Daniele Scaratti](https://github.com/lupodevelop))
 
+- The code generated for destructuring exhaustive patterns with `let` is now
+  less verbose on the JavaScript target.
+
+  ([Gavin Morrow](https://github.com/gavinmorrow))
+
 ### Build tool
 
 - The `gleam dev` command now accepts the `--no-print-progress` flag. When this
@@ -85,6 +90,9 @@
   flow for when a Hex session has been revoked or has expired.
   ([Sahil Upasane](https://github.com/404salad))
 
+- New packages are created requesting Erlang/OTP version 29 on GitHub actions.
+  ([Louis Pilfold](https://github.com/lpil))
+
 ### Language server
 
 - The language server can now help with completions when typing a list's tail:
@@ -112,6 +120,42 @@
   }
   ```
 
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server now has a code action to remove a redundant record update.
+  For example:
+
+  ```gleam
+  pub type User {
+    User(name: String, likes: List(String))
+  }
+
+  pub fn main() {
+    let lucy = User(name: "Lucy", likes: ["Gleam", "Ice Cream"])
+    let jak = User(..lucy, name: "Jak", likes: ["Gleam", "Dogs"])
+    //             ^^^^^^ This record update is not needed!
+  }
+  ```
+
+  This record update is not actually needed and will raise a warning, all fields
+  are already specified. Triggering the code action anywhere on the expression
+  will remove the unnecessary update:
+
+  ```gleam
+  pub type User {
+    User(name: String, likes: List(String))
+  }
+
+  pub fn main() {
+    let lucy = User(name: "Lucy", likes: ["Gleam", "Ice Cream"])
+    let jak = User(name: "Jak", likes: ["Gleam", "Dogs"])
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server now presents quick fix code actions before refactoring
+  ones.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The language server no longer shows completions for deprecated values from
@@ -240,3 +284,15 @@
   directly matches branch when existing variables with same exist in outer
   scope.
   ([Andrey Kozhev](https://github.com/ankddev))
+
+- Fixed a bug where `gleam publish` wrote the wrong application name into the
+  published package metadata for dependencies whose Hex package name differs
+  from their internal OTP application name. This caused Mix-based projects to
+  fail to build when they depended on Gleam packages with transitive
+  dependencies.
+  ([Logan Bresnahan](https://github.com/LoganBresnahan))
+
+- Fixed a bug where cli would fail to complete https connections from behind a proxy
+  with self-signed certificates. The cli now defaults to using system trust stores
+  for trusted CAs, allowing use in proxied network environments.
+  ([apsoras][https://github.com/apsoras])
