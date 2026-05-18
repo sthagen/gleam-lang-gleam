@@ -179,6 +179,7 @@ const GENERATE_DYNAMIC_DECODER: &str = "Generate dynamic decoder";
 const GENERATE_TO_JSON_FUNCTION: &str = "Generate to-JSON function";
 const PATTERN_MATCH_ON_ARGUMENT: &str = "Pattern match on argument";
 const PATTERN_MATCH_ON_VARIABLE: &str = "Pattern match on variable";
+const PATTERN_MATCH_ON_VALUE: &str = "Pattern match on value";
 const GENERATE_FUNCTION: &str = "Generate function";
 const CONVERT_TO_FUNCTION_CALL: &str = "Convert to function call";
 const INLINE_VARIABLE: &str = "Inline variable";
@@ -10831,6 +10832,47 @@ fn pattern_match_on_list_tail_with_shadowed_name() {
 }
 
 #[test]
+fn pattern_match_on_discard_pattern_in_branch() {
+    assert_code_action!(
+        PATTERN_MATCH_ON_VALUE,
+        "pub fn main(x: Result(List(a), Nil)) {
+  case x {
+    Error(Nil) -> todo
+    Ok(_) -> todo
+  }
+}",
+        find_position_of("_").to_selection()
+    );
+}
+
+#[test]
+fn cannot_pattern_match_on_discard_on_the_left_of_an_assignment() {
+    assert_no_code_actions!(
+        PATTERN_MATCH_ON_VALUE,
+        "pub fn main(x: Result(List(a), Nil)) {
+  let _ = x
+}",
+        find_position_of("_").to_selection()
+    );
+}
+
+#[test]
+fn cannot_pattern_match_on_discard_on_the_left_of_a_use() {
+    assert_no_code_actions!(
+        PATTERN_MATCH_ON_VALUE,
+        "pub fn main() {
+  use _ <- wibble()
+}
+
+fn wibble(fun: fn(Result(Int, Nil)) -> Nil) {
+  todo
+}
+",
+        find_position_of("_").to_selection()
+    );
+}
+
+#[test]
 fn collapse_nested_case() {
     assert_code_action!(
         COLLAPSE_NESTED_CASE,
@@ -14209,6 +14251,22 @@ pub fn main() {
         TestProject::for_source(code)
             .add_module("wibble/wobble", "pub type Wibble { Wobble(String) }"),
         find_position_of("wobble").to_selection()
+    );
+}
+
+#[test]
+fn create_unknown_module_doesnt_trigger_when_module_is_importable() {
+    let code = "
+pub fn main() {
+  wibble.something()
+}
+";
+
+    assert_no_code_actions!(
+        "Create src/wobble/wibble.gleam",
+        TestProject::for_source(code)
+            .add_module("wobble/wibble", "pub type Wibble { Wobble(String) }"),
+        find_position_of("wibble").to_selection()
     );
 }
 

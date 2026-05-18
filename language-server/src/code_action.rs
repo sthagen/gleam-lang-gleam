@@ -44,7 +44,6 @@ use super::{
     edits::{add_newlines_after_import, get_import_edit, position_of_first_definition_if_import},
     engine::{overlaps, within},
     files::FileSystemProxy,
-    lsp_range_to_src_span,
     reference::{FindVariableReferences, VariableReferenceKind},
     src_span_to_lsp_range, url_from_path,
 };
@@ -1765,8 +1764,8 @@ impl<'a, IO> QualifiedToUnqualifiedImportFirstPass<'a, IO> {
                 // unqualify: we don't want to offer the action indiscriminately if
                 // it would generate invalid code!
                 let module_exports_constructor = match layer {
-                    ast::Layer::Value => module.get_public_value(constructor).is_some(),
-                    ast::Layer::Type => module.get_public_type(constructor).is_some(),
+                    ast::Layer::Value => module.get_importable_value(constructor).is_some(),
+                    ast::Layer::Type => module.get_importable_type(constructor).is_some(),
                 };
                 if module_exports_constructor {
                     matching_import = Some(import);
@@ -3525,8 +3524,10 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
     fn visit_typed_expr_record_update(
         &mut self,
         location: &'ast SrcSpan,
+        spread_start: &'ast u32,
         type_: &'ast Arc<Type>,
-        record: &'ast Option<Box<ast::RecordUpdateAssignment>>,
+        updated_record: &'ast TypedExpr,
+        updated_record_assigned_name: &'ast Option<EcoString>,
         constructor: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
     ) {
@@ -3555,8 +3556,10 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
         ast::visit::visit_typed_expr_record_update(
             self,
             location,
+            spread_start,
             type_,
-            record,
+            updated_record,
+            updated_record_assigned_name,
             constructor,
             arguments,
         );
@@ -5523,11 +5526,26 @@ pub enum PatternLocation {
         /// This location covers the entire list tail pattern, including the `..`
         location: SrcSpan,
     },
+    /// When the pattern being matched is a discard. For example:
+    /// ```gleam
+    /// case wibble {
+    ///   Ok(_) -> todo
+    /// //   ^ Hovering this!
+    /// }
+    /// ```
+    Discard { location: SrcSpan },
 }
 
 impl PatternLocation {
     fn regular(location: SrcSpan) -> Self {
         Self::Regular { location }
+    }
+
+    fn is_discard(&self) -> bool {
+        match self {
+            PatternLocation::Regular { .. } | PatternLocation::ListTail { .. } => false,
+            PatternLocation::Discard { .. } => true,
+        }
     }
 }
 
@@ -5582,13 +5600,20 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
                 clause_location,
                 bound_variables,
             }) => {
+                let title = if variable_location.is_discard() {
+                    "Pattern match on value"
+                } else {
+                    "Pattern match on variable"
+                };
+
                 self.match_on_clause_variable(
                     variable_type,
                     variable_location,
                     clause_location,
                     &bound_variables,
                 );
-                "Pattern match on variable"
+
+                title
             }
 
             None => return vec![],
@@ -5740,8 +5765,9 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
         let nesting = " ".repeat(clause_range.start.character as usize);
 
         let variable_location = match variable_location {
-            PatternLocation::Regular { location } => location,
-            PatternLocation::ListTail { location } => location,
+            PatternLocation::Regular { location }
+            | PatternLocation::ListTail { location }
+            | PatternLocation::Discard { location } => location,
         };
 
         let variable_start = (variable_location.start - clause_location.start) as usize;
@@ -6110,6 +6136,23 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
         }
 
         ast::visit::visit_typed_use(self, use_);
+    }
+
+    fn visit_typed_pattern_discard(
+        &mut self,
+        location: &'ast SrcSpan,
+        name: &'ast EcoString,
+        type_: &'ast Arc<Type>,
+    ) {
+        if within(
+            self.params.range,
+            self.edits.src_span_to_lsp_range(*location),
+        ) {
+            let location = PatternLocation::Discard {
+                location: *location,
+            };
+            self.pattern_variable_under_cursor = Some((name, location, type_.clone()));
+        }
     }
 
     fn visit_typed_pattern_variable(
@@ -11821,8 +11864,10 @@ impl<'ast> ast::visit::Visit<'ast> for WrapInAnonymousFunction<'ast> {
     fn visit_typed_expr_record_update(
         &mut self,
         location: &'ast SrcSpan,
+        spread_start: &'ast u32,
         type_: &'ast Arc<Type>,
-        record: &'ast Option<Box<ast::RecordUpdateAssignment>>,
+        updated_record: &'ast TypedExpr,
+        updated_record_assigned_name: &'ast Option<EcoString>,
         constructor: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
     ) {
@@ -11844,8 +11889,10 @@ impl<'ast> ast::visit::Visit<'ast> for WrapInAnonymousFunction<'ast> {
         ast::visit::visit_typed_expr_record_update(
             self,
             location,
+            spread_start,
             type_,
-            record,
+            updated_record,
+            updated_record_assigned_name,
             constructor,
             arguments,
         );
@@ -12053,17 +12100,19 @@ impl<'ast> ast::visit::Visit<'ast> for UnwrapAnonymousFunction<'ast> {
 /// For example, if `import wobble/woo` is added to `src/wiggle.gleam`,
 /// then a code action to create `src/wobble/woo.gleam` will be presented
 /// when triggered over `import wobble/woo`.
-pub struct CreateUnknownModule<'a> {
+pub struct CreateUnknownModule<'a, IO> {
     module: &'a Module,
+    compiler: &'a LspProjectCompiler<FileSystemProxy<IO>>,
     lines: &'a LineNumbers,
     params: &'a CodeActionParams,
     paths: &'a ProjectPaths,
     error: &'a Option<Error>,
 }
 
-impl<'a> CreateUnknownModule<'a> {
+impl<'a, IO> CreateUnknownModule<'a, IO> {
     pub fn new(
         module: &'a Module,
+        compiler: &'a LspProjectCompiler<FileSystemProxy<IO>>,
         lines: &'a LineNumbers,
         params: &'a CodeActionParams,
         paths: &'a ProjectPaths,
@@ -12071,6 +12120,7 @@ impl<'a> CreateUnknownModule<'a> {
     ) -> Self {
         Self {
             module,
+            compiler,
             lines,
             params,
             paths,
@@ -12079,72 +12129,80 @@ impl<'a> CreateUnknownModule<'a> {
     }
 
     pub fn code_actions(self) -> Vec<CodeAction> {
-        struct UnknownModule<'a> {
-            name: &'a EcoString,
-            location: &'a SrcSpan,
-        }
-
-        let mut actions = vec![];
-
-        // This code action can be derived from UnknownModule type errors. If those
-        // errors don't exist, there are no actions to add.
+        // This code action can be derived from `UnknownModule` type errors.
+        // If those errors don't exist for the current module, then we will not
+        // suggest this action.
         let Some(Error::Type { failed_modules, .. }) = self.error else {
-            return actions;
+            return vec![];
+        };
+        let Some(failed_module) = failed_modules.get(&self.module.name) else {
+            return vec![];
         };
 
-        // Span of the code action so we can check if it exists within the span of
-        // the UnkownModule type error
-        let code_action_span = lsp_range_to_src_span(self.params.range, self.lines);
+        let mut unknown_module_name = None;
+        // We then need to find the `UnknownModule` error that is under the
+        // cursor (if any, otherwise there's no action to suggest)!
+        for error in &failed_module.errors {
+            let TypeError::UnknownModule { location, name, .. } = error else {
+                continue;
+            };
+            let error_range = src_span_to_lsp_range(*location, self.lines);
+            if !within(self.params.range, error_range) {
+                continue;
+            }
+            // We've found the unknown module error!!
+            unknown_module_name = Some(name);
+        }
 
-        // Origin directory we can build the new module path from
+        let Some(unknown_module_name) = unknown_module_name else {
+            return vec![];
+        };
+
+        // Now we need to check the module actually doesn't exist among the
+        // importable ones! Imagine we've written `timestamp.to_string` and
+        // `timestamp` is unknown: if there's any importable module in the form
+        // `.../timestamp` then the most likely scenario is that the programmer
+        // wanted to import that and not create a new `src/timestamp.gleam`
+        // file!
+        // So we check if any of the importable modules ends with the unknown
+        // name and if that's the case we don't suggest this action.
+        let importable_modules = self.compiler.project_compiler.get_importable_modules();
+        let unknown_module_can_be_imported = importable_modules
+            .keys()
+            .find(|module_name| module_name.split('/').next_back() == Some(unknown_module_name))
+            .is_some();
+        if unknown_module_can_be_imported {
+            return vec![];
+        }
+
+        // We've made sure the module is not among the importable ones, so now
+        // we figure out if the generated module needs to go under `src`,
+        // `test`, or `dev` and we're good to actually generate it!
         let origin_directory = match self.module.origin {
             Origin::Src => self.paths.src_directory(),
             Origin::Test => self.paths.test_directory(),
             Origin::Dev => self.paths.dev_directory(),
         };
 
-        // Filter for any UnknownModule type errors
-        let unknown_modules = failed_modules
-            .values()
-            .flat_map(|module| &module.errors)
-            .filter_map(|error| {
-                if let TypeError::UnknownModule { name, location, .. } = error {
-                    return Some(UnknownModule { name, location });
-                }
+        let uri = url_from_path(&format!("{origin_directory}/{}.gleam", unknown_module_name))
+            .expect("origin directory is absolute");
 
-                None
-            });
-
-        // For each UnknownModule type error, check to see if it contains the
-        // incoming code action & if so, add a document change to create the module
-        for unknown_module in unknown_modules {
-            // Was this code action triggered within the UnknownModule error?
-            let error_contains_action = unknown_module.location.contains(code_action_span.start)
-                && unknown_module.location.contains(code_action_span.end);
-
-            if !error_contains_action {
-                continue;
-            }
-
-            let uri = url_from_path(&format!("{origin_directory}/{}.gleam", unknown_module.name))
-                .expect("origin directory is absolute");
-
-            CodeActionBuilder::new(format!(
-                "Create {}/{}.gleam",
-                self.module.origin.folder_name(),
-                unknown_module.name
-            ))
-            .kind(CodeActionKind::QuickFix)
-            .document_changes(vec![DocumentChange::CreateFile(CreateFile {
-                uri,
-                options: Some(CreateFileOptions {
-                    overwrite: Some(false),
-                    ignore_if_exists: Some(true),
-                }),
-                annotation_id: None,
-            })])
-            .push_to(&mut actions);
-        }
+        let mut actions = vec![];
+        CodeActionBuilder::new(format!(
+            "Create {}/{}.gleam",
+            self.module.origin.folder_name(),
+            unknown_module_name
+        ))
+        .kind(CodeActionKind::QuickFix)
+        .document_changes(vec![DocumentChange::CreateFile(CreateFile {
+            uri,
+            options: Some(CreateFileOptions {
+                overwrite: Some(false),
+                ignore_if_exists: Some(true),
+            }),
+            annotation_id: None,
+        })])
+        .push_to(&mut actions);
 
         actions
     }

@@ -177,12 +177,34 @@ pub enum TypedExpr {
     /// we do for pipelines.
     RecordUpdate {
         location: SrcSpan,
+        /// This is where the `..` starts:
+        /// ```gleam
+        /// Wibble(  ..wobble, a: 1)
+        /// //       ^ Here!
+        /// ```
+        spread_start: u32,
         type_: Arc<Type>,
+        /// This is the record being updated as written in the code:
+        /// ```gleam
+        /// Wibble(..wibble, a: 1)
+        /// //       ^^^^^^ This!
+        ///
+        /// Wibble(..fun(1), a: 1)
+        /// //       ^^^^^ This!
+        /// ```
+        ///
+        updated_record: Box<Self>,
         /// If the record is an expression that is not a variable we will need
-        /// to assign to a variable so it can be referred multiple times.
-        /// If this is `Some` it will contain the record value that has to be
-        /// assigned to a new variable.
-        record_assignment: Option<Box<RecordUpdateAssignment>>,
+        /// to assign to a variable so it can be referred to multiple times.
+        /// If this is `Some` it will contain the name we've picked for the
+        /// variable the record should be assigned to.
+        updated_record_assigned_name: Option<EcoString>,
+        /// The constructor used to build a new record:
+        /// ```gleam
+        ///   Wibble(..wibble, a: 1)
+        /// //^^^^^^ This!
+        /// ```
+        ///
         constructor: Box<Self>,
         arguments: Vec<CallArg<Self>>,
     },
@@ -207,24 +229,6 @@ pub enum TypedExpr {
         /// states.
         extra_information: Option<InvalidExpression>,
     },
-}
-
-/// If the record is an expression used in an update is not a variable, we will
-/// need to assign it to one so it can be referred multiple times.
-/// For example:
-///
-/// ```gleam
-/// Wibble(..fun_call(1), a:, b:)
-/// //       ^^^^^^^^^^^ This will be `value`
-/// ```
-///
-/// While `name` is the name we pick for the variable that we will assign the
-/// value to.
-///
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordUpdateAssignment {
-    pub name: EcoString,
-    pub value: TypedExpr,
 }
 
 impl TypedExpr {
@@ -437,9 +441,10 @@ impl TypedExpr {
                 .or_else(|| self.self_if_contains_location(byte_index)),
 
             Self::RecordUpdate {
-                record_assignment,
                 constructor,
                 arguments,
+                updated_record,
+                spread_start,
                 ..
             } => arguments
                 .iter()
@@ -447,9 +452,47 @@ impl TypedExpr {
                 .find_map(|argument| argument.find_node(byte_index, constructor, arguments))
                 .or_else(|| constructor.find_node(byte_index))
                 .or_else(|| {
-                    record_assignment
-                        .as_ref()
-                        .and_then(|assignment| assignment.value.find_node(byte_index))
+                    // If the updated record contains the index, then we update
+                    // the found position to be `UpdatedRecord`
+                    updated_record.find_node(byte_index).map(|found| {
+                        if let Located::Expression {
+                            expression,
+                            position:
+                                ExpressionPosition::ArgumentOrLabel { .. }
+                                | ExpressionPosition::Expression,
+                        } = found
+                        {
+                            Located::Expression {
+                                expression,
+                                position: ExpressionPosition::UpdatedRecord {
+                                    unchanged_record_fields: self
+                                        .unchanged_record_fields()
+                                        .unwrap_or_default(),
+                                },
+                            }
+                        } else {
+                            found
+                        }
+                    })
+                })
+                .or_else(|| {
+                    // If we're hovering over the two `..` then we also want to
+                    // count that as hovering the entire expression and show the
+                    // fields that are not being updated.
+                    if !SrcSpan::new(*spread_start, updated_record.location().start)
+                        .contains(byte_index)
+                    {
+                        return None;
+                    }
+
+                    Some(Located::Expression {
+                        expression: self,
+                        position: ExpressionPosition::UpdatedRecord {
+                            unchanged_record_fields: self
+                                .unchanged_record_fields()
+                                .unwrap_or_default(),
+                        },
+                    })
                 })
                 .or_else(|| self.self_if_contains_location(byte_index)),
         }
@@ -602,18 +645,14 @@ impl TypedExpr {
                 .find_map(|arg| arg.value.find_statement(byte_index)),
 
             Self::RecordUpdate {
-                record_assignment,
+                updated_record,
                 arguments,
                 ..
             } => arguments
                 .iter()
                 .filter(|arg| arg.implicit.is_none())
                 .find_map(|arg| arg.find_statement(byte_index))
-                .or_else(|| {
-                    record_assignment
-                        .as_ref()
-                        .and_then(|r| r.value.find_statement(byte_index))
-                }),
+                .or_else(|| updated_record.find_statement(byte_index)),
         }
     }
 
@@ -1666,6 +1705,32 @@ impl TypedExpr {
 
     pub fn is_todo_with_no_message(&self) -> bool {
         matches!(self, TypedExpr::Todo { message: None, .. })
+    }
+
+    /// If the expression is a record update, this returns a list with the names
+    /// of its labelled arguments that are not being changed by the record
+    /// update.
+    pub fn unchanged_record_fields(&self) -> Option<Vec<(EcoString, Arc<Type>)>> {
+        let TypedExpr::RecordUpdate { arguments, .. } = self else {
+            return None;
+        };
+
+        let mut unchanged_arguments = vec![];
+        for argument in arguments {
+            // All arguments that stay the same are generated as "implicit"
+            // arguments, we only care about them!
+            if !argument.is_implicit() {
+                continue;
+            }
+            // The label should always be present for these implicit arguments,
+            // technically this will never fail, but rather than panicking I
+            // just "continue".
+            let Some(label) = argument.label.as_ref() else {
+                continue;
+            };
+            unchanged_arguments.push((label.clone(), argument.value.type_()))
+        }
+        Some(unchanged_arguments)
     }
 }
 

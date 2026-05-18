@@ -4,6 +4,36 @@
 
 ### Compiler
 
+- The compiler now suggest public values from imported modules when the variable
+  in unknown. These values are suggested based on name and arity.
+
+  Considering this program:
+
+  ```gleam
+  import gleam/io
+
+  pub fn main() -> Nil {
+    println("Hello, World!")
+  }
+  ```
+
+  The compiler will display this error message:
+
+  ```text
+    error: Unknown variable
+    ┌─ /path/to/project/src/project.gleam:4:3
+    │
+  4 │   println("Hello, World!")
+    │   ^^^^^^^
+
+  The name `println` is not in scope here.
+  Did you mean one of these:
+
+      - io.println
+  ```
+
+  ([raphrous](https://github.com/realraphrous))
+
 - The inference of record update expressions is now more fault tolerant: if
   there's an error in the record being updated, the compiler can still able to
   analyse the fields that are being provided.
@@ -44,9 +74,9 @@
   raised in.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
-- The compiler now normalizes remaining-bytes bit-array checks for the JavaScript
-  backend so `(bitSize - c) % 8 === 0` becomes `bitSize % 8 === 0` when the
-  constant offset `c` is congruent modulo 8. This produces more uniform
+- The compiler now normalizes remaining-bytes bit-array checks for the
+  JavaScript backend so `(bitSize - c) % 8 === 0` becomes `bitSize % 8 === 0`
+  when the constant offset `c` is congruent modulo 8. This produces more uniform
   generated code for byte-aligned patterns.
   ([Daniele Scaratti](https://github.com/lupodevelop))
 
@@ -59,6 +89,9 @@
 
 - The `gleam dev` command now accepts the `--no-print-progress` flag. When this
   flag is passed, no progress information is printed.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Tables in the generated docs now look better on smaller screens.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The comment in `manifest.toml` now instructs the user to include it in their
@@ -93,7 +126,30 @@
 - New packages are created requesting Erlang/OTP version 29 on GitHub actions.
   ([Louis Pilfold](https://github.com/lpil))
 
+- `gleam publish` will now better discover Git repository in monorepos. This
+  improves suggestions to push a tag, if it doesn't exists.
+  ([Andrey Kozhev](https://github.com/ankddev))
+
 ### Language server
+
+- When hovering a record update expression, the language server can now show the
+  fields that are not being updated. For example:
+
+  ```gleam
+  pub type Person {
+    Person(name: String, age: Int)
+  }
+
+  pub fn happy_birthday_mom() {
+    let mom = Person(name: "Antonella", age: 60)
+    Person(..mom, age: 61)
+    //     ^^^^^ Hovering this will show:
+    //           Unchanged fields:
+    //           - name
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The language server can now help with completions when typing a list's tail:
 
@@ -158,17 +214,43 @@
   ones.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The language server now allows to further pattern match on a discard by
+  replacing it with the patterns it is discarding.
+  For example:
+
+  ```gleam
+  pub fn list_names(x: Result(List(String), Nil)) {
+    case x {
+      Error(Nil) -> io.println("no names")
+      Ok(_) -> todo
+      // ^ Triggering the code action here
+    }
+  }
+  ```
+
+  Triggering the code action will result in the following code:
+
+  ```gleam
+  pub fn list_names(x: Result(List(String), Nil)) {
+    case x {
+      Error(Nil) -> io.println("no names")
+      Ok([]) -> todo
+      Ok([first, ..rest]) -> todo
+    }
+  }
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The language server no longer shows completions for deprecated values from
   dependencies.
   ([Andrey Kozhev](https://github.com/ankddev))
 
 - The language server now offers a code action to create unknown modules
   when an import is added for a module that doesn't exist.
-
   For example, if `import wobble/woo` is added to `src/wiggle.gleam`,
   then a code action to create `src/wobble/woo.gleam` will be presented
   when triggered over `import wobble/woo`.
-
   ([Cory Forsstrom](https://github.com/tarkah))
 
 - The language server now supports finding references when triggered on an
@@ -188,7 +270,18 @@
 
 ### Formatter
 
+### Releases
+
+- A `gleam-licences.html` is now included with each release, detailing the
+  licences of the used dependencies.
+  ([Louis Pilfold](https://github.com/lpil))
+
 ### Bug fixes
+
+- Fixed a bug where `gleam remove` would fail with a confusing File IO error
+  if `manifest.toml` didn't exist yet (e.g. in a freshly-created project or
+  after the manifest had been deleted).
+  ([Charlie Tonneslan](https://github.com/c-tonneslan))
 
 - Fixed a bug where the build tool would check for new major versions of a local
   or git dependency on Hex when running `gleam update`.
@@ -269,6 +362,21 @@
   safe JavaScript limit in `BitArray` byte segments that aren't ints.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a confusing error message when writing a constant bit array with a size
+  that is not a literal number.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a confusing error message when writing bit arrays with an invalid unit.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a confusing error message when writing a constant bit array with an
+  invalid segment.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a confusing error message when writing `@external` or `@deprecated`
+  annotations with arguments that are not string.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Fixed a bug where enabling `javascript.typescript_declarations` or
   `javascript.source_maps` wouldn't generate their additional files unless the
   build directory was manually deleted. The compiler now automatically rebuilds
@@ -292,7 +400,7 @@
   dependencies.
   ([Logan Bresnahan](https://github.com/LoganBresnahan))
 
-- Fixed a bug where cli would fail to complete https connections from behind a proxy
-  with self-signed certificates. The cli now defaults to using system trust stores
-  for trusted CAs, allowing use in proxied network environments.
+- Fixed a bug where cli would fail to complete https connections from behind a
+  proxy with self-signed certificates. The cli now defaults to using system
+  trust stores for trusted CAs, allowing use in proxied network environments.
   ([apsoras][https://github.com/apsoras])

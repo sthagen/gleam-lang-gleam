@@ -2368,3 +2368,76 @@ fn missing_todo_constant_message_2() {
 pub fn wibble() {}"
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/5711
+#[test]
+fn parsing_bit_array_constant_with_non_integer_size() {
+    assert_module_error!("pub const wibble = <<1:size(something)>>");
+}
+
+#[test]
+fn parsing_bit_array_constant_with_non_integer_unit() {
+    assert_module_error!("pub const wibble = <<1:unit(something)>>");
+}
+
+#[test]
+fn parsing_bit_array_expression_with_invalid_size() {
+    assert_module_error!(
+        "pub fn wibble() {
+  let assert <<1:size(Upname)>> = todo
+}"
+    );
+}
+
+#[test]
+fn parsing_bit_array_expression_with_invalid_unit() {
+    assert_module_error!(
+        "pub fn wibble() {
+  <<1:unit(Upname)>>
+}"
+    );
+}
+
+#[test]
+fn parsing_bit_array_pattern_with_invalid_unit() {
+    assert_module_error!(
+        "pub fn wibble() {
+  let assert <<1:unit(Upname)>> = todo
+}"
+    );
+}
+
+#[test]
+fn parsing_bit_array_constant_with_invalid_segment_type() {
+    assert_module_error!("pub const wibble = <<1:Upname>>");
+}
+
+#[test]
+fn parsing_invalid_external_module_name() {
+    assert_module_error!(
+        "
+@external(erlang, Upname, [])
+fn wibble() -> Nil
+"
+    );
+}
+
+#[test]
+fn parsing_invalid_external_function_name() {
+    assert_module_error!(
+        r#"
+@external(erlang, "module", Upname)
+fn wibble() -> Nil
+"#
+    );
+}
+
+#[test]
+fn parsing_invalid_deprecation_message() {
+    assert_module_error!(
+        r#"
+@deprecated(Upname)
+fn wibble() -> Nil
+"#
+    );
+}

@@ -983,6 +983,7 @@ where
 
                                 expr = UntypedExpr::RecordUpdate {
                                     location: SrcSpan { start, end },
+                                    spread_start: dot_s,
                                     constructor: Box::new(expr),
                                     record,
                                     arguments,
@@ -3374,9 +3375,8 @@ where
                 self.advance();
                 let segments = Parser::series_of(
                     self,
-                    &|s| {
-                        Parser::parse_bit_array_segment(
-                            s,
+                    &|this| {
+                        this.parse_bit_array_segment(
                             &Parser::parse_const_value,
                             &Parser::expect_const_int,
                             &bit_array_const_int,
@@ -3764,7 +3764,7 @@ where
                 let options = if self.maybe_one(&Token::Colon).is_some() {
                     Parser::series_of(
                         self,
-                        &|s| Parser::parse_bit_array_option(s, &arg_parser, &to_int_segment),
+                        &|this| this.parse_bit_array_option(&arg_parser, &to_int_segment),
                         Some(&Token::Minus),
                     )?
                 } else {
@@ -3772,7 +3772,7 @@ where
                 };
                 let end = options
                     .last()
-                    .map(|o| o.location().end)
+                    .map(|option| option.location().end)
                     .unwrap_or_else(|| value.location().end);
                 Ok(Some(BitArraySegment {
                     location: SrcSpan {
@@ -3798,14 +3798,16 @@ where
         arg_parser: &impl Fn(&mut Self) -> Result<A, ParseError>,
         to_int_segment: &impl Fn(EcoString, BigInt, u32, u32) -> A,
     ) -> Result<Option<BitArrayOption<A>>, ParseError> {
-        match self.next_tok() {
+        match self.tok0.take() {
             // named segment
             Some((start, Token::Name { name }, end)) => {
+                self.advance();
                 if self.maybe_one(&Token::LeftParen).is_some() {
                     // named function segment
                     match name.as_str() {
-                        "unit" => match self.next_tok() {
+                        "unit" => match self.tok0.take() {
                             Some((int_s, Token::Int { value, .. }, int_e)) => {
+                                self.advance();
                                 let (_, end) = self.expect_one(&Token::RightParen)?;
                                 let v = value.replace("_", "");
                                 match u8::from_str(&v) {
@@ -3823,7 +3825,10 @@ where
                                     }),
                                 }
                             }
-                            _ => self.next_tok_unexpected(vec!["positive integer".into()]),
+                            tok0 => {
+                                self.tok0 = tok0;
+                                self.next_tok_unexpected(vec!["A positive int".into()])
+                            }
                         },
 
                         "size" => {
@@ -3850,16 +3855,22 @@ where
                 }
             }
             // int segment
-            Some((start, Token::Int { value, int_value }, end)) => Ok(Some(BitArrayOption::Size {
-                location: SrcSpan { start, end },
-                value: Box::new(to_int_segment(value, int_value, start, end)),
-                short_form: true,
-            })),
+            Some((start, Token::Int { value, int_value }, end)) => {
+                self.advance();
+                Ok(Some(BitArrayOption::Size {
+                    location: SrcSpan { start, end },
+                    value: Box::new(to_int_segment(value, int_value, start, end)),
+                    short_form: true,
+                }))
+            }
             // invalid
-            _ => self.next_tok_unexpected(vec![
-                "A valid bit array segment type".into(),
-                "See: https://tour.gleam.run/data-types/bit-arrays/".into(),
-            ]),
+            tok0 => {
+                self.tok0 = tok0;
+                self.next_tok_unexpected(vec![
+                    "A valid bit array segment type".into(),
+                    "See: https://tour.gleam.run/data-types/bit-arrays/".into(),
+                ])
+            }
         }
     }
 
@@ -3901,19 +3912,26 @@ where
     }
 
     fn parse_bit_array_size_unit(&mut self) -> Result<BitArraySize<()>, ParseError> {
-        match self.next_tok() {
-            Some((start, Token::Name { name }, end)) => Ok(BitArraySize::Variable {
-                location: SrcSpan { start, end },
-                name,
-                constructor: None,
-                type_: (),
-            }),
-            Some((start, Token::Int { value, int_value }, end)) => Ok(BitArraySize::Int {
-                location: SrcSpan { start, end },
-                value,
-                int_value,
-            }),
+        match self.tok0.take() {
+            Some((start, Token::Name { name }, end)) => {
+                self.advance();
+                Ok(BitArraySize::Variable {
+                    location: SrcSpan { start, end },
+                    name,
+                    constructor: None,
+                    type_: (),
+                })
+            }
+            Some((start, Token::Int { value, int_value }, end)) => {
+                self.advance();
+                Ok(BitArraySize::Int {
+                    location: SrcSpan { start, end },
+                    value,
+                    int_value,
+                })
+            }
             Some((start, Token::LeftBrace, _)) => {
+                self.advance();
                 let inner = self.expect_bit_array_size()?;
                 let (_, end) = self.expect_one(&Token::RightBrace)?;
 
@@ -3922,18 +3940,27 @@ where
                     inner: Box::new(inner),
                 })
             }
-            _ => self.next_tok_unexpected(vec!["A variable name or an integer".into()]),
+            tok0 => {
+                self.tok0 = tok0;
+                self.next_tok_unexpected(vec!["A variable name or an int".into()])
+            }
         }
     }
 
     fn expect_const_int(&mut self) -> Result<UntypedConstant, ParseError> {
-        match self.next_tok() {
-            Some((start, Token::Int { value, int_value }, end)) => Ok(Constant::Int {
-                location: SrcSpan { start, end },
-                value,
-                int_value,
-            }),
-            _ => self.next_tok_unexpected(vec!["A variable name or an integer".into()]),
+        match self.tok0.take() {
+            Some((start, Token::Int { value, int_value }, end)) => {
+                self.advance();
+                Ok(Constant::Int {
+                    location: SrcSpan { start, end },
+                    value,
+                    int_value,
+                })
+            }
+            tok0 => {
+                self.tok0 = tok0;
+                self.next_tok_unexpected(vec!["An int".into()])
+            }
         }
     }
 
@@ -4267,9 +4294,15 @@ functions are declared separately from types.";
 
     // Expect a String else error
     fn expect_string(&mut self) -> Result<(u32, EcoString, u32), ParseError> {
-        match self.next_tok() {
-            Some((start, Token::String { value }, end)) => Ok((start, value, end)),
-            _ => self.next_tok_unexpected(vec!["a string".into()]),
+        match self.tok0.take() {
+            Some((start, Token::String { value }, end)) => {
+                self.advance();
+                Ok((start, value, end))
+            }
+            tok0 => {
+                self.tok0 = tok0;
+                self.next_tok_unexpected(vec!["a string".into()])
+            }
         }
     }
 

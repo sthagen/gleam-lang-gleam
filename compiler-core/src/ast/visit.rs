@@ -43,8 +43,7 @@ use crate::{
     ast::{
         BitArraySize, RecordBeingUpdated, TypeAstConstructorName, TypedBitArraySize,
         TypedConstantBitArraySegment, TypedDefinitions, TypedImport, TypedTailPattern,
-        TypedTypeAlias,
-        typed::{InvalidExpression, RecordUpdateAssignment},
+        TypedTypeAlias, typed::InvalidExpression,
     },
     exhaustiveness::CompiledCase,
     parse::LiteralFloatValue,
@@ -327,15 +326,27 @@ pub trait Visit<'ast> {
         visit_typed_expr_bit_array(self, location, type_, segments);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn visit_typed_expr_record_update(
         &mut self,
         location: &'ast SrcSpan,
+        spread_start: &'ast u32,
         type_: &'ast Arc<Type>,
-        record: &'ast Option<Box<RecordUpdateAssignment>>,
+        updated_record: &'ast TypedExpr,
+        updated_record_assigned_name: &'ast Option<EcoString>,
         constructor: &'ast TypedExpr,
         arguments: &'ast [TypedCallArg],
     ) {
-        visit_typed_expr_record_update(self, location, type_, record, constructor, arguments);
+        visit_typed_expr_record_update(
+            self,
+            location,
+            spread_start,
+            type_,
+            updated_record,
+            updated_record_assigned_name,
+            constructor,
+            arguments,
+        );
     }
 
     fn visit_typed_expr_negate_bool(&mut self, location: &'ast SrcSpan, value: &'ast TypedExpr) {
@@ -1375,14 +1386,18 @@ where
         } => v.visit_typed_expr_bit_array(location, type_, segments),
         TypedExpr::RecordUpdate {
             location,
+            spread_start,
             type_,
-            record_assignment,
+            updated_record,
+            updated_record_assigned_name,
             constructor,
             arguments,
         } => v.visit_typed_expr_record_update(
             location,
+            spread_start,
             type_,
-            record_assignment,
+            updated_record,
+            updated_record_assigned_name,
             constructor,
             arguments,
         ),
@@ -1693,20 +1708,21 @@ pub fn visit_typed_expr_bit_array<'a, V>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn visit_typed_expr_record_update<'a, V>(
     v: &mut V,
     _location: &'a SrcSpan,
+    _spread_start: &'a u32,
     _type_: &'a Arc<Type>,
-    record: &'a Option<Box<RecordUpdateAssignment>>,
+    updated_record: &'a TypedExpr,
+    _updated_record_assigned_name: &'a Option<EcoString>,
     constructor: &'a TypedExpr,
     arguments: &'a [TypedCallArg],
 ) where
     V: Visit<'a> + ?Sized,
 {
     v.visit_typed_expr(constructor);
-    if let Some(record) = record {
-        v.visit_typed_expr(&record.value);
-    }
+    v.visit_typed_expr(updated_record);
     for argument in arguments {
         v.visit_typed_call_arg(argument);
     }
