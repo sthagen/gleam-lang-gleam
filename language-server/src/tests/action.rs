@@ -112,6 +112,7 @@ fn show_code_edits(tester: &TestProject<'_>, changed_files: HashMap<Url, String>
         // file before each!
         changed_files
             .iter()
+            .sorted_by_key(|(url, _)| *url)
             .map(|(url, code)| format_code(url, code))
             .join("\n")
     }
@@ -433,6 +434,56 @@ pub fn new() -> other.Wibble { todo }
     assert_code_action!(
         GENERATE_VARIANT,
         TestProject::for_source(src).add_module("other", "pub type Wibble"),
+        find_position_of("Wobble").to_selection()
+    );
+}
+
+#[test]
+fn generate_unqualified_variant_in_other_module_adds_an_unqualified_import_if_other_variants_are_unqualified()
+ {
+    let src = r#"
+import other.{ Wibble }
+
+pub fn main() -> other.Wibble {
+  let assert Wobble = new()
+}
+
+pub fn new() -> other.Wibble { todo }
+"#;
+
+    assert_code_action!(
+        GENERATE_VARIANT,
+        TestProject::for_source(src).add_module(
+            "other",
+            "pub type Wibble {
+  Wibble
+}"
+        ),
+        find_position_of("Wobble").to_selection()
+    );
+}
+
+#[test]
+fn generate_unqualified_variant_in_other_module_adds_qualification_if_other_variants_are_not_imported()
+ {
+    let src = r#"
+import other
+
+pub fn main() -> other.Wibble {
+  let assert Wobble = new()
+}
+
+pub fn new() -> other.Wibble { todo }
+"#;
+
+    assert_code_action!(
+        GENERATE_VARIANT,
+        TestProject::for_source(src).add_module(
+            "other",
+            "pub type Wibble {
+  Wibble
+}"
+        ),
         find_position_of("Wobble").to_selection()
     );
 }
@@ -2029,6 +2080,18 @@ pub fn wibble(arg1 arg1, arg2 arg2) { Nil }
 }
 
 #[test]
+fn fill_in_labelled_args_with_some_constant_arguments_already_supplied() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub const wibble = Wibble(1,)
+pub type Wibble { Wibble(arg1: Int, arg2: Int) }
+ "#,
+        find_position_of("Wibble(").under_char('b').to_selection(),
+    );
+}
+
+#[test]
 fn fill_in_labelled_args_with_some_arguments_already_supplied_2() {
     assert_code_action!(
         FILL_LABELS,
@@ -2044,6 +2107,18 @@ pub fn wibble(arg1 arg1, arg2 arg2) { Nil }
 }
 
 #[test]
+fn fill_in_labelled_args_with_some_constant_arguments_already_supplied_2() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub const wibble = Wibble(arg2: 1)
+pub type Wibble { Wibble(arg1: Int, arg2: Int) }
+ "#,
+        find_position_of("Wibble(").to_selection(),
+    );
+}
+
+#[test]
 fn fill_in_labelled_args_with_some_arguments_already_supplied_3() {
     assert_code_action!(
         FILL_LABELS,
@@ -2055,6 +2130,18 @@ pub fn main() {
 pub fn wibble(arg1 arg1, arg2 arg2, arg3 arg3) { Nil }
  "#,
         find_position_of("wibble(").to_selection(),
+    );
+}
+
+#[test]
+fn fill_in_labelled_args_with_some_constant_arguments_already_supplied_3() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub const wibble = Wibble(1, arg3: 2)
+pub type Wibble { Wibble(arg1: Int, arg2: Int, arg3: Int) }
+ "#,
+        find_position_of("Wibble(").to_selection(),
     );
 }
 
@@ -2082,6 +2169,18 @@ pub fn main() {
   Wibble()
 }
 
+pub type Wibble { Wibble(arg1: Int, arg2: String) }
+ "#,
+        find_position_of("Wibble").select_until(find_position_of("Wibble()").under_last_char()),
+    );
+}
+
+#[test]
+fn fill_in_labelled_args_works_with_constant_record_constructor() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub const wibble = Wibble()
 pub type Wibble { Wibble(arg1: Int, arg2: String) }
  "#,
         find_position_of("Wibble").select_until(find_position_of("Wibble()").under_last_char()),
@@ -2235,6 +2334,20 @@ pub fn wibble(arg1 arg1, arg2 arg2) { Nil }
 }
 
 #[test]
+fn fill_in_labelled_args_in_const_selects_innermost_function() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub const a_constant = Wibble(Wibble())
+pub type Wibble { Wibble(arg1: Int, arg2: Int) }
+ "#,
+        find_position_of("Wibble()")
+            .under_last_char()
+            .to_selection(),
+    );
+}
+
+#[test]
 fn fill_labels_uses_variable_in_scope_with_matching_type() {
     assert_code_action!(
         FILL_LABELS,
@@ -2253,6 +2366,21 @@ pub fn main() {
 }
 
 #[test]
+fn fill_in_labelled_args_in_const_uses_constants_in_scope_with_matching_type() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub const power = 10
+pub const a_constant = Wibble()
+pub type Wibble { Wibble(power: Int, another_arg: Int) }
+ "#,
+        find_position_of("Wibble()")
+            .under_last_char()
+            .to_selection(),
+    );
+}
+
+#[test]
 fn fill_labels_falls_back_to_todo_when_type_does_not_match() {
     assert_code_action!(
         FILL_LABELS,
@@ -2267,6 +2395,21 @@ pub fn main() {
 }
 "#,
         find_position_of("Player").nth_occurrence(3).to_selection(),
+    );
+}
+
+#[test]
+fn fill_in_labelled_args_in_const_uses_todo_if_constant_in_scope_does_not_match() {
+    assert_code_action!(
+        FILL_LABELS,
+        r#"
+pub const power = "not an int"
+pub const a_constant = Wibble()
+pub type Wibble { Wibble(power: Int, another_arg: Int) }
+ "#,
+        find_position_of("Wibble()")
+            .under_last_char()
+            .to_selection(),
     );
 }
 
@@ -5833,6 +5976,19 @@ fn outer_inexhaustive_let_to_case() {
   }
 }"#,
         find_position_of("let [").select_until(find_position_of("] =")),
+    );
+}
+
+#[test]
+fn second_sibling_inexhaustive_let_to_case() {
+    assert_code_action!(
+        CONVERT_TO_CASE,
+        r#"pub fn main(a, b) {
+  let Ok(x) = a
+  let Ok(y) = b
+  #(x, y)
+}"#,
+        find_position_of("let Ok(y)").select_until(find_position_of("= b")),
     );
 }
 
@@ -10045,6 +10201,121 @@ pub fn main() {
 fn name() { "Jak" }
 "#,
         find_position_of("hello").select_until(find_position_of("name()"))
+    );
+}
+
+#[test]
+fn fix_float_operator_on_ints_in_guards() {
+    let name = "Use `>=`";
+    assert_code_action!(
+        name,
+        r#"
+pub fn main() {
+  case todo {
+    _ if 1 >=. 2 -> todo
+  }
+}
+"#,
+        find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn fix_float_operator_on_ints_in_guards_2() {
+    let name = "Use `-`";
+    assert_code_action!(
+        name,
+        r#"
+pub fn main() {
+  case todo {
+    _ if 1 -. 2 -> todo
+  }
+}
+"#,
+        find_position_of("1").select_until(find_position_of("2"))
+    );
+}
+
+#[test]
+fn fix_float_operator_on_ints_in_guards_3() {
+    let name = "Use `*`";
+    assert_code_action!(
+        name,
+        r#"
+pub fn main() {
+  let wobble = 3
+  case todo {
+    _ if 1 *. wobble -> todo
+  }
+}
+"#,
+        find_position_of("*.").to_selection()
+    );
+}
+
+#[test]
+fn fix_int_operator_on_floats_in_guards() {
+    let name = "Use `>=.`";
+    assert_code_action!(
+        name,
+        r#"
+pub fn main() {
+  case todo {
+    _ if 1.0 >= 2.3 -> todo
+  }
+}
+"#,
+        find_position_of("1").to_selection()
+    );
+}
+
+#[test]
+fn fix_int_operator_on_floats_in_guards_2() {
+    let name = "Use `-.`";
+    assert_code_action!(
+        name,
+        r#"
+pub fn main() {
+  case todo {
+    _ if 1.12 - 2.0 -> todo
+  }
+}
+"#,
+        find_position_of("1").select_until(find_position_of("2.0"))
+    );
+}
+
+#[test]
+fn fix_int_operator_on_floats_in_guards_3() {
+    let name = "Use `*.`";
+    assert_code_action!(
+        name,
+        r#"
+pub fn main() {
+  let wobble = 3.2
+  case todo {
+    _ if 1.3 * wobble -> todo
+  }
+}
+"#,
+        find_position_of("*").to_selection()
+    );
+}
+
+#[test]
+fn fix_plus_operator_on_strings_in_guards() {
+    let name = "Use `<>`";
+    assert_code_action!(
+        name,
+        r#"
+pub fn main() {
+  let name = "jak"
+  case todo {
+    _ if "hello, " + name -> todo
+  }
+}
+"#,
+        find_position_of("hello").select_until(find_position_of("name ->"))
     );
 }
 

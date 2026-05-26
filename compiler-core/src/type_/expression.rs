@@ -511,11 +511,11 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
             UntypedExpr::BinOp {
                 location,
-                name,
-                name_location,
+                operator,
+                operator_start,
                 left,
                 right,
-            } => Ok(self.infer_binop(name, name_location, *left, *right, location)),
+            } => Ok(self.infer_binop(operator, operator_start, *left, *right, location)),
 
             UntypedExpr::FieldAccess {
                 label_location,
@@ -1850,13 +1850,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
     fn infer_binop(
         &mut self,
-        name: BinOp,
-        name_location: SrcSpan,
+        operator: BinOp,
+        operator_start: u32,
         left: UntypedExpr,
         right: UntypedExpr,
         location: SrcSpan,
     ) -> TypedExpr {
-        let (input_type, output_type) = match &name {
+        let (input_type, output_type) = match &operator {
             BinOp::Eq | BinOp::NotEq => {
                 let left = self.infer(left);
                 let right = self.infer(right);
@@ -1867,15 +1867,15 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     // We only want to warn for redundant comparisons if it
                     // makes sense to compare the two values.
                     // That is, their types should match!
-                    self.check_for_redundant_comparison(name, &left, &right, location);
+                    self.check_for_redundant_comparison(operator, &left, &right, location);
                 }
 
-                self.check_for_inefficient_empty_list_check(name, &left, &right, location);
+                self.check_for_inefficient_empty_list_check(operator, &left, &right, location);
 
                 return TypedExpr::BinOp {
                     location,
-                    name,
-                    name_location,
+                    operator,
+                    operator_start,
                     type_: bool(),
                     left: Box::new(left),
                     right: Box::new(right),
@@ -1911,51 +1911,53 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         if unify_left.is_ok() && unify_right.is_ok() {
             // We only want to warn for redundant comparisons if it makes sense
             // to compare the two values. That is, their types should match!
-            self.check_for_redundant_comparison(name, &left, &right, location);
+            self.check_for_redundant_comparison(operator, &left, &right, location);
         }
 
         // There's some common cases in which we can provide nicer error messages:
         // - if we're using a float operator on int values
         // - if we're using an int operator on float values
         // - if we're using `+` on strings
-        if name.is_float_operator() && left.type_().is_int() && right.type_().is_int() {
+        if operator.is_float_operator() && left.type_().is_int() && right.type_().is_int() {
             self.problems.error(Error::FloatOperatorOnInts {
-                operator: name,
-                location: name_location,
+                operator,
+                location: SrcSpan::new(operator_start, operator_start + operator.size()),
             })
-        } else if name.is_int_operator() && left.type_().is_float() && right.type_().is_float() {
+        } else if operator.is_int_operator() && left.type_().is_float() && right.type_().is_float()
+        {
             self.problems.error(Error::IntOperatorOnFloats {
-                operator: name,
-                location: name_location,
+                operator,
+                location: SrcSpan::new(operator_start, operator_start + operator.size()),
             })
-        } else if name == BinOp::AddInt && left.type_().is_string() && right.type_().is_string() {
+        } else if operator == BinOp::AddInt && left.type_().is_string() && right.type_().is_string()
+        {
             self.problems.error(Error::StringConcatenationWithAddInt {
-                location: name_location,
+                location: SrcSpan::new(operator_start, operator_start + operator.size()),
             })
         } else {
             // In all other cases we just report an error for each of the operands.
             if let Err(error) = unify_left {
                 self.problems.error(
                     error
-                        .operator_situation(name)
+                        .operator_situation(operator)
                         .into_error(left.type_defining_location()),
                 );
             }
             if let Err(error) = unify_right {
                 self.problems.error(
                     error
-                        .operator_situation(name)
+                        .operator_situation(operator)
                         .into_error(right.type_defining_location()),
                 );
             }
         }
 
-        self.check_for_inefficient_empty_list_check(name, &left, &right, location);
+        self.check_for_inefficient_empty_list_check(operator, &left, &right, location);
 
         TypedExpr::BinOp {
             location,
-            name,
-            name_location,
+            operator,
+            operator_start,
             type_: output_type,
             left: Box::new(left),
             right: Box::new(right),
@@ -2641,6 +2643,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             ClauseGuard::BinaryOperator {
                 location,
                 operator,
+                operator_start,
                 left,
                 right,
             } => {
@@ -2679,8 +2682,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         // If both operands are floats, then we use a more specialised
                         // error.
                         if left.type_().is_float() && right.type_().is_float() {
-                            self.problems
-                                .error(Error::IntOperatorOnFloats { operator, location });
+                            self.problems.error(Error::IntOperatorOnFloats {
+                                operator,
+                                location: SrcSpan::new(
+                                    operator_start,
+                                    operator_start + operator.size(),
+                                ),
+                            });
                         } else {
                             if let Err(error) = unify(int(), left.type_()) {
                                 self.problems
@@ -2706,8 +2714,13 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                         // If both operands are int then we use a more specialised
                         // error
                         if left.type_().is_int() && right.type_().is_int() {
-                            self.problems
-                                .error(Error::FloatOperatorOnInts { operator, location });
+                            self.problems.error(Error::FloatOperatorOnInts {
+                                operator,
+                                location: SrcSpan::new(
+                                    operator_start,
+                                    operator_start + operator.size(),
+                                ),
+                            });
                         } else {
                             if let Err(error) = unify(float(), left.type_()) {
                                 self.problems
@@ -2737,6 +2750,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 ClauseGuard::BinaryOperator {
                     location,
                     operator,
+                    operator_start,
                     left: Box::new(left),
                     right: Box::new(right),
                 }
@@ -3944,7 +3958,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     }
                 };
 
-                let (tag, field_map) = match &constructor.variant {
+                let (constructor_tag, field_map) = match &constructor.variant {
                     ValueConstructorVariant::Record {
                         name,
                         field_map: Some(field_map),
@@ -4018,29 +4032,35 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 };
 
                 // Get the field arguments from the record that we'll use as the base.
-                let (base_arguments, base_tag) =
-                    if let Constant::Record { arguments, tag, .. } = resolved_record {
-                        (arguments, tag)
-                    } else {
-                        self.problems.error(convert_unify_error(
-                            UnifyError::CouldNotUnify {
-                                expected: expected_type.clone(),
-                                given: typed_record_type,
-                                situation: None,
-                            },
-                            record.base.location(),
-                        ));
-                        return self.new_invalid_constant(location);
-                    };
+                let (base_arguments, updated_record_tag) = if let Constant::Record {
+                    arguments,
+                    record_constructor: Some(resolved_record_constructor),
+                    ..
+                } = resolved_record
+                    && let ValueConstructorVariant::Record { name, .. } =
+                        resolved_record_constructor.variant
+                {
+                    (arguments.unwrap_or(vec![]), name)
+                } else {
+                    self.problems.error(convert_unify_error(
+                        UnifyError::CouldNotUnify {
+                            expected: expected_type.clone(),
+                            given: typed_record_type,
+                            situation: None,
+                        },
+                        record.base.location(),
+                    ));
+                    return self.new_invalid_constant(location);
+                };
 
                 // Check that the variant being spread matches the constructor variant
                 // For multi-variant custom types, you can't spread Dog to create Cat
-                if tag != base_tag {
+                if constructor_tag != updated_record_tag {
                     self.problems.error(Error::UnsafeRecordUpdate {
                         location: record.base.location(),
                         reason: UnsafeRecordUpdateReason::WrongVariant {
-                            constructed_variant: tag,
-                            spread_variant: base_tag,
+                            constructed_variant: constructor_tag,
+                            spread_variant: updated_record_tag,
                         },
                     });
                     return self.new_invalid_constant(location);
@@ -4163,9 +4183,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                     module,
                     location,
                     name,
-                    arguments: final_arguments,
+                    arguments: Some(final_arguments),
                     type_: expected_type,
-                    tag,
                     field_map: Inferred::Known(field_map),
                     record_constructor: Some(Box::new(constructor)),
                 }
@@ -4177,248 +4196,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 name,
                 arguments,
                 ..
-            } if arguments.is_empty() => {
-                // Type check the record constructor
-                let constructor = match self.infer_value_constructor(
-                    &module,
-                    &name,
-                    &location,
-                    ValueUsage::Other,
-                ) {
-                    Ok(constructor) => constructor,
-                    Err(error) => {
-                        self.problems.error(error);
-                        return self.new_invalid_constant(location);
-                    }
-                };
-
-                let (tag, field_map) = match &constructor.variant {
-                    ValueConstructorVariant::Record {
-                        name, field_map, ..
-                    } => (
-                        name.clone(),
-                        match field_map {
-                            Some(fm) => Inferred::Known(fm.clone()),
-                            None => Inferred::Unknown,
-                        },
-                    ),
-
-                    ValueConstructorVariant::ModuleFn { .. }
-                    | ValueConstructorVariant::LocalVariable { .. } => {
-                        self.problems
-                            .error(Error::NonLocalClauseGuardVariable { location, name });
-                        return self.new_invalid_constant(location);
-                    }
-
-                    // TODO: remove this clone. Could use an rc instead
-                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
-                        return literal.clone();
-                    }
-                };
-
-                Constant::Record {
-                    module,
-                    location,
-                    name,
-                    arguments: vec![],
-                    type_: constructor.type_.clone(),
-                    tag,
-                    field_map,
-                    record_constructor: Some(Box::new(constructor)),
-                }
-            }
-
-            Constant::Record {
-                module,
-                location,
-                name,
-                mut arguments,
-                ..
-            } => {
-                let constructor = match self.infer_value_constructor(
-                    &module,
-                    &name,
-                    &location,
-                    ValueUsage::Call {
-                        arity: arguments.len(),
-                    },
-                ) {
-                    Ok(constructor) => constructor,
-                    Err(error) => {
-                        self.problems.error(error);
-                        return self.new_invalid_constant(location);
-                    }
-                };
-
-                let (tag, field_map, variant_index) = match &constructor.variant {
-                    ValueConstructorVariant::Record {
-                        name,
-                        field_map,
-                        variant_index,
-                        ..
-                    } => (
-                        name.clone(),
-                        match field_map {
-                            Some(fm) => Inferred::Known(fm.clone()),
-                            None => Inferred::Unknown,
-                        },
-                        *variant_index,
-                    ),
-
-                    ValueConstructorVariant::ModuleFn { .. }
-                    | ValueConstructorVariant::LocalVariable { .. } => {
-                        self.problems
-                            .error(Error::NonLocalClauseGuardVariable { location, name });
-                        return self.new_invalid_constant(location);
-                    }
-
-                    // TODO: remove this clone. Could be an rc instead
-                    ValueConstructorVariant::ModuleConstant { literal, .. } => {
-                        return literal.clone();
-                    }
-                };
-
-                // Pretty much all the other infer functions operate on UntypedExpr
-                // or TypedExpr rather than ClauseGuard. To make things easier we
-                // build the TypedExpr equivalent of the constructor and use that
-                // TODO: resvisit this. It is rather awkward at present how we
-                // have to convert to this other data structure.
-                let fun = match &module {
-                    Some((module_alias, module_location)) => {
-                        let type_ = Arc::clone(&constructor.type_);
-                        let module_name = self
-                            .environment
-                            .imported_modules
-                            // TODO: remove
-                            .get(module_alias)
-                            .expect("Failed to find previously located module import")
-                            .1
-                            .name
-                            .clone();
-                        let module_value_constructor = ModuleValueConstructor::Record {
-                            name: name.clone(),
-                            variant_index,
-                            field_map: match &field_map {
-                                Inferred::Known(fm) => Some(fm.clone()),
-                                Inferred::Unknown => None,
-                            },
-                            arity: arguments.len() as u16,
-                            type_: Arc::clone(&type_),
-                            location: constructor.variant.definition_location(),
-                            documentation: None,
-                        };
-
-                        TypedExpr::ModuleSelect {
-                            location: module_location.merge(&location),
-                            field_start: location.start,
-                            label: name.clone(),
-                            module_alias: module_alias.clone(),
-                            module_name,
-                            type_,
-                            constructor: module_value_constructor,
-                        }
-                    }
-
-                    None => TypedExpr::Var {
-                        constructor: constructor.clone(),
-                        location,
-                        name: name.clone(),
-                    },
-                };
-
-                // This is basically the same code as do_infer_call_with_known_fun()
-                // except the args are typed with infer_clause_guard() here.
-                // This duplication is a bit awkward but it works!
-                // Potentially this could be improved later
-                let result = match self.get_field_map(&fun) {
-                    // There's an error retrieving the field map, in that case we
-                    // return an invalid constant.
-                    Err(error) => {
-                        self.problems
-                            .error(convert_get_value_constructor_error(error, location, None));
-                        return self.new_invalid_constant(location);
-                    }
-                    // The fun has a field map so labelled arguments may be present
-                    // and need to be reordered.
-                    Ok(Some(field_map)) => {
-                        field_map.reorder(&mut arguments, location, IncorrectArityContext::Function)
-                    }
-                    // The fun or constructor has no field map and so we error
-                    // if arguments have been labelled.
-                    Ok(None) if fun.is_record_constructor_function() => {
-                        assert_no_labelled_arguments(
-                            &arguments,
-                            UnexpectedLabelledArgKind::RecordConstructorArgument,
-                        )
-                    }
-                    Ok(None) => assert_no_labelled_arguments(
-                        &arguments,
-                        UnexpectedLabelledArgKind::FunctionParameter,
-                    ),
-                };
-
-                // If there's an error reordering the fields, or there's labelled
-                // arguments with no field map, then we return an invalid expression.
-                if let Err(error) = result {
-                    self.problems.error(error);
-                    return self.new_invalid_constant(location);
-                }
-
-                let (mut arguments_types, return_type) =
-                    match match_fun_type(fun.type_(), arguments.len(), self.environment) {
-                        Ok((arguments_types, return_type)) => (arguments_types, return_type),
-                        Err(error) => {
-                            self.problems.error(convert_not_fun_error(
-                                error,
-                                fun.location(),
-                                location,
-                                CallKind::Function,
-                            ));
-                            return self.new_invalid_constant(location);
-                        }
-                    };
-
-                let arguments = arguments_types
-                    .iter_mut()
-                    .zip(arguments)
-                    .map(|(type_, argument): (&mut Arc<Type>, _)| {
-                        if argument.uses_label_shorthand() {
-                            self.track_feature_usage(
-                                FeatureKind::LabelShorthandSyntax,
-                                argument.location,
-                            );
-                        }
-                        let CallArg {
-                            label,
-                            value,
-                            location,
-                            implicit,
-                        } = argument;
-                        let value = self.infer_const(&None, value);
-                        if let Err(error) = unify(type_.clone(), value.type_()) {
-                            self.problems
-                                .error(convert_unify_error(error, value.location()))
-                        }
-                        CallArg {
-                            label,
-                            value,
-                            implicit,
-                            location,
-                        }
-                    })
-                    .collect_vec();
-
-                Constant::Record {
-                    module,
-                    location,
-                    name,
-                    arguments,
-                    type_: return_type,
-                    tag,
-                    field_map,
-                    record_constructor: Some(Box::new(constructor)),
-                }
-            }
+            } => self.infer_constant_record(module, location, name, arguments),
 
             Constant::Var {
                 location,
@@ -4524,6 +4302,190 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             }
 
             Constant::Invalid { .. } => panic!("invalid constants can not be in an untyped ast"),
+        }
+    }
+
+    fn infer_constant_record(
+        &mut self,
+        module: Option<(EcoString, SrcSpan)>,
+        location: SrcSpan,
+        name: EcoString,
+        arguments: Option<Vec<CallArg<UntypedConstant>>>,
+    ) -> Constant<Arc<Type>> {
+        // We start by inferring the value constructor. If we can't do that we
+        // immediately fail and return an invalid node.
+        // TODO: in future we might want to make this more fault tolerant and
+        //       still check the arguments even if the constructor itself cannot
+        //       be inferred, like we do for expressions!
+
+        // The usage counts as a call only if there's actually an arguments list!
+        // `Wibble()` and `Wibble(1, 2)` are calls, but `Wibble` is not!
+        let usage = arguments
+            .as_ref()
+            .map_or(ValueUsage::Other, |arguments| ValueUsage::Call {
+                arity: arguments.len(),
+            });
+
+        let constructor = match self.infer_value_constructor(&module, &name, &location, usage) {
+            Ok(constructor) => constructor,
+            Err(error) => {
+                self.problems.error(error);
+                return self.new_invalid_constant(location);
+            }
+        };
+
+        let field_map = match &constructor.variant {
+            ValueConstructorVariant::Record { field_map, .. } => field_map.clone(),
+
+            ValueConstructorVariant::ModuleFn { .. }
+            | ValueConstructorVariant::LocalVariable { .. } => {
+                self.problems
+                    .error(Error::NonLocalClauseGuardVariable { location, name });
+                return self.new_invalid_constant(location);
+            }
+
+            ValueConstructorVariant::ModuleConstant { .. } => {
+                unreachable!("module constant called as a record is a syntax error")
+            }
+        };
+
+        // If the arguments are none, then there's nothing else left to type, we
+        // can just return.
+        // Otherwise we'll have to go on and also check the arguments.
+        let Some(mut arguments) = arguments else {
+            return Constant::Record {
+                module,
+                location,
+                name,
+                arguments: None,
+                type_: constructor.type_.clone(),
+                field_map: match field_map {
+                    Some(field_map) => Inferred::Known(field_map),
+                    None => Inferred::Unknown,
+                },
+                record_constructor: Some(Box::new(constructor)),
+            };
+        };
+
+        // This is basically the same code as do_infer_call_with_known_fun()
+        // except the args are typed with infer_clause_guard() here.
+        // This duplication is a bit awkward but it works!
+        // Potentially this could be improved later
+        let result = match &field_map {
+            // The fun has a field map so labelled arguments may be present
+            // and need to be reordered.
+            Some(field_map) => {
+                field_map.reorder(&mut arguments, location, IncorrectArityContext::Function)
+            }
+            // The fun or constructor has no field map and so we error
+            // if arguments have been labelled.
+            None if constructor.variant.is_record_constructor_function() => {
+                assert_no_labelled_arguments(
+                    &arguments,
+                    UnexpectedLabelledArgKind::RecordConstructorArgument,
+                )
+            }
+
+            None => assert_no_labelled_arguments(
+                &arguments,
+                UnexpectedLabelledArgKind::FunctionParameter,
+            ),
+        };
+
+        // If there's an error with the constructor being passed the wrong
+        // number of arguments we keep track of it, but don't immediately return
+        // an invalid node!
+        // We still want to analyse the passed arguments.
+        let mut labelled_arity_error = false;
+        if let Err(error) = result {
+            if let Error::IncorrectArity { .. } = error {
+                labelled_arity_error = true;
+            }
+            self.problems.error(error);
+        }
+
+        let called_location = module.as_ref().map_or(location, |(_, module_location)| {
+            module_location.merge(&location)
+        });
+
+        let FunctionTypeMatch {
+            mut expected_arguments,
+            expected_return,
+            missing_arguments: _,
+            ignored_labelled_arguments,
+        } = self.fault_tolerant_match_function_type(
+            labelled_arity_error,
+            CallKind::Function,
+            constructor.type_.clone(),
+            called_location,
+            location,
+            &arguments,
+        );
+
+        let mut typed_arguments = expected_arguments
+            .iter_mut()
+            .zip(arguments)
+            .map(|(type_, argument): (&mut Arc<Type>, _)| {
+                if argument.uses_label_shorthand() {
+                    self.track_feature_usage(FeatureKind::LabelShorthandSyntax, argument.location);
+                }
+                let CallArg {
+                    label,
+                    value,
+                    location,
+                    implicit,
+                } = argument;
+                let value = self.infer_const(&None, value);
+                if let Err(error) = unify(type_.clone(), value.type_()) {
+                    self.problems
+                        .error(convert_unify_error(error, value.location()))
+                }
+                CallArg {
+                    label,
+                    value,
+                    implicit,
+                    location,
+                }
+            })
+            .collect_vec();
+
+        // Now if we had supplied less arguments than required and some of those
+        // were labelled, in the previous step we would have got rid of those
+        // _before_ typing.
+        // That is because we can only reliably type positional arguments in
+        // case of mismatched arity, as labelled arguments cannot be reordered.
+        //
+        // So now what we want to do is add back those labelled arguments to
+        // make sure the LS can still see that those were explicitly supplied.
+        for IgnoredLabelledArgument {
+            label,
+            location,
+            implicit,
+        } in ignored_labelled_arguments
+        {
+            typed_arguments.push(CallArg {
+                label,
+                value: TypedConstant::Invalid {
+                    location,
+                    type_: self.new_unbound_var(),
+                    extra_information: None,
+                },
+                implicit,
+                location,
+            })
+        }
+
+        Constant::Record {
+            module,
+            location,
+            name,
+            arguments: Some(typed_arguments),
+            type_: expected_return,
+            field_map: match field_map {
+                Some(field_map) => Inferred::Known(field_map),
+                None => Inferred::Unknown,
+            },
+            record_constructor: Some(Box::new(constructor)),
         }
     }
 
@@ -4843,84 +4805,27 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 }
             });
 
-        if let Err(e) = field_map {
-            if let Error::IncorrectArity {
-                expected,
-                given,
-                context,
-                labels,
-                location,
-            } = e
-            {
+        if let Err(error) = field_map {
+            if let Error::IncorrectArity { .. } = error {
                 labelled_arity_error = true;
-                self.problems.error(Error::IncorrectArity {
-                    expected,
-                    given,
-                    context,
-                    labels,
-                    location,
-                });
-            } else {
-                self.problems.error(e);
             }
+            self.problems.error(error);
         }
 
-        let mut missing_arguments = 0;
-        let mut ignored_labelled_arguments = vec![];
         // Extract the type of the fun, ensuring it actually is a function
-        let (mut arguments_types, return_type) =
-            match match_fun_type(fun.type_(), arguments.len(), self.environment) {
-                Ok(function) => function,
-                Err(error) => {
-                    let converted_error =
-                        convert_not_fun_error(error.clone(), fun.location(), location, kind);
-                    match error {
-                        // If the function was valid but had the wrong number of arguments passed.
-                        // Then we keep the error but still want to continue analysing the arguments that were passed.
-                        MatchFunTypeError::IncorrectArity {
-                            arguments: arg_types,
-                            return_type,
-                            expected,
-                            given,
-                            ..
-                        } => {
-                            missing_arguments = expected.saturating_sub(given);
-                            // If the function has labels then arity issues will already
-                            // be handled by the field map so we can ignore them here.
-                            if !labelled_arity_error {
-                                self.problems.error(converted_error);
-                                (arg_types, return_type)
-                            } else {
-                                // Since arity errors with labels cause incorrect
-                                // ordering, we can't type check the labelled arguments here.
-                                let first_labelled_arg =
-                                    arguments.iter().position(|arg| arg.label.is_some());
-                                ignored_labelled_arguments = arguments
-                                    .iter()
-                                    .skip_while(|argument| argument.label.is_none())
-                                    .map(|argument| {
-                                        (
-                                            argument.label.clone(),
-                                            argument.location,
-                                            argument.implicit,
-                                        )
-                                    })
-                                    .collect_vec();
-                                let arguments_to_keep =
-                                    first_labelled_arg.unwrap_or(arguments.len());
-                                (
-                                    arg_types.iter().take(arguments_to_keep).cloned().collect(),
-                                    return_type,
-                                )
-                            }
-                        }
-                        MatchFunTypeError::NotFn { .. } => {
-                            self.problems.error(converted_error);
-                            (vec![], self.new_unbound_var())
-                        }
-                    }
-                }
-            };
+        let FunctionTypeMatch {
+            expected_arguments: mut arguments_types,
+            expected_return: return_type,
+            missing_arguments,
+            ignored_labelled_arguments,
+        } = self.fault_tolerant_match_function_type(
+            labelled_arity_error,
+            kind,
+            fun.type_(),
+            fun.location(),
+            location,
+            &arguments,
+        );
 
         // When typing the function's arguments we don't care if the previous
         // expression panics or not because we want to provide a specialised
@@ -5026,7 +4931,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         //
         // So now what we want to do is add back those labelled arguments to
         // make sure the LS can still see that those were explicitly supplied.
-        for (label, location, implicit) in ignored_labelled_arguments {
+        for IgnoredLabelledArgument {
+            label,
+            location,
+            implicit,
+        } in ignored_labelled_arguments
+        {
             typed_arguments.push(CallArg {
                 label,
                 value: TypedExpr::Invalid {
@@ -5509,6 +5419,122 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             | Constant::Invalid { .. } => (),
         }
     }
+
+    fn fault_tolerant_match_function_type<A>(
+        &mut self,
+        has_labelled_arity_error: bool,
+        call_kind: CallKind,
+        constructor_type: Arc<Type>,
+        // The span of the called element
+        called_location: SrcSpan,
+        // The full span of the function call
+        full_location: SrcSpan,
+        arguments: &[CallArg<A>],
+    ) -> FunctionTypeMatch {
+        // We start by matching the function type. If there's no error we're good
+        // to go, we can immediately return the inferred types.
+        let result = match_fun_type(constructor_type, arguments.len(), self.environment);
+        let error = match result {
+            Err(error) => error,
+            Ok((expected_arguments, expected_return)) => {
+                return FunctionTypeMatch {
+                    expected_arguments,
+                    expected_return,
+                    missing_arguments: 0,
+                    ignored_labelled_arguments: vec![],
+                };
+            }
+        };
+
+        let converted_error =
+            convert_not_fun_error(error.clone(), called_location, full_location, call_kind);
+
+        match error {
+            // If the error is caused by the called thing not being a function
+            // then there isn't much to do, there's no further expectation on
+            // the function types.
+            MatchFunTypeError::NotFn { .. } => {
+                self.problems.error(converted_error);
+                FunctionTypeMatch {
+                    expected_arguments: vec![],
+                    expected_return: self.new_unbound_var(),
+                    missing_arguments: 0,
+                    ignored_labelled_arguments: vec![],
+                }
+            }
+
+            // If the function was valid but had the wrong number of arguments
+            // passed that's when we want to try and recover!
+            // We will have to continue analysing the arguments that were
+            // passed.
+            MatchFunTypeError::IncorrectArity {
+                arguments: arguments_types,
+                return_type,
+                expected,
+                given,
+                ..
+            } => {
+                let missing_arguments = expected.saturating_sub(given);
+
+                // If the function has labels then arity issues will already
+                // be handled by the field map so we can ignore them here.
+                if !has_labelled_arity_error {
+                    self.problems.error(converted_error);
+                    return FunctionTypeMatch {
+                        expected_arguments: arguments_types,
+                        expected_return: return_type,
+                        missing_arguments,
+                        ignored_labelled_arguments: vec![],
+                    };
+                }
+
+                // Since arity errors with labels cause incorrect ordering, we
+                // can't type check the labelled arguments here.
+                let first_labelled_arg = arguments.iter().position(|arg| arg.label.is_some());
+                let arguments_to_keep = first_labelled_arg.unwrap_or(arguments.len());
+                let kept_arguments = arguments_types
+                    .iter()
+                    .take(arguments_to_keep)
+                    .cloned()
+                    .collect();
+                let ignored_labelled_arguments = arguments
+                    .iter()
+                    .skip_while(|argument| argument.label.is_none())
+                    .map(|argument| IgnoredLabelledArgument {
+                        label: argument.label.clone(),
+                        location: argument.location(),
+                        implicit: argument.implicit,
+                    })
+                    .collect_vec();
+
+                FunctionTypeMatch {
+                    expected_arguments: kept_arguments,
+                    expected_return: return_type,
+                    missing_arguments,
+                    ignored_labelled_arguments,
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct FunctionTypeMatch {
+    /// The types the arguments of the function are expected to have.
+    expected_arguments: Vec<Arc<Type>>,
+    /// The return type the function is expected to have.
+    expected_return: Arc<Type>,
+    /// How many arguments are missing from the function call.
+    missing_arguments: usize,
+    /// A list of the labelled arguments that were not provided to the function call.
+    ignored_labelled_arguments: Vec<IgnoredLabelledArgument>,
+}
+
+#[derive(Debug)]
+struct IgnoredLabelledArgument {
+    label: Option<EcoString>,
+    location: SrcSpan,
+    implicit: Option<ImplicitCallArgOrigin>,
 }
 
 /// Given a constants, this will change its type into the given one, turning
@@ -5582,7 +5608,6 @@ fn invalid_with_annotated_type(constant: TypedConstant, new_type: Arc<Type>) -> 
             module,
             name,
             arguments,
-            tag,
             type_: _,
             field_map,
             record_constructor,
@@ -5591,7 +5616,6 @@ fn invalid_with_annotated_type(constant: TypedConstant, new_type: Arc<Type>) -> 
             module,
             name,
             arguments,
-            tag,
             type_: new_type,
             field_map,
             record_constructor,
@@ -5604,7 +5628,6 @@ fn invalid_with_annotated_type(constant: TypedConstant, new_type: Arc<Type>) -> 
             name,
             record,
             arguments,
-            tag,
             type_: _,
             field_map,
         } => Constant::RecordUpdate {
@@ -5614,7 +5637,6 @@ fn invalid_with_annotated_type(constant: TypedConstant, new_type: Arc<Type>) -> 
             name,
             record,
             arguments,
-            tag,
             type_: new_type,
             field_map,
         },

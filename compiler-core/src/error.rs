@@ -213,6 +213,12 @@ pub enum Error {
     #[error("{0}")]
     TarFinish(String),
 
+    #[error("{error}")]
+    ZipAdd { path: String, error: String },
+
+    #[error("{0}")]
+    ZipFinish(String),
+
     #[error("{0}")]
     Gzip(String),
 
@@ -1148,7 +1154,7 @@ forward slash and must not end with a slash."
 
             Error::ModuleDoesNotHaveMainFunction { module, origin } => vec![Diagnostic {
                 title: "Module does not have a main function".into(),
-                text: format!(
+                text: wrap_format!(
                     "`{module}` does not have a main function so the module can not be run."
                 ),
                 level: Level::Error,
@@ -1186,11 +1192,13 @@ target, so it cannot be run.",
             Error::MainFunctionHasWrongArity { module, arity } => vec![Diagnostic {
                 title: "Main function has wrong arity".into(),
                 text: wrap_format!(
-                    "`{module}:main` should have an arity of 0 to be run but its arity is {arity}."
+                    "`{module}.main` should take no arguments, but it takes {arity}."
                 ),
                 level: Level::Error,
                 location: None,
-                hint: Some("Change the function signature of main to `pub fn main() {}`.".into()),
+                hint: Some(
+                    "Change the function signature of main to `pub fn main() -> Nil`.".into(),
+                ),
             }],
 
             Error::ProjectRootAlreadyExist { path } => vec![Diagnostic {
@@ -1547,8 +1555,8 @@ This was error from the gzip library:
             }
 
             Error::AddTar { path, err } => {
-                let text = format!(
-                    "There was a problem when attempting to add the file {path}
+                let text = wrap_format!(
+                    "There was a problem when attempting to add the file {path} \
 to a tar archive.
 
 This was error from the tar library:
@@ -1591,6 +1599,41 @@ This was error from the tar library:
                 );
                 vec![Diagnostic {
                     title: "Failure creating tar archive".into(),
+                    text,
+                    hint: None,
+                    level: Level::Error,
+                    location: None,
+                }]
+            }
+
+            Error::ZipAdd { path, error: err } => {
+                let text = wrap_format!(
+                    "There was a problem when attempting to add the file {path} \
+to a zip archive.
+
+This was error from the zip library:
+
+    {err}"
+                );
+                vec![Diagnostic {
+                    title: "Failure creating zip archive".into(),
+                    text,
+                    hint: None,
+                    level: Level::Error,
+                    location: None,
+                }]
+            }
+
+            Error::ZipFinish(detail) => {
+                let text = format!(
+                    "There was a problem when creating a zip archive.
+
+This was error from the zip library:
+
+    {detail}"
+                );
+                vec![Diagnostic {
+                    title: "Failure creating zip archive".into(),
                     text,
                     hint: None,
                     level: Level::Error,

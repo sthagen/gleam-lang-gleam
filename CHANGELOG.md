@@ -2,10 +2,18 @@
 
 ## Unreleased
 
+## Bug Fixes
+
+- Fixed a bug where the "Convert to case" code action would silently fail for
+  every inexhaustive `let` assignment in a module other than the first one.
+  ([John Downey](https://github.com/jtdowney))
+
+## v1.17.0-rc1 - 2026-05-23
+
 ### Compiler
 
 - The compiler now suggest public values from imported modules when the variable
-  in unknown. These values are suggested based on name and arity.
+  is unknown. These values are suggested based on name and arity.
 
   Considering this program:
 
@@ -79,6 +87,10 @@
   raised in.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- When writing a constant record with an empty arguments list the compiler will
+  no longer stop to analyse the entire module.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The compiler now normalizes remaining-bytes bit-array checks for the
   JavaScript backend so `(bitSize - c) % 8 === 0` becomes `bitSize % 8 === 0`
   when the constant offset `c` is congruent modulo 8. This produces more uniform
@@ -135,7 +147,34 @@
   improves suggestions to push a tag, if it doesn't exists.
   ([Andrey Kozhev](https://github.com/ankddev))
 
+- The `gleam export escript` command has been added for the creation of
+  [escripts](https://www.erlang.org/doc/apps/erts/escript_cmd.html), BEAM
+  programs bundled into a single file.
+  ([Louis Pilfold](https://github.com/lpil))
+
 ### Language server
+
+- The language server now offers a "Fill labels" code action on constants to
+  automatically fill in the missing labelled arguments from a record
+  constructor. For example:
+
+  ```gleam
+  pub type Pokemon {
+    Pokemon(number: Int, name: String, hp: Int)
+  }
+
+  pub const cleffa = Pokemon(number: 173)
+  ```
+
+  In this code snippet we haven't specified the `name` and `hp` fields, that's
+  an error! Triggering the "Fill labels" code action will result in the
+  following:
+
+  ```gleam
+  pub const cleffa = Pokemon(number: 173, name: todo, hp: todo)
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - When hovering a record update expression, the language server can now show the
   fields that are not being updated. For example:
@@ -215,6 +254,23 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- When using the wrong operator in a guard, the language server can now suggest
+  and apply an automatic fix. For example:
+
+  ```gleam
+  pub fn categorise() {
+    case pokemon {
+      Pokemon(name:, ..) if name == "rai" + "chu" -> todo
+      _ -> todo
+    }
+  }
+  ```
+
+  Gleam has no operator overloading, and the operator used to join strings is
+  `<>`, not `+`. The language server can automatically fix this common mistake.
+  Triggering the code action on the guard will replace `+` with `<>`.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The language server now presents quick fix code actions before refactoring
   ones.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
@@ -247,6 +303,10 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The "Generate variant" code action now automatically adds an import to use the
+  generated variant if it is generated in a module from the different one.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The language server no longer shows completions for deprecated values from
   dependencies.
   ([Andrey Kozhev](https://github.com/ankddev))
@@ -268,6 +328,25 @@
   fn main() {
     log("Hello, world!")
   //^^^ trigger here
+  }
+  ```
+
+  ([Gavin Morrow](https://github.com/gavinmorrow))
+
+- The language server now supports `textDocument/documentHighlight` anywhere
+  that `textDocument/references` is available.
+
+  For example, triggering it with the cursor over any instance of `vec` will
+  result in all of the instances of it being highlighted.
+
+  ```gleam
+  fn to_cartesian(vec) {
+  //              ^^^
+    let x = vec.rho * cos(vec.theta)
+    //      ^^^           ^^^
+    let y = vec.rho * sin(vec.theta)
+    //      ^^^           ^^^
+    #(x, y)
   }
   ```
 

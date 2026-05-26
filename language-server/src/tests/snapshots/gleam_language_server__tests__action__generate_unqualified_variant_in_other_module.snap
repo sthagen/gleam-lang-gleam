@@ -15,6 +15,16 @@ pub fn new() -> other.Wibble { todo }
 
 
 ----- AFTER ACTION
+// --- Edits applied to module 'app'
+
+import other
+
+pub fn main() -> other.Wibble {
+  let assert other.Wobble = new()
+}
+
+pub fn new() -> other.Wibble { todo }
+
 // --- Edits applied to module 'other'
 pub type Wibble {
   Wobble

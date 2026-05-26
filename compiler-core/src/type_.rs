@@ -714,7 +714,7 @@ pub enum ValueConstructorVariant {
         location: SrcSpan,
         module: EcoString,
         name: EcoString,
-        literal: Constant<Arc<Type>, EcoString>,
+        literal: Constant<Arc<Type>>,
         implementations: Implementations,
     },
 
@@ -884,6 +884,16 @@ impl ValueConstructorVariant {
             ValueConstructorVariant::Record { field_map, .. } => field_map.as_ref(),
         }
     }
+
+    fn is_record_constructor_function(&self) -> bool {
+        match self {
+            ValueConstructorVariant::LocalVariable { .. }
+            | ValueConstructorVariant::ModuleFn { .. }
+            | ValueConstructorVariant::ModuleConstant { .. } => false,
+            // If it has an arity of zero then it can't be used as a function!
+            ValueConstructorVariant::Record { arity, .. } => *arity > 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1016,6 +1026,10 @@ pub struct ModuleInterface {
 }
 
 impl ModuleInterface {
+    pub fn is_prelude(&self) -> bool {
+        self.name == "gleam"
+    }
+
     pub fn contains_todo(&self) -> bool {
         self.warnings.iter().any(|warning| warning.is_todo())
     }

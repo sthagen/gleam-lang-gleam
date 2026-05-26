@@ -204,7 +204,7 @@ pub fn parse_statement_sequence(src: &str) -> Result<Vec1<UntypedStatement>, Par
 // Test Interface
 //
 #[cfg(test)]
-pub fn parse_const_value(src: &str) -> Result<Constant<(), ()>, ParseError> {
+pub fn parse_const_value(src: &str) -> Result<UntypedConstant, ParseError> {
     let lex = lexer::make_tokenizer(src);
     let mut parser = Parser::new(lex);
     let expr = parser.parse_const_value();
@@ -3560,7 +3560,6 @@ where
                         name,
                         record,
                         arguments: update_arguments,
-                        tag: (),
                         type_: (),
                         field_map: Inferred::Unknown,
                     }))
@@ -3576,19 +3575,11 @@ where
                         "a constant record argument",
                     )?;
 
-                    if arguments.is_empty() {
-                        return parse_error(
-                            ParseErrorType::ConstantRecordConstructorNoArguments,
-                            SrcSpan::new(par_s, par_e),
-                        );
-                    }
-
                     Ok(Some(Constant::Record {
                         location: SrcSpan { start, end: par_e },
                         module,
                         name,
-                        arguments,
-                        tag: (),
+                        arguments: Some(arguments),
                         type_: (),
                         field_map: Inferred::Unknown,
                         record_constructor: None,
@@ -3599,8 +3590,7 @@ where
                 location: SrcSpan { start, end },
                 module,
                 name,
-                arguments: vec![],
-                tag: (),
+                arguments: None,
                 type_: (),
                 field_map: Inferred::Unknown,
                 record_constructor: None,
@@ -4925,32 +4915,29 @@ fn reduce_bit_array_size((_, token, _): Spanned, estack: &mut Vec<BitArraySize<(
 }
 
 fn expr_op_reduction(
-    (token_start, token, token_end): Spanned,
-    l: UntypedExpr,
-    r: UntypedExpr,
+    (token_start, token, _token_end): Spanned,
+    left: UntypedExpr,
+    right: UntypedExpr,
 ) -> UntypedExpr {
     if token == Token::Pipe {
-        let expressions = if let UntypedExpr::PipeLine { mut expressions } = l {
-            expressions.push(r);
+        let expressions = if let UntypedExpr::PipeLine { mut expressions } = left {
+            expressions.push(right);
             expressions
         } else {
-            vec1![l, r]
+            vec1![left, right]
         };
         UntypedExpr::PipeLine { expressions }
     } else {
         match tok_to_binop(&token) {
-            Some(bin_op) => UntypedExpr::BinOp {
+            Some(operator) => UntypedExpr::BinOp {
                 location: SrcSpan {
-                    start: l.location().start,
-                    end: r.location().end,
+                    start: left.location().start,
+                    end: right.location().end,
                 },
-                name: bin_op,
-                name_location: SrcSpan {
-                    start: token_start,
-                    end: token_end,
-                },
-                left: Box::new(l),
-                right: Box::new(r),
+                operator,
+                operator_start: token_start,
+                left: Box::new(left),
+                right: Box::new(right),
             },
             _ => {
                 panic!("Token could not be converted to binop.")
@@ -4960,21 +4947,21 @@ fn expr_op_reduction(
 }
 
 fn clause_guard_reduction(
-    (_, token, _): Spanned,
-    l: UntypedClauseGuard,
-    r: UntypedClauseGuard,
+    (start, token, _end): Spanned,
+    left: UntypedClauseGuard,
+    right: UntypedClauseGuard,
 ) -> UntypedClauseGuard {
     let location = SrcSpan {
-        start: l.location().start,
-        end: r.location().end,
+        start: left.location().start,
+        end: right.location().end,
     };
-    let left = Box::new(l);
-    let right = Box::new(r);
+    let left = Box::new(left);
+    let right = Box::new(right);
     let operator = tok_to_binop(&token).expect("Token could not be converted to binop.");
-
     UntypedClauseGuard::BinaryOperator {
         location,
         operator,
+        operator_start: start,
         left,
         right,
     }

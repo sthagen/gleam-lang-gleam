@@ -469,7 +469,7 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    fn const_expr<'a, A, B>(&mut self, value: &'a Constant<A, B>) -> Document<'a> {
+    fn const_expr<'a, A>(&mut self, value: &'a Constant<A>) -> Document<'a> {
         let comments = self.pop_comments(value.location().start);
         let document = match value {
             Constant::Todo { message, .. } => {
@@ -515,21 +515,21 @@ impl<'comments> Formatter<'comments> {
 
             Constant::Record {
                 name,
-                arguments,
+                arguments: None,
                 module: None,
                 ..
-            } if arguments.is_empty() => name.to_doc(),
+            } => name.to_doc(),
 
             Constant::Record {
                 name,
-                arguments,
+                arguments: None,
                 module: Some((module, _)),
                 ..
-            } if arguments.is_empty() => module.to_doc().append(".").append(name.as_str()),
+            } => module.to_doc().append(".").append(name.as_str()),
 
             Constant::Record {
                 name,
-                arguments,
+                arguments: Some(arguments),
                 module: None,
                 location,
                 ..
@@ -545,7 +545,7 @@ impl<'comments> Formatter<'comments> {
 
             Constant::Record {
                 name,
-                arguments,
+                arguments: Some(arguments),
                 module: Some((module, _)),
                 location,
                 ..
@@ -593,11 +593,11 @@ impl<'comments> Formatter<'comments> {
         commented(document, comments)
     }
 
-    fn const_list<'a, A, B>(
+    fn const_list<'a, A>(
         &mut self,
-        elements: &'a [Constant<A, B>],
+        elements: &'a [Constant<A>],
         location: &SrcSpan,
-        tail: &'a Option<Box<Constant<A, B>>>,
+        tail: &'a Option<Box<Constant<A>>>,
     ) -> Document<'a> {
         if elements.is_empty() {
             // We take all comments that come _before_ the end of the list,
@@ -692,9 +692,9 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    pub fn const_tuple<'a, A, B>(
+    pub fn const_tuple<'a, A>(
         &mut self,
-        elements: &'a [Constant<A, B>],
+        elements: &'a [Constant<A>],
         location: &SrcSpan,
     ) -> Document<'a> {
         if elements.is_empty() {
@@ -1147,8 +1147,11 @@ impl<'comments> Formatter<'comments> {
             } => self.call(fun, arguments, location),
 
             UntypedExpr::BinOp {
-                name, left, right, ..
-            } => self.bin_op(name, left, right, false),
+                operator,
+                left,
+                right,
+                ..
+            } => self.bin_op(operator, left, right, false),
 
             UntypedExpr::Case {
                 subjects,
@@ -1537,12 +1540,12 @@ impl<'comments> Formatter<'comments> {
         )
     }
 
-    pub fn const_record_update<'a, A, B>(
+    pub fn const_record_update<'a, A>(
         &mut self,
         module: &Option<(EcoString, SrcSpan)>,
         name: &'a EcoString,
-        record: &'a RecordBeingUpdated<Constant<A, B>>,
-        arguments: &'a [RecordUpdateArg<Constant<A, B>>],
+        record: &'a RecordBeingUpdated<Constant<A>>,
+        arguments: &'a [RecordUpdateArg<Constant<A>>],
         location: &SrcSpan,
     ) -> Document<'a> {
         let constructor_doc = match module {
@@ -1621,8 +1624,11 @@ impl<'comments> Formatter<'comments> {
         let side_doc = match side {
             UntypedExpr::String { value, .. } => self.bin_op_string(value),
             UntypedExpr::BinOp {
-                name, left, right, ..
-            } => self.bin_op(name, left, right, nest_steps),
+                operator,
+                left,
+                right,
+                ..
+            } => self.bin_op(operator, left, right, nest_steps),
             UntypedExpr::Int { .. }
             | UntypedExpr::Float { .. }
             | UntypedExpr::Block { .. }
@@ -2447,10 +2453,13 @@ impl<'comments> Formatter<'comments> {
         // Othewise we just print the expression as a normal expr.
         match expression {
             UntypedExpr::BinOp {
-                name, left, right, ..
+                operator,
+                left,
+                right,
+                ..
             } if siblings > 1 => {
                 let comments = self.pop_comments(expression.start_byte_index());
-                let doc = self.bin_op(name, left, right, true).group();
+                let doc = self.bin_op(operator, left, right, true).group();
                 commented(doc, comments)
             }
             UntypedExpr::PipeLine { expressions } if siblings > 1 => {
@@ -2711,10 +2720,7 @@ impl<'comments> Formatter<'comments> {
         }
     }
 
-    fn constant_call_arg<'a, A, B>(
-        &mut self,
-        argument: &'a CallArg<Constant<A, B>>,
-    ) -> Document<'a> {
+    fn constant_call_arg<'a, A>(&mut self, argument: &'a CallArg<Constant<A>>) -> Document<'a> {
         self.format_call_arg(argument, constant_call_arg_formatting, |this, value| {
             this.const_expr(value)
         })
@@ -3171,10 +3177,10 @@ impl<'comments> Formatter<'comments> {
         doc.group()
     }
 
-    fn append_as_message_constant<'a, A, B>(
+    fn append_as_message_constant<'a, A>(
         &mut self,
         doc: Document<'a>,
-        message: Option<&'a Constant<A, B>>,
+        message: Option<&'a Constant<A>>,
     ) -> Document<'a> {
         let Some(message) = message else { return doc };
 
@@ -3660,9 +3666,9 @@ fn pattern_call_arg_formatting(
     }
 }
 
-fn constant_call_arg_formatting<A, B>(
-    argument: &CallArg<Constant<A, B>>,
-) -> CallArgFormatting<'_, Constant<A, B>> {
+fn constant_call_arg_formatting<A>(
+    argument: &CallArg<Constant<A>>,
+) -> CallArgFormatting<'_, Constant<A>> {
     match argument {
         // An argument supplied using label shorthand syntax.
         _ if argument.uses_label_shorthand() => CallArgFormatting::ShorthandLabelled(

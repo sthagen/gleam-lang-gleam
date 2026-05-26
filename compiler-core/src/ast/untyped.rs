@@ -61,8 +61,8 @@ pub enum UntypedExpr {
 
     BinOp {
         location: SrcSpan,
-        name: BinOp,
-        name_location: SrcSpan,
+        operator: BinOp,
+        operator_start: u32,
         left: Box<Self>,
         right: Box<Self>,
     },
@@ -75,7 +75,7 @@ pub enum UntypedExpr {
         location: SrcSpan,
         subjects: Vec<Self>,
         // None if the case expression is missing a body.
-        clauses: Option<Vec<Clause<Self, (), ()>>>,
+        clauses: Option<Vec<Clause<Self, ()>>>,
     },
 
     FieldAccess {
@@ -213,7 +213,7 @@ impl UntypedExpr {
 
     pub fn bin_op_precedence(&self) -> u8 {
         match self {
-            Self::BinOp { name, .. } => name.precedence(),
+            Self::BinOp { operator, .. } => operator.precedence(),
             Self::PipeLine { .. } => 5,
             Self::Int { .. }
             | Self::Float { .. }
@@ -238,8 +238,8 @@ impl UntypedExpr {
     }
 
     pub fn bin_op_name(&self) -> Option<&BinOp> {
-        if let UntypedExpr::BinOp { name, .. } = self {
-            Some(name)
+        if let UntypedExpr::BinOp { operator, .. } = self {
+            Some(operator)
         } else {
             None
         }

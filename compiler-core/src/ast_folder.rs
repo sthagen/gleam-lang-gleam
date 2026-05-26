@@ -302,11 +302,11 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
 
             UntypedExpr::BinOp {
                 location,
-                name,
-                name_location,
+                operator,
+                operator_start,
                 left,
                 right,
-            } => self.fold_bin_op(location, name, name_location, left, right),
+            } => self.fold_bin_op(location, operator, operator_start, left, right),
 
             UntypedExpr::PipeLine { expressions } => self.fold_pipe_line(expressions),
 
@@ -472,8 +472,8 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
 
             UntypedExpr::BinOp {
                 location,
-                name,
-                name_location,
+                operator,
+                operator_start,
                 left,
                 right,
             } => {
@@ -481,8 +481,8 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
                 let right = Box::new(self.fold_expr(*right));
                 UntypedExpr::BinOp {
                     location,
-                    name,
-                    name_location,
+                    operator,
+                    operator_start,
                     left,
                     right,
                 }
@@ -803,15 +803,15 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
     fn fold_bin_op(
         &mut self,
         location: SrcSpan,
-        name: BinOp,
-        name_location: SrcSpan,
+        operator: BinOp,
+        operator_start: u32,
         left: Box<UntypedExpr>,
         right: Box<UntypedExpr>,
     ) -> UntypedExpr {
         UntypedExpr::BinOp {
             location,
-            name,
-            name_location,
+            operator,
+            operator_start,
             left,
             right,
         }
@@ -993,7 +993,6 @@ pub trait UntypedConstantFolder {
                 module,
                 name,
                 arguments,
-                tag: (),
                 type_: (),
                 field_map: _,
                 record_constructor: _,
@@ -1006,7 +1005,6 @@ pub trait UntypedConstantFolder {
                 name,
                 record,
                 arguments,
-                tag: (),
                 type_: (),
                 field_map: _,
             } => self.fold_constant_record_update(
@@ -1117,14 +1115,13 @@ pub trait UntypedConstantFolder {
         location: SrcSpan,
         module: Option<(EcoString, SrcSpan)>,
         name: EcoString,
-        arguments: Vec<CallArg<UntypedConstant>>,
+        arguments: Option<Vec<CallArg<UntypedConstant>>>,
     ) -> UntypedConstant {
         Constant::Record {
             location,
             module,
             name,
             arguments,
-            tag: (),
             type_: (),
             field_map: Inferred::Unknown,
             record_constructor: None,
@@ -1147,7 +1144,6 @@ pub trait UntypedConstantFolder {
             name,
             record,
             arguments,
-            tag: (),
             type_: (),
             field_map: Inferred::Unknown,
         }
@@ -1236,24 +1232,24 @@ pub trait UntypedConstantFolder {
                 module,
                 name,
                 arguments,
-                tag,
                 type_,
                 field_map,
                 record_constructor,
             } => {
-                let arguments = arguments
-                    .into_iter()
-                    .map(|mut argument| {
-                        argument.value = self.fold_constant(argument.value);
-                        argument
-                    })
-                    .collect();
+                let arguments = arguments.map(|arguments| {
+                    arguments
+                        .into_iter()
+                        .map(|mut argument| {
+                            argument.value = self.fold_constant(argument.value);
+                            argument
+                        })
+                        .collect()
+                });
                 Constant::Record {
                     location,
                     module,
                     name,
                     arguments,
-                    tag,
                     type_,
                     field_map,
                     record_constructor,
@@ -1267,7 +1263,6 @@ pub trait UntypedConstantFolder {
                 name,
                 record,
                 arguments,
-                tag,
                 type_,
                 field_map,
             } => {
@@ -1290,7 +1285,6 @@ pub trait UntypedConstantFolder {
                     name,
                     record,
                     arguments,
-                    tag,
                     type_,
                     field_map,
                 }

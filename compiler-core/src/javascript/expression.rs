@@ -370,8 +370,11 @@ impl<'module, 'a> Generator<'module, 'a> {
             TypedExpr::Block { statements, .. } => self.block(statements),
 
             TypedExpr::BinOp {
-                name, left, right, ..
-            } => self.bin_op(name, left, right),
+                operator,
+                left,
+                right,
+                ..
+            } => self.bin_op(operator, left, right),
 
             TypedExpr::Todo {
                 message, location, ..
@@ -628,7 +631,7 @@ impl<'module, 'a> Generator<'module, 'a> {
     /// a function literal.
     pub fn child_expression(&mut self, expression: &'a TypedExpr) -> Document<'a> {
         match expression {
-            TypedExpr::BinOp { name, .. } if name.is_operator_to_wrap() => {}
+            TypedExpr::BinOp { operator, .. } if operator.is_operator_to_wrap() => {}
             TypedExpr::Fn { .. } => {}
 
             TypedExpr::Int { .. }
@@ -1037,9 +1040,12 @@ impl<'module, 'a> Generator<'module, 'a> {
             }
 
             TypedExpr::BinOp {
-                name, left, right, ..
+                operator,
+                left,
+                right,
+                ..
             } => {
-                match name {
+                match operator {
                     BinOp::And => return self.assert_and(left, right, message, location),
                     BinOp::Or => return self.assert_or(left, right, message, location),
                     BinOp::Eq
@@ -1073,7 +1079,7 @@ impl<'module, 'a> Generator<'module, 'a> {
 
                 (
                     self.bin_op_with_doc_operands(
-                        *name,
+                        *operator,
                         left_document.clone(),
                         right_document.clone(),
                         &left.type_(),
@@ -1081,7 +1087,7 @@ impl<'module, 'a> Generator<'module, 'a> {
                     .surround("(", ")"),
                     vec![
                         ("kind", string("binary_operator")),
-                        ("operator", string(name.name())),
+                        ("operator", string(operator.name())),
                         (
                             "left",
                             self.asserted_expression(
@@ -1163,8 +1169,11 @@ impl<'module, 'a> Generator<'module, 'a> {
     fn negate_bool_expression(&mut self, value: &'a TypedExpr) -> Document<'a> {
         match value {
             TypedExpr::BinOp {
-                name, left, right, ..
-            } => match name {
+                operator,
+                left,
+                right,
+                ..
+            } => match operator {
                 BinOp::And => self.print_bin_op(left, right, "||"),
                 BinOp::Or => self.print_bin_op(left, right, "&&"),
                 BinOp::Eq => self.equal(left, right, false),
@@ -2100,10 +2109,13 @@ impl<'module, 'a> Generator<'module, 'a> {
                 arguments,
                 module,
                 name,
-                tag,
                 type_,
                 ..
             } => {
+                let tag = expression
+                    .constant_record_tag()
+                    .expect("record without inferred constructor made it to code generation");
+
                 if module.is_none() && type_.is_result() {
                     if tag == "Ok" {
                         self.tracker.ok_used = true;
@@ -2116,16 +2128,25 @@ impl<'module, 'a> Generator<'module, 'a> {
                 // arguments then this is the constructor being referenced, not the
                 // function being called.
                 if let Some(arity) = type_.fn_arity()
-                    && arguments.is_empty()
+                    && arguments.is_none()
                     && arity != 0
                 {
                     let arity = arity as u16;
                     return record_constructor(type_.clone(), None, name, arity, self.tracker);
                 }
 
-                // Record updates are fully expanded during type checking, so we just handle arguments
+                // Otherwise we're always constructing a record! Even if there's
+                // no argument list:
+                // ```gleam
+                // pub type Wibble { Wibble }
+                // pub const wibble = Wibble // <- here we're constructing the record!
+                // ```
+                //
+                // Record updates are fully expanded during type checking, so we
+                // just handle arguments
                 let field_values = arguments
                     .iter()
+                    .flatten()
                     .map(|argument| self.constant_expression(context, &argument.value))
                     .collect_vec();
 
@@ -2466,53 +2487,14 @@ impl<'module, 'a> Generator<'module, 'a> {
             }
             Constant::Record { type_, .. } if type_.is_nil() => "undefined".to_doc(),
 
-            Constant::Record {
-                arguments,
-                module,
-                name,
-                tag,
-                type_,
-                ..
-            } => {
-                if module.is_none() && type_.is_result() {
-                    if tag == "Ok" {
-                        self.tracker.ok_used = true;
-                    } else {
-                        self.tracker.error_used = true;
-                    }
-                }
-
-                // If there's no arguments and the type is a function that takes
-                // arguments then this is the constructor being referenced, not the
-                // function being called.
-                if let Some(arity) = type_.fn_arity()
-                    && arguments.is_empty()
-                    && arity != 0
-                {
-                    let arity = arity as u16;
-                    return record_constructor(type_.clone(), None, name, arity, self.tracker);
-                }
-
-                // Record updates are fully expanded during type checking, so we just
-                // handle arguments
-                let field_values = arguments
-                    .iter()
-                    .map(|argument| self.guard_constant_expression(&argument.value))
-                    .collect_vec();
-                construct_record(
-                    module.as_ref().map(|(module, _)| module.as_str()),
-                    name,
-                    field_values,
-                )
-            }
-
             Constant::BitArray { segments, .. } => {
                 self.constant_bit_array(segments, Context::Guard)
             }
 
             Constant::Var { name, .. } => self.local_var(name).to_doc(),
 
-            Constant::Int { .. }
+            Constant::Record { .. }
+            | Constant::Int { .. }
             | Constant::Float { .. }
             | Constant::String { .. }
             | Constant::List { .. }
