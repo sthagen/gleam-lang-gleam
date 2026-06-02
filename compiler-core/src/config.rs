@@ -34,8 +34,6 @@ fn default_javascript_runtime() -> Runtime {
     Runtime::NodeJs
 }
 
-pub type Dependencies = HashMap<EcoString, Requirement>;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpdxLicense {
     pub licence: String,
@@ -166,16 +164,16 @@ pub struct PackageConfig {
     #[serde(
         default,
         serialize_with = "ordered_map",
-        deserialize_with = "dependencies_map::deserialize"
+        deserialize_with = "map_with_package_name_keys::deserialize"
     )]
-    pub dependencies: Dependencies,
+    pub dependencies: HashMap<EcoString, Requirement>,
     #[serde(
         default,
         alias = "dev-dependencies",
         serialize_with = "ordered_map",
-        deserialize_with = "dependencies_map::deserialize"
+        deserialize_with = "map_with_package_name_keys::deserialize"
     )]
-    pub dev_dependencies: Dependencies,
+    pub dev_dependencies: HashMap<EcoString, Requirement>,
     #[serde(default)]
     pub repository: Option<Repository>,
     #[serde(default)]
@@ -217,7 +215,7 @@ where
 }
 
 impl PackageConfig {
-    pub fn dependencies_for(&self, mode: Mode) -> Result<Dependencies> {
+    pub fn dependencies_for(&self, mode: Mode) -> Result<HashMap<EcoString, Requirement>> {
         match mode {
             Mode::Dev | Mode::Lsp => self.all_direct_dependencies(),
             Mode::Prod => Ok(self.dependencies.clone()),
@@ -226,7 +224,7 @@ impl PackageConfig {
 
     // Return all the dependencies listed in the configuration, that is, all the
     // direct dependencies, both in the `dependencies` and `dev_dependencies`.
-    pub fn all_direct_dependencies(&self) -> Result<Dependencies> {
+    pub fn all_direct_dependencies(&self) -> Result<HashMap<EcoString, Requirement>> {
         let mut deps =
             HashMap::with_capacity(self.dependencies.len() + self.dev_dependencies.len());
         for (name, requirement) in self.dependencies.iter().chain(&self.dev_dependencies) {
@@ -1015,8 +1013,34 @@ pub struct Docs {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct DocsPage {
     pub title: String,
-    pub path: String,
+    #[serde(default, deserialize_with = "package_scoped_path::deserialize")]
+    pub path: Utf8PathBuf,
+    #[serde(default, deserialize_with = "package_scoped_path::deserialize")]
     pub source: Utf8PathBuf,
+}
+
+mod package_scoped_path {
+    use camino::{Utf8Component, Utf8PathBuf};
+    use serde::{Deserialize, Deserializer, de::Error as _};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Utf8PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let path = Utf8PathBuf::deserialize(deserializer)?;
+        // Absolute paths are not permitted.
+        // On Windows paths starting with \\ are drive-relative, so absolute as
+        // far as we are concerned.
+        if path.is_absolute() || (cfg!(windows) && path.starts_with("\\")) {
+            return Err(D::Error::custom("paths must be relative"));
+        }
+        for component in path.components() {
+            if component == Utf8Component::ParentDir {
+                return Err(D::Error::custom("paths must not contain .. segments"));
+            }
+        }
+        Ok(path)
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
@@ -1169,7 +1193,7 @@ pub(crate) mod package_name {
     }
 }
 
-pub(crate) mod dependencies_map {
+pub mod map_with_package_name_keys {
     use ecow::EcoString;
     use serde::{Deserialize, Deserializer, de};
     use std::collections::HashMap;
@@ -1241,6 +1265,166 @@ name = "1"
             .unwrap_err()
             .to_string(),
     )
+}
+
+#[test]
+fn docs_dot_dot_string_path() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "../secrets.txt", source = "./path/to/my-page.md" }]
+"#;
+
+    insta::assert_snapshot!(
+        insta::internals::AutoName,
+        toml::from_str::<PackageConfig>(input)
+            .unwrap_err()
+            .to_string()
+    );
+}
+
+#[test]
+fn docs_prefix_dot_dot_string_path() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "something/../../secrets.txt", source = "./path/to/my-page.md" }]
+"#;
+
+    insta::assert_snapshot!(
+        insta::internals::AutoName,
+        toml::from_str::<PackageConfig>(input)
+            .unwrap_err()
+            .to_string()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn docs_windows_dot_dot_string_path() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "..\\secrets.txt", source = "./path/to/my-page.md" }]
+"#;
+
+    insta::assert_snapshot!(
+        insta::internals::AutoName,
+        toml::from_str::<PackageConfig>(input)
+            .unwrap_err()
+            .to_string()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn docs_prefix_windows_dot_dot_string_path() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "something\\..\\..\\secrets.txt", source = "./path/to/my-page.md" }]
+"#;
+
+    insta::assert_snapshot!(
+        insta::internals::AutoName,
+        toml::from_str::<PackageConfig>(input)
+            .unwrap_err()
+            .to_string()
+    );
+}
+
+#[test]
+fn docs_dot_dot_path_buf() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "stuff.html", source = "../secrets.txt" }]
+"#;
+
+    insta::assert_snapshot!(
+        insta::internals::AutoName,
+        toml::from_str::<PackageConfig>(input)
+            .unwrap_err()
+            .to_string()
+    );
+}
+
+#[test]
+fn docs_prefix_dot_dot_path_buf() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "stuff.html", source = "something/../../secrets.txt" }]
+"#;
+
+    insta::assert_snapshot!(
+        insta::internals::AutoName,
+        toml::from_str::<PackageConfig>(input)
+            .unwrap_err()
+            .to_string()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn docs_windows_dot_dot_path_buf() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "stuff.html", source = "..\\secrets.txt" }]
+"#;
+
+    assert!(toml::from_str::<PackageConfig>(input).is_err())
+}
+
+#[cfg(windows)]
+#[test]
+fn docs_prefix_windows_dot_dot_path_buf() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "stuff.html", source = "something\\..\\..\\secrets.txt" }]
+"#;
+
+    assert!(toml::from_str::<PackageConfig>(input).is_err())
+}
+
+#[cfg(windows)]
+#[test]
+fn docs_absolute_source_windows() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "stuff.html", source = "C:\\etc\\passwd" }]
+"#;
+
+    assert!(toml::from_str::<PackageConfig>(input).is_err())
+}
+
+#[test]
+fn docs_absolute_source() {
+    let input = r#"
+name = "one_two"
+
+[documentation]
+pages = [{ title = "My Page", path = "stuff.html", source = "/etc/passwd" }]
+"#;
+
+    insta::assert_snapshot!(
+        insta::internals::AutoName,
+        toml::from_str::<PackageConfig>(input)
+            .unwrap_err()
+            .to_string()
+    );
 }
 
 #[test]
