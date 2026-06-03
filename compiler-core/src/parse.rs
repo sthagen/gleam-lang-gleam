@@ -1365,6 +1365,25 @@ where
                             Some((_, Token::Concatenate, _)) => {
                                 self.advance();
                                 let (r_start, right, r_end) = self.expect_assign_name()?;
+
+                                // Can't match on suffix literal
+                                if let Some((
+                                    second_concat_start,
+                                    Token::Concatenate,
+                                    second_concat_end,
+                                )) = self.tok0
+                                {
+                                    let suffix_end = match &self.tok1 {
+                                        Some((_start, Token::String { .. }, end)) => *end,
+                                        _ => second_concat_end,
+                                    };
+                                    return concat_pattern_variable_with_suffix(
+                                        second_concat_start,
+                                        right.name().clone(),
+                                        suffix_end,
+                                    );
+                                }
+
                                 Pattern::StringPrefix {
                                     location: SrcSpan { start, end: r_end },
                                     left_location: SrcSpan {
@@ -1399,6 +1418,22 @@ where
                     Some((_, Token::Concatenate, _)) => {
                         self.advance();
                         let (r_start, right, r_end) = self.expect_assign_name()?;
+
+                        // Can't match on suffix literal
+                        if let Some((second_concat_start, Token::Concatenate, second_concat_end)) =
+                            self.tok0
+                        {
+                            let suffix_end = match &self.tok1 {
+                                Some((_start, Token::String { .. }, end)) => *end,
+                                _ => second_concat_end,
+                            };
+                            return concat_pattern_variable_with_suffix(
+                                second_concat_start,
+                                right.name().clone(),
+                                suffix_end,
+                            );
+                        }
+
                         Pattern::StringPrefix {
                             location: SrcSpan { start, end: r_end },
                             left_location: SrcSpan { start, end },
@@ -4646,6 +4681,17 @@ functions are declared separately from types.";
 fn concat_pattern_variable_left_hand_side_error<T>(start: u32, end: u32) -> Result<T, ParseError> {
     Err(ParseError {
         error: ParseErrorType::ConcatPatternVariableLeftHandSide,
+        location: SrcSpan::new(start, end),
+    })
+}
+
+fn concat_pattern_variable_with_suffix<T>(
+    start: u32,
+    name: EcoString,
+    end: u32,
+) -> Result<T, ParseError> {
+    Err(ParseError {
+        error: ParseErrorType::ConcatPatternVariableWithSuffix { name },
         location: SrcSpan::new(start, end),
     })
 }

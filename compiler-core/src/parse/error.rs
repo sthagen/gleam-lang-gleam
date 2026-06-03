@@ -1,6 +1,6 @@
 use crate::ast::{SrcSpan, TypeAst};
 use crate::diagnostic::{ExtraLabel, Label};
-use crate::error::wrap;
+use crate::error::{wrap, wrap_format};
 use crate::parse::Token;
 use ecow::EcoString;
 use itertools::Itertools;
@@ -106,8 +106,13 @@ pub enum ParseErrorType {
         hint: Option<EcoString>,
     },
     UnexpectedFunction, // a function was used called outside of another function
-    // A variable was assigned or discarded on the left hand side of a <> pattern
+    /// A variable was assigned or discarded on the left hand side of a <> pattern
     ConcatPatternVariableLeftHandSide,
+    /// A variable was assigned as infix between prefix and suffix string
+    /// patterns using <>
+    ConcatPatternVariableWithSuffix {
+        name: EcoString,
+    },
     ListSpreadWithoutTail,               // let x = [1, ..]
     ExpectedFunctionBody,                // let x = fn()
     RedundantInternalAttribute,          // for a private definition marked as internal
@@ -551,6 +556,21 @@ utf16_codepoint, utf32_codepoint, signed, unsigned, big, little, native, size, u
                 .join("\n"),
                 hint: None,
                 label_text: "This must be a string literal".into(),
+                extra_labels: vec![],
+            },
+
+            ParseErrorType::ConcatPatternVariableWithSuffix { name } => ParseErrorDetails {
+                text: [
+                    "A string pattern can only match on a literal string prefix.",
+                    "",
+                    &wrap_format!(
+                        "Matching on a literal suffix is not possible, because `{name}` \
+would have an unknown size."
+                    ),
+                ]
+                .join("\n"),
+                hint: None,
+                label_text: "This pattern is not allowed".into(),
                 extra_labels: vec![],
             },
 
