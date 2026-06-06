@@ -1809,6 +1809,35 @@ fn unreachable_warning_if_all_branches_panic() {
     );
 }
 
+// https://github.com/gleam-lang/gleam/issues/5683
+#[test]
+fn unreachable_use_statement_after_panic() {
+    assert_warning!(
+        "
+pub fn main() {
+  panic
+  use <- wibble
+  1
+}
+
+fn wibble(f) { f() }
+"
+    );
+}
+
+#[test]
+fn unreachable_use_fn_statement_after_panic() {
+    assert_warning!(
+        "
+pub fn main() -> Nil {
+  panic
+  use <- fn(_) { Nil }
+  1
+}
+"
+    );
+}
+
 #[test]
 fn unreachable_warning_if_all_branches_panic_2() {
     assert_warning!(
@@ -5002,6 +5031,24 @@ pub fn go(x: BitArray) {
   }
 }
 "
+    );
+}
+
+#[test]
+fn bit_array_match_on_bytes_for_erlang_does_not_complain_about_int_size() {
+    assert_js_no_warnings!(
+        r#"
+pub fn main() -> Nil {
+  echo wibble(<<1, 2, 3, 4, 5, 6, 7, 8>>)
+  Nil
+}
+
+@external(javascript, "./ffi.mjs", "wibble")
+fn wibble(bits: BitArray) -> Int {
+  let assert <<x:64>> = bits
+  x
+}
+"#
     );
 }
 

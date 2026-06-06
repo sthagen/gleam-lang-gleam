@@ -54,7 +54,7 @@ pub struct CodeActionBuilder {
 }
 
 impl CodeActionBuilder {
-    pub fn new(title: impl ToString) -> Self {
+    pub fn new(title: &str) -> Self {
         Self {
             action: CodeAction {
                 title: title.to_string(),
@@ -2054,7 +2054,7 @@ impl<'a> QualifiedToUnqualifiedImportSecondPass<'a> {
         }
         self.edit_import();
         let mut action = Vec::with_capacity(1);
-        CodeActionBuilder::new(format!(
+        CodeActionBuilder::new(&format!(
             "Unqualify {}.{}",
             self.qualified_constructor.used_name, self.qualified_constructor.constructor
         ))
@@ -2551,7 +2551,7 @@ impl<'a> UnqualifiedToQualifiedImportSecondPass<'a> {
             constructor,
             ..
         } = self.unqualified_constructor;
-        CodeActionBuilder::new(format!(
+        CodeActionBuilder::new(&format!(
             "Qualify {} as {}.{}",
             constructor.used_name(),
             module_name,
@@ -5505,6 +5505,27 @@ pub struct PatternMatchOnValue<'a, A> {
 ///
 #[derive(Clone)]
 pub enum PatternMatchedValue<'a> {
+    /// A statement we can match on. For example, function calls, record
+    /// and tuple accesses:
+    ///
+    /// ```gleam
+    /// pub fn wibble() {
+    ///   wobble(1, 2)
+    /// //^^^^ This
+    /// }
+    /// ```
+    ///
+    Statement {
+        /// The span covering the entire statement:
+        /// ```gleam
+        ///   wobble(1, 2)
+        /// //^^^^^^^^^^^^ This
+        /// ```
+        location: SrcSpan,
+        /// The statement's type defining what we will be pattern matching
+        /// on.
+        type_: Arc<Type>,
+    },
     FunctionArgument {
         /// The argument being pattern matched on.
         ///
@@ -5644,6 +5665,11 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
                 "Pattern match on variable"
             }
 
+            Some(PatternMatchedValue::Statement { location, type_ }) => {
+                self.match_on_statement(location, type_);
+                "Pattern match on value"
+            }
+
             Some(PatternMatchedValue::ClausePatternVariable {
                 variable_type,
                 variable_location,
@@ -5767,7 +5793,6 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
 
         let assignment_range = self.edits.src_span_to_lsp_range(assignment_location);
         let nesting = " ".repeat(assignment_range.start.character as usize);
-
         let pattern_matching = if patterns.len() == 1 {
             let pattern = patterns.first();
             format!("let {pattern} = {variable_name}")
@@ -5783,6 +5808,32 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
             assignment_location.end,
             format!("\n{nesting}{pattern_matching}"),
         );
+    }
+
+    fn match_on_statement(&mut self, statement_location: SrcSpan, type_: Arc<Type>) {
+        let Some(patterns) =
+            self.type_to_destructure_patterns(type_.as_ref(), &mut NameGenerator::new())
+        else {
+            return;
+        };
+
+        if patterns.len() == 1 {
+            let pattern = patterns.first();
+            self.edits
+                .insert(statement_location.start, format!("let {pattern} = "));
+        } else {
+            let statement_range = self.edits.src_span_to_lsp_range(statement_location);
+            let nesting = " ".repeat(statement_range.start.character as usize);
+            let patterns = patterns
+                .iter()
+                .map(|p| format!("  {nesting}{p} -> todo"))
+                .join("\n");
+            self.edits.insert(statement_location.start, "case ".into());
+            self.edits.insert(
+                statement_location.end,
+                format!(" {{\n{patterns}\n{nesting}}}"),
+            )
+        }
     }
 
     fn match_on_clause_variable(
@@ -5870,6 +5921,10 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
     ) -> Option<Vec1<EcoString>> {
         match type_ {
             Type::Fn { .. } => None,
+
+            // Pattern matchin on `Nil` is not all that useful.
+            Type::Named { .. } if type_.is_nil() => None,
+
             Type::Var { type_ } => self.type_var_to_destructure_patterns(&type_.borrow(), names),
 
             // We special case lists, they don't have "regular" constructors
@@ -6047,6 +6102,36 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
         // exploring the function body as we might want to destructure the
         // argument of an expression function!
         ast::visit::visit_typed_function(self, fun);
+    }
+
+    fn visit_typed_statement(&mut self, statement: &'ast TypedStatement) {
+        let statement_range = self.edits.src_span_to_lsp_range(statement.location());
+        if !within(self.params.range, statement_range) {
+            return;
+        }
+
+        ast::visit::visit_typed_statement(self, statement);
+        match statement {
+            // If we haven't found any more specific selected expression, then
+            // we are going to select the statement to pattern match on (if it
+            // can be meaningfully pattern matched on).
+            ast::Statement::Expression(
+                TypedExpr::Call { type_, .. }
+                | TypedExpr::ModuleSelect { type_, .. }
+                | TypedExpr::RecordAccess { type_, .. }
+                | TypedExpr::TupleIndex { type_, .. },
+            ) if self.selected_value.is_none() => {
+                self.selected_value = Some(PatternMatchedValue::Statement {
+                    location: statement.location(),
+                    type_: type_.clone(),
+                })
+            }
+
+            ast::Statement::Expression(_)
+            | ast::Statement::Assignment(_)
+            | ast::Statement::Use(_)
+            | ast::Statement::Assert(_) => (),
+        }
     }
 
     fn visit_typed_expr_fn(
@@ -8921,7 +9006,7 @@ impl<'a> FixBinaryOperation<'a> {
         self.edits.replace(location, replacement.name().into());
 
         let mut action = Vec::with_capacity(1);
-        CodeActionBuilder::new(format!("Use `{}`", replacement.name()))
+        CodeActionBuilder::new(&format!("Use `{}`", replacement.name()))
             .kind(CodeActionKind::RefactorRewrite)
             .changes(self.params.text_document.uri.clone(), self.edits.edits)
             .preferred(true)
@@ -9055,7 +9140,7 @@ impl<'a> FixTruncatedBitArraySegment<'a> {
             .replace(truncation.value_location, replacement.clone());
 
         let mut action = Vec::with_capacity(1);
-        CodeActionBuilder::new(format!("Replace with `{replacement}`"))
+        CodeActionBuilder::new(&format!("Replace with `{replacement}`"))
             .kind(CodeActionKind::RefactorRewrite)
             .changes(self.params.text_document.uri.clone(), self.edits.edits)
             .preferred(true)
@@ -12489,7 +12574,7 @@ impl<'a, IO> CreateUnknownModule<'a, IO> {
             .expect("origin directory is absolute");
 
         let mut actions = vec![];
-        CodeActionBuilder::new(format!(
+        CodeActionBuilder::new(&format!(
             "Create {}/{}.gleam",
             self.module.origin.folder_name(),
             unknown_module_name
