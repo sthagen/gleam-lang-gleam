@@ -106,7 +106,6 @@
       function(random_number)
     }
   }
-
   fn function(random_number: Int) -> Int {
     random_number * 42
   }
@@ -118,6 +117,39 @@
   editors like Zed inserting the wrong text when accepting type completions.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a bug where the post-publish message for pushing a git commit was
+  formatted incorrectly.
+  ([Louis Pilfold](https://github.com/lpil))
+
+- Fixed a bug where the compiler would generate invalid TypeScript type
+  definitions for records with a field named `constructor`.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Fixed a bug where the compiler would raise a warning for truncated int
   segments when compiling a function with a JavaScript external.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- When using the language server to extract a function from within the body of a
+  use statement, only the selected statement(s) are extracted.
+
+  For example,
+  ```gleam
+  pub fn wibble() {
+      use wobble <- result.map(todo)
+      echo wobble as "1" // <- Extracting this line
+      echo wobble as "2"
+  }
+  ```
+  is turned into
+  ```gleam
+  pub fn wibble() {
+      use wobble <- result.map(todo)
+      function(wobble)
+      echo wobble as "2"
+  }
+  fn function(wobble: a) -> Nil {
+    echo wobble as "1"
+    Nil
+  }
+  ```
+  ([Gavin Morrow](https://github.com/gavinmorrow))
