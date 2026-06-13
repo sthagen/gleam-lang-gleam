@@ -6,13 +6,13 @@ expression: "./cases/javascript_import"
 <.cache binary>
 
 //// /out/lib/the_package/_gleam_artefacts/one@two.cache_meta
-<65 byte binary>
+<77 byte binary>
 
 //// /out/lib/the_package/_gleam_artefacts/two.cache
 <.cache binary>
 
 //// /out/lib/the_package/_gleam_artefacts/two.cache_meta
-<88 byte binary>
+<100 byte binary>
 
 //// /out/lib/the_package/gleam.d.mts
 export * from "../prelude.mjs";
@@ -38,7 +38,8 @@ export type A$ = A;
 import { CustomType as $CustomType } from "../gleam.mjs";
 
 export class A extends $CustomType {}
-export const A$A = () => new A();
+export const A$A$const = new A();
+export const A$A = () => A$A$const;
 export const A$isA = (value) => value instanceof A;
 
 

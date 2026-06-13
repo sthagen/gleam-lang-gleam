@@ -9,11 +9,7 @@ export class CustomType {
 
 export class List {
   static fromArray(array, tail) {
-    let t = tail || new Empty();
-    for (let i = array.length - 1; i >= 0; --i) {
-      t = new NonEmpty(array[i], t);
-    }
-    return t;
+    return toList(array, tail)
   }
 
   [Symbol.iterator]() {
@@ -52,7 +48,11 @@ export function prepend(element, tail) {
 }
 
 export function toList(elements, tail) {
-  return List.fromArray(elements, tail);
+  let t = tail || List$Empty$const
+  for (let i = elements.length - 1; i >= 0; --i) {
+    t = new NonEmpty(elements[i], t);
+  }
+  return t;
 }
 
 class ListIterator {
@@ -73,8 +73,9 @@ class ListIterator {
   }
 }
 
-export class Empty extends List {}
-export const List$Empty = () => new Empty();
+export class Empty extends List { }
+export const List$Empty$const = new Empty();
+export const List$Empty = () => List$Empty$const;
 export const List$isEmpty = (value) => value instanceof Empty;
 
 export class NonEmpty extends List {
@@ -575,7 +576,7 @@ export function toBitArray(segments) {
       return new BitArray(segment);
     }
 
-    return new BitArray(new Uint8Array(/** @type {number[]} */ (segments)));
+    return new BitArray(new Uint8Array(/** @type {number[]} */(segments)));
   }
 
   // Count the total number of bits and check if all segments are numbers, i.e.
@@ -597,7 +598,7 @@ export function toBitArray(segments) {
   // If all segments are numbers then pass the segments array directly to the
   // Uint8Array constructor
   if (areAllSegmentsNumbers) {
-    return new BitArray(new Uint8Array(/** @type {number[]} */ (segments)));
+    return new BitArray(new Uint8Array(/** @type {number[]} */(segments)));
   }
 
   // Pack the segments into a Uint8Array
@@ -1458,7 +1459,7 @@ export function isEqual(x, y) {
       try {
         if (a.equals(b)) continue;
         else return false;
-      } catch {}
+      } catch { }
     }
 
     let [keys, get] = getters(a);

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2023 The Gleam contributors
+
 use super::*;
 
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -87,10 +90,10 @@ pub fn main() { wibble() }
 "#,
     );
 
+    let error = compile_package(0, "javascript").unwrap_err();
     assert!(
-        compile_package(0, "javascript")
-            .unwrap_err()
-            .contains("The javascript target does not support")
+        error.contains("The JavaScript target does not support"),
+        "incorrect error message: {error:?}"
     );
 }
 

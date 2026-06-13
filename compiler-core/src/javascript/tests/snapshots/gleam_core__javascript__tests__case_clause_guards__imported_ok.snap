@@ -17,15 +17,16 @@ pub fn func(x) {
 
 ----- COMPILED JAVASCRIPT
 import * as $gleam from "../gleam.mjs";
-import { Ok, toList, CustomType as $CustomType, isEqual } from "../gleam.mjs";
+import { Ok, toList, Empty as $Empty, CustomType as $CustomType } from "../gleam.mjs";
 
 export class Ok extends $CustomType {}
-export const X$Ok = () => new Ok();
+export const X$Ok$const = new Ok();
+export const X$Ok = () => X$Ok$const;
 export const X$isOk = (value) => value instanceof Ok;
 
 export function func(x) {
   let $ = (var0) => { return new $gleam.Ok(var0); };
-  if (isEqual(toList([]), toList([(var0) => { return new Ok(var0); }]))) {
+  if (toList([(var0) => { return new Ok(var0); }]) instanceof $Empty) {
     return true;
   } else {
     return false;

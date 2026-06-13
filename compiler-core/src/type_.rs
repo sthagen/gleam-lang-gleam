@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2018 The Gleam contributors
+
 pub(crate) mod environment;
 pub mod error;
 pub(crate) mod expression;
@@ -32,7 +35,7 @@ use crate::{
     build::{Origin, Target},
     inline::InlinableFunction,
     line_numbers::LineNumbers,
-    reference::ReferenceMap,
+    reference::{ModuleNameReference, ReferenceMap},
     type_::expression::Implementations,
 };
 use error::*;
@@ -351,6 +354,19 @@ impl Type {
                 ..
             } => Some((module.clone(), name.clone(), arguments.clone())),
             Self::Var { type_ } => type_.borrow().named_type_information(),
+            Self::Fn { .. } | Self::Tuple { .. } => None,
+        }
+    }
+
+    pub fn named_type_name_and_package(&self) -> Option<(EcoString, EcoString, EcoString)> {
+        match self {
+            Self::Named {
+                package,
+                module,
+                name,
+                ..
+            } => Some((package.clone(), module.clone(), name.clone())),
+            Self::Var { type_ } => type_.borrow().named_type_name_and_package(),
             Self::Fn { .. } | Self::Tuple { .. } => None,
         }
     }
@@ -1040,6 +1056,7 @@ pub struct References {
     pub imported_modules: HashSet<EcoString>,
     pub value_references: ReferenceMap,
     pub type_references: ReferenceMap,
+    pub module_references: HashMap<EcoString, Vec<ModuleNameReference>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1416,6 +1433,13 @@ impl TypeVar {
     pub fn named_type_name(&self) -> Option<(EcoString, EcoString)> {
         match self {
             Self::Link { type_ } => type_.named_type_name(),
+            Self::Unbound { .. } | Self::Generic { .. } => None,
+        }
+    }
+
+    pub fn named_type_name_and_package(&self) -> Option<(EcoString, EcoString, EcoString)> {
+        match self {
+            Self::Link { type_ } => type_.named_type_name_and_package(),
             Self::Unbound { .. } | Self::Generic { .. } => None,
         }
     }

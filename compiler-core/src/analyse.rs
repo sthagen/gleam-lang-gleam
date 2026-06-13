@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2018 The Gleam contributors
+
 mod imports;
 pub mod name;
 
@@ -406,6 +409,7 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                         .collect(),
                     value_references: env.references.value_references,
                     type_references: env.references.type_references,
+                    module_references: env.references.module_references,
                 },
                 inline_functions: self.inline_functions,
             },

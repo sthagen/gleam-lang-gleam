@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2021 The Gleam contributors
+
 mod decision;
 mod expression;
 mod import;
@@ -6,7 +9,7 @@ mod tests;
 mod typescript;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use debug_ignore::DebugIgnore;
@@ -223,6 +226,14 @@ impl<'a> Generator<'a> {
             self.register_prelude_usage(&mut imports, "Empty", Some("$Empty"));
         };
 
+        if self.tracker.list_empty_const_used {
+            self.register_prelude_usage(
+                &mut imports,
+                "List$Empty$const",
+                Some("$List$Empty$const"),
+            );
+        };
+
         if self.tracker.list_non_empty_class_used || self.tracker.echo_used {
             self.register_prelude_usage(&mut imports, "NonEmpty", Some("$NonEmpty"));
         };
@@ -303,6 +314,54 @@ impl<'a> Generator<'a> {
             self.register_prelude_usage(&mut imports, "sizedFloat", None);
         }
 
+        for (variant, alias) in self.tracker.variant_constants_used.iter() {
+            let path = self.import_path(&variant.package, &variant.module);
+            let member = Member {
+                name: eco_format!("{}${}$const", variant.type_name, variant.name),
+                alias: alias.as_ref().map(|alias| alias.to_doc()),
+            };
+            imports.register_module(path, [], [member]);
+        }
+
+        // If we have some Gleam code that looks something like this:
+        // ```gleam
+        // import option.{None}
+        //
+        // pub fn main() {
+        //   None
+        // }
+        // ```
+        //
+        // Here, the generated JavaScript code for `main` will look something
+        // like this:
+        //
+        // ```javascript
+        // export function main() {
+        //   return Option$None$const;
+        // }
+        // ```
+        //
+        // The `None` variant is technically being imported, but we don't
+        // actually use the generated `None` class in the JavaScript code, so
+        // we don't want to import it.
+        //
+        // However, if we are pattern matching on the `None` variant, there
+        // will be some code that looks like `if (value instanceof None)`, in
+        // which case we still need to import `None`. Therefore we remove all
+        // variants which are used as singleton constants, and that are not used
+        // in pattern matching.
+        //
+        imports.filter_unused_variants(
+            self.tracker
+                .variant_constants_used
+                .keys()
+                .filter(|variant| !self.tracker.variants_used_in_instanceof.contains(variant))
+                .map(|variant| {
+                    let path = self.import_path(&variant.package, &variant.module);
+                    (path, variant.name.clone())
+                }),
+        );
+
         let echo_definition = self.echo_definition(&mut imports);
         let sourcemap_reference = self.sourcemap_reference();
         let type_reference = self.type_reference();
@@ -377,7 +436,7 @@ impl<'a> Generator<'a> {
     ) {
         let path = self.import_path(&self.module.type_info.package, PRELUDE_MODULE_NAME);
         let member = Member {
-            name: name.to_doc(),
+            name: name.into(),
             alias: alias.map(|a| a.to_doc()),
         };
         imports.register_module(path, [], [member]);
@@ -464,10 +523,22 @@ impl<'a> Generator<'a> {
     ) -> Document<'a> {
         let class_definition = self.variant_class_definition(constructor, publicity);
 
+        // Singleton constants are used internally by the compiler, so they aren't
+        // part of the public JS API and need to be generated even for private
+        // types.
+        let constructor_singleton = if constructor.arguments.is_empty() {
+            docvec![
+                line(),
+                self.variant_constructor_constant(constructor, type_name, publicity)
+            ]
+        } else {
+            nil()
+        };
+
         // If the custom type is private or opaque, we don't need to generate API
         // functions for it.
         if publicity.is_private() {
-            return class_definition;
+            return class_definition.append(constructor_singleton);
         }
 
         let constructor_definition = self.variant_constructor_definition(constructor, type_name);
@@ -476,6 +547,7 @@ impl<'a> Generator<'a> {
 
         docvec![
             class_definition,
+            constructor_singleton,
             line(),
             constructor_definition,
             line(),
@@ -484,11 +556,61 @@ impl<'a> Generator<'a> {
         ]
     }
 
+    /// Generate a singleton constant for a variant with no fields. This means
+    /// that all values of a particular variant are the same underlying reference,
+    /// allowing them to be compared more efficiently.
+    ///
+    fn variant_constructor_constant(
+        &self,
+        constructor: &'a TypedRecordConstructor,
+        type_name: &'a str,
+        publicity: Publicity,
+    ) -> Document<'a> {
+        let keyword = if publicity.is_importable() {
+            "export const "
+        } else {
+            "const "
+        };
+        docvec![
+            self.source_map_tracker(constructor.location.start),
+            keyword,
+            type_name,
+            "$",
+            constructor.name.as_str(),
+            "$const",
+            " =",
+            docvec![break_("", " "), "new ", constructor.name.as_str(), "();"]
+                .group()
+                .nest(INDENT)
+        ]
+    }
+
     fn variant_constructor_definition(
         &self,
         constructor: &'a TypedRecordConstructor,
         type_name: &'a str,
     ) -> Document<'a> {
+        // If the constructor has no fields, return the singleton constant
+        // instead.
+        if constructor.arguments.is_empty() {
+            return docvec![
+                "export const ",
+                type_name,
+                "$",
+                constructor.name.as_str(),
+                " = () =>",
+                docvec![
+                    break_("", " "),
+                    type_name,
+                    "$",
+                    constructor.name.as_str(),
+                    "$const;"
+                ]
+                .group()
+                .nest(INDENT),
+            ];
+        }
+
         let mut arguments = Vec::new();
 
         for (index, parameter) in constructor.arguments.iter().enumerate() {
@@ -754,7 +876,7 @@ impl<'a> Generator<'a> {
         imports
     }
 
-    fn import_path(&self, package: &'a str, module: &'a str) -> EcoString {
+    fn import_path(&self, package: &str, module: &str) -> EcoString {
         // TODO: strip shared prefixed between current module and imported
         // module to avoid descending and climbing back out again
         if package == self.module.type_info.package || package.is_empty() {
@@ -801,7 +923,7 @@ impl<'a> Generator<'a> {
                 self.register_in_scope(n);
                 maybe_escape_identifier(n).to_doc()
             });
-            let name = maybe_escape_identifier(&i.name).to_doc();
+            let name = maybe_escape_identifier(&i.name);
             Member { name, alias }
         });
 
@@ -815,11 +937,11 @@ impl<'a> Generator<'a> {
         publicity: Publicity,
         name: &'a str,
         module: &'a str,
-        fun: &'a str,
+        fun: &EcoString,
     ) {
         let needs_escaping = !is_usable_js_identifier(name);
         let member = Member {
-            name: fun.to_doc(),
+            name: fun.clone(),
             alias: if name == fun && !needs_escaping {
                 None
             } else if needs_escaping {
@@ -1254,6 +1376,7 @@ pub(crate) struct UsageTracker {
     pub ok_used: bool,
     pub list_used: bool,
     pub list_empty_class_used: bool,
+    pub list_empty_const_used: bool,
     pub list_non_empty_class_used: bool,
     pub prepend_used: bool,
     pub error_used: bool,
@@ -1276,6 +1399,24 @@ pub(crate) struct UsageTracker {
     pub codepoint_utf32_bit_array_segment_used: bool,
     pub float_bit_array_segment_used: bool,
     pub echo_used: bool,
+    /// Keeps track of each time a fieldless variant is constructed, so we can
+    /// import the singleton constant. Optionally contains an alias, if the variant
+    /// was imported unqualified and aliased.
+    pub variant_constants_used: HashMap<TypeVariant, Option<EcoString>>,
+    /// Fieldless variants that are used in `instanceof` checks during pattern
+    /// matching or comparison. If we're only using a fieldless variant for
+    /// construction, we don't need to import the variant class itself, just it
+    /// singleton constant. However, if we are using `instanceof`, we still need
+    /// to import it.
+    pub variants_used_in_instanceof: HashSet<TypeVariant>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct TypeVariant {
+    package: EcoString,
+    module: EcoString,
+    type_name: EcoString,
+    name: EcoString,
 }
 
 fn bool(bool: bool) -> Document<'static> {

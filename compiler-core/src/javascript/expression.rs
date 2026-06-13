@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2021 The Gleam contributors
+
 use num_bigint::BigInt;
 use vec1::Vec1;
 
@@ -389,6 +392,7 @@ impl<'module, 'a> Generator<'module, 'a> {
                             tail,
                         )
                     }
+                    None if elements.is_empty() => this.empty_list(),
                     None => {
                         this.tracker.list_used = true;
                         list(elements.iter().map(|element| this.wrap_expression(element)))
@@ -508,6 +512,13 @@ impl<'module, 'a> Generator<'module, 'a> {
                 self.wrap_return(document)
             ]
         }
+    }
+
+    /// Return the singleton empty list; all empty lists are the same underlying
+    /// reference, which makes comparison faster.
+    fn empty_list(&mut self) -> Document<'static> {
+        self.tracker.list_empty_const_used = true;
+        "$List$Empty$const".to_doc()
     }
 
     fn negate_with(&mut self, with: &'static str, value: &'a TypedExpr) -> Document<'a> {
@@ -811,10 +822,13 @@ impl<'module, 'a> Generator<'module, 'a> {
 
     fn variable(&mut self, name: &'a EcoString, constructor: &'a ValueConstructor) -> Document<'a> {
         match &constructor.variant {
-            ValueConstructorVariant::Record { arity, .. } => {
+            ValueConstructorVariant::Record {
+                arity,
+                name: variant_name,
+                ..
+            } => {
                 let type_ = constructor.type_.clone();
-                let tracker = &mut self.tracker;
-                record_constructor(type_, None, name, *arity, tracker)
+                self.record_constructor(type_, None, variant_name, name, *arity)
             }
             ValueConstructorVariant::ModuleFn { .. }
             | ValueConstructorVariant::ModuleConstant { .. }
@@ -1869,7 +1883,12 @@ impl<'module, 'a> Generator<'module, 'a> {
                 name,
                 constructor:
                     ValueConstructor {
-                        variant: ValueConstructorVariant::Record { arity: 0, .. },
+                        variant:
+                            ValueConstructorVariant::Record {
+                                arity: 0,
+                                name: variant_name,
+                                ..
+                            },
                         ..
                     },
                 ..
@@ -1877,7 +1896,14 @@ impl<'module, 'a> Generator<'module, 'a> {
                 let left_doc = self.not_in_tail_position(Some(Ordering::Strict), |this| {
                     this.wrap_expression(left)
                 });
-                Some(self.singleton_equal(left_doc, None, name, should_be_equal))
+                Some(self.singleton_equal(
+                    left_doc,
+                    None,
+                    name.clone(),
+                    should_be_equal,
+                    variant_name.clone(),
+                    right.type_(),
+                ))
             }
             TypedExpr::ModuleSelect {
                 module_alias,
@@ -1887,7 +1913,30 @@ impl<'module, 'a> Generator<'module, 'a> {
                 let left_doc = self.not_in_tail_position(Some(Ordering::Strict), |this| {
                     this.wrap_expression(left)
                 });
-                Some(self.singleton_equal(left_doc, Some(module_alias), name, should_be_equal))
+                Some(self.singleton_equal(
+                    left_doc,
+                    Some(module_alias),
+                    name.clone(),
+                    should_be_equal,
+                    name.clone(),
+                    right.type_(),
+                ))
+            }
+            // Empty lists are implemented as a variant with no fields, so we can
+            // use `instanceof` for a faster check.
+            TypedExpr::List { elements, .. } if elements.is_empty() => {
+                let left_doc = self.not_in_tail_position(Some(Ordering::Strict), |this| {
+                    this.wrap_expression(left)
+                });
+                self.tracker.list_empty_class_used = true;
+                Some(self.singleton_equal(
+                    left_doc,
+                    None,
+                    "$Empty".into(),
+                    should_be_equal,
+                    "Empty".into(),
+                    right.type_(),
+                ))
             }
             TypedExpr::Int { .. }
             | TypedExpr::Float { .. }
@@ -1917,12 +1966,30 @@ impl<'module, 'a> Generator<'module, 'a> {
     }
 
     fn singleton_equal(
-        &self,
+        &mut self,
         value: Document<'a>,
         module: Option<&'a str>,
-        name: &'a str,
+        name: EcoString,
         should_be_equal: bool,
+        variant_name: EcoString,
+        type_: Arc<Type>,
     ) -> Document<'a> {
+        // If we're using this variant unqualified, register it as used so that
+        // we know to import it. This `instanceof` check only happens if the
+        // variant has no fields, so we don't need to check that here.
+        if module.is_none()
+            && let Some((package, module, type_name)) = type_.named_type_name_and_package()
+        {
+            _ = self
+                .tracker
+                .variants_used_in_instanceof
+                .insert(TypeVariant {
+                    package,
+                    module,
+                    type_name,
+                    name: variant_name,
+                });
+        }
         let record = if let Some(module) = module {
             docvec!["$", module, ".", name]
         } else {
@@ -2080,7 +2147,7 @@ impl<'module, 'a> Generator<'module, 'a> {
 
             ModuleValueConstructor::Record {
                 name, arity, type_, ..
-            } => record_constructor(type_.clone(), Some(module), name, *arity, self.tracker),
+            } => self.record_constructor(type_.clone(), Some(module), name, name, *arity),
         }
     }
 
@@ -2123,6 +2190,10 @@ impl<'module, 'a> Generator<'module, 'a> {
             ),
 
             Constant::List { elements, tail, .. } => {
+                if tail.is_none() && elements.is_empty() {
+                    return self.empty_list();
+                }
+
                 self.tracker.list_used = true;
                 let list = match tail {
                     // There's no tail in the list, we join all the elements and
@@ -2200,7 +2271,7 @@ impl<'module, 'a> Generator<'module, 'a> {
                     && arity != 0
                 {
                     let arity = arity as u16;
-                    return record_constructor(type_.clone(), None, name, arity, self.tracker);
+                    return self.record_constructor(type_.clone(), None, &tag, name, arity);
                 }
 
                 // Otherwise we're always constructing a record! Even if there's
@@ -2409,9 +2480,6 @@ impl<'module, 'a> Generator<'module, 'a> {
                 operator,
                 ..
             } => {
-                let left_document = self.wrapped_guard(left);
-                let right_document = self.wrapped_guard(right);
-
                 let operator = match operator {
                     BinOp::Eq if is_js_scalar(left.type_()) => "===",
                     BinOp::NotEq if is_js_scalar(left.type_()) => "!==",
@@ -2447,9 +2515,10 @@ impl<'module, 'a> Generator<'module, 'a> {
 
                     BinOp::DivFloat => {
                         self.tracker.float_division_used = true;
+
                         return docvec![
                             "divideFloat",
-                            wrap_arguments([left_document, right_document])
+                            wrap_arguments([self.guard(left), self.guard(right)])
                         ];
                     }
 
@@ -2457,7 +2526,7 @@ impl<'module, 'a> Generator<'module, 'a> {
                         self.tracker.int_division_used = true;
                         return docvec![
                             "divideInt",
-                            wrap_arguments([left_document, right_document])
+                            wrap_arguments([self.guard(left), self.guard(right)])
                         ];
                     }
 
@@ -2465,13 +2534,16 @@ impl<'module, 'a> Generator<'module, 'a> {
                         self.tracker.int_remainder_used = true;
                         return docvec![
                             "remainderInt",
-                            wrap_arguments([left_document, right_document])
+                            wrap_arguments([self.guard(left), self.guard(right)])
                         ];
                     }
 
                     BinOp::And => "&&",
                     BinOp::Or => "||",
                 };
+
+                let left_document = self.wrapped_guard(left);
+                let right_document = self.wrapped_guard(right);
 
                 docvec![left_document, " ", operator, " ", right_document]
             }
@@ -2504,23 +2576,54 @@ impl<'module, 'a> Generator<'module, 'a> {
         right: &'a TypedClauseGuard,
         should_be_equal: bool,
     ) -> Option<Document<'a>> {
-        if let ClauseGuard::Constant(Constant::Record {
-            record_constructor: Some(constructor),
-            module,
-            name,
-            ..
-        }) = right
-            && let ValueConstructorVariant::Record { arity: 0, .. } = constructor.variant
-        {
-            let left_doc = self.guard(left);
-            return Some(self.singleton_equal(
-                left_doc,
-                module.as_ref().map(|(module, _)| module.as_str()),
+        match right {
+            ClauseGuard::Constant(Constant::Record {
+                record_constructor: Some(constructor),
+                module,
                 name,
-                should_be_equal,
-            ));
+                ..
+            }) if let ValueConstructorVariant::Record {
+                arity: 0,
+                name: variant_name,
+                ..
+            } = &constructor.variant =>
+            {
+                let left_doc = self.guard(left);
+                Some(self.singleton_equal(
+                    left_doc,
+                    module.as_ref().map(|(module, _)| module.as_str()),
+                    name.clone(),
+                    should_be_equal,
+                    variant_name.clone(),
+                    right.type_(),
+                ))
+            }
+            ClauseGuard::Constant(Constant::List {
+                elements,
+                tail: None,
+                ..
+            }) if elements.is_empty() => {
+                let left_doc = self.guard(left);
+                self.tracker.list_empty_class_used = true;
+                Some(self.singleton_equal(
+                    left_doc,
+                    None,
+                    "$Empty".into(),
+                    should_be_equal,
+                    "Empty".into(),
+                    right.type_(),
+                ))
+            }
+            ClauseGuard::Block { .. }
+            | ClauseGuard::BinaryOperator { .. }
+            | ClauseGuard::Not { .. }
+            | ClauseGuard::Var { .. }
+            | ClauseGuard::TupleIndex { .. }
+            | ClauseGuard::FieldAccess { .. }
+            | ClauseGuard::ModuleSelect { .. }
+            | ClauseGuard::Constant(_)
+            | ClauseGuard::Invalid { .. } => None,
         }
-        None
     }
 
     fn wrapped_guard(&mut self, guard: &'a TypedClauseGuard) -> Document<'a> {
@@ -2575,6 +2678,76 @@ impl<'module, 'a> Generator<'module, 'a> {
 
     pub fn source_map_tracker(&mut self, start_index: u32) -> Document<'a> {
         create_cursor_position_observer(&self.source_map_builder, self.line_numbers, start_index)
+    }
+
+    pub(crate) fn record_constructor(
+        &mut self,
+        type_: Arc<Type>,
+        qualifier: Option<&'a str>,
+        variant_name: &EcoString,
+        name: &'a EcoString,
+        arity: u16,
+    ) -> Document<'a> {
+        if qualifier.is_none() && type_.is_result_constructor() {
+            if name == "Ok" {
+                self.tracker.ok_used = true;
+            } else if name == "Error" {
+                self.tracker.error_used = true;
+            }
+        }
+        if type_.is_bool() && name == "True" {
+            "true".to_doc()
+        } else if type_.is_bool() {
+            "false".to_doc()
+        } else if type_.is_nil() {
+            "undefined".to_doc()
+        } else if arity == 0
+            && let Some((package, module, type_name)) = type_.named_type_name_and_package()
+        {
+            // If the variant has no fields, return the singleton constant so
+            // that all values of the variant are the same underlying reference,
+            // and are faster to compare.
+            match qualifier {
+                Some(module) => docvec!["$", module, ".", type_name, "$", name, "$const"],
+                None => {
+                    if module != self.module_name {
+                        let alias = if name == variant_name {
+                            None
+                        } else {
+                            Some(eco_format!("{}${}$const", type_name, name))
+                        };
+                        // Since this constant is an implementation detail and not
+                        // present in Gleam code, we need to track it so that we
+                        // import it, as it doesn't appear directly in the `import`s
+                        // in the source code.
+                        _ = self.tracker.variant_constants_used.insert(
+                            TypeVariant {
+                                package,
+                                module,
+                                type_name: type_name.clone(),
+                                name: variant_name.clone(),
+                            },
+                            alias,
+                        );
+                    }
+                    docvec![type_name, "$", name, "$const"]
+                }
+            }
+        } else {
+            let vars = (0..arity).map(|i| eco_format!("var{i}").to_doc());
+            let body = docvec![
+                "return ",
+                construct_record(qualifier, name, vars.clone()),
+                ";"
+            ];
+            docvec![
+                docvec![wrap_arguments(vars), " => {", break_("", " "), body]
+                    .nest(INDENT)
+                    .append(break_("", " "))
+                    .group(),
+                "}",
+            ]
+        }
     }
 }
 
@@ -2928,48 +3101,6 @@ fn immediately_invoked_function_expression_document(document: Document<'_>) -> D
         "})()",
     ]
     .group()
-}
-
-pub(crate) fn record_constructor<'a>(
-    type_: Arc<Type>,
-    qualifier: Option<&'a str>,
-    name: &'a str,
-    arity: u16,
-    tracker: &mut UsageTracker,
-) -> Document<'a> {
-    if qualifier.is_none() && type_.is_result_constructor() {
-        if name == "Ok" {
-            tracker.ok_used = true;
-        } else if name == "Error" {
-            tracker.error_used = true;
-        }
-    }
-    if type_.is_bool() && name == "True" {
-        "true".to_doc()
-    } else if type_.is_bool() {
-        "false".to_doc()
-    } else if type_.is_nil() {
-        "undefined".to_doc()
-    } else if arity == 0 {
-        match qualifier {
-            Some(module) => docvec!["new $", module, ".", name, "()"],
-            None => docvec!["new ", name, "()"],
-        }
-    } else {
-        let vars = (0..arity).map(|i| eco_format!("var{i}").to_doc());
-        let body = docvec![
-            "return ",
-            construct_record(qualifier, name, vars.clone()),
-            ";"
-        ];
-        docvec![
-            docvec![wrap_arguments(vars), " => {", break_("", " "), body]
-                .nest(INDENT)
-                .append(break_("", " "))
-                .group(),
-            "}",
-        ]
-    }
 }
 
 fn u8_slice<'a>(bytes: &[u8]) -> Document<'a> {

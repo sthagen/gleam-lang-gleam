@@ -1,3 +1,8 @@
+<!--
+  SPDX-License-Identifier: Apache-2.0
+  SPDX-FileCopyrightText: 2020 The Gleam contributors
+-->
+
 # Changelog
 
 ## Unreleased
@@ -25,6 +30,10 @@
 - Improved the error message shown when using an invalid discard name for
   functions, constants, module names, and `as` patterns.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The compiler now generates singleton values for variants with no fields on the
+  JavaScript target, allowing for faster comparison in most cases.
+  ([Surya Rose](https://github.com/GearsDatapacks))
 
 ### Build tool
 
@@ -74,6 +83,29 @@
   ```gleam
   pub fn twice(value: anything, f: fn(anything) -> anything) -> anything {
     f(f(value))
+  }
+  ```
+
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The language server now automatically updates imports when a Gleam module is
+  renamed. For example:
+
+  ```gleam
+  import db_users
+
+  pub fn main() -> db_users.User {
+    db_users.new("username")
+  }
+  ```
+
+  Renaming `db_users.gleam` to `database/user.gleam` would produce:
+
+  ```gleam
+  import database/user
+
+  pub fn main() -> user.User {
+    user.new("username")
   }
   ```
 

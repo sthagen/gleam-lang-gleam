@@ -6,7 +6,7 @@ expression: "./cases/javascript_d_ts"
 <.cache binary>
 
 //// /out/lib/the_package/_gleam_artefacts/hello.cache_meta
-<81 byte binary>
+<93 byte binary>
 
 //// /out/lib/the_package/gleam.d.mts
 export * from "../prelude.mjs";
@@ -34,9 +34,10 @@ export function wobble(): Wibble$;
 import { CustomType as $CustomType } from "./gleam.mjs";
 
 export class Woo extends $CustomType {}
-export const Wibble$Woo = () => new Woo();
+export const Wibble$Woo$const = new Woo();
+export const Wibble$Woo = () => Wibble$Woo$const;
 export const Wibble$isWoo = (value) => value instanceof Woo;
 
 export function wobble() {
-  return new Woo();
+  return Wibble$Woo$const;
 }

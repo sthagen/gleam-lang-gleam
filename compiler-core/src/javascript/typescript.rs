@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2022 The Gleam contributors
+
 //! This module is responsible for generating TypeScript type declaration files.
 //! This code is run during the code generation phase along side the normal
 //! Javascript code emission. Here we walk through the typed AST and translate
@@ -439,7 +442,7 @@ impl<'a> TypeScriptGenerator<'a> {
         let definition = if constructors.is_empty() {
             if let Some((module, external_name, _location)) = external_javascript {
                 let member = Member {
-                    name: external_name.to_doc(),
+                    name: external_name.clone(),
                     alias: Some(eco_format!("{name}$").to_doc()),
                 };
                 imports.register_export(eco_format!("{name}$"));
