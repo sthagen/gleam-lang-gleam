@@ -68,6 +68,10 @@
 
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- The "remove unreachable patterns" code action can now be triggered on
+  unreachable alternative patterns of a case expression.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The language server now permits renaming type variables in functions, types,
   and constants. For example:
 
@@ -111,7 +115,30 @@
 
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The language server now offers a code action to generate a missing type
+  definition when an unknown type is referenced. For example, if `Wibble`
+  is not defined:
+
+  ```gleam
+  pub fn run(data: Wibble(Int)) { todo }
+  ```
+
+  The code action will generate:
+
+  ```gleam
+  pub type Wibble(a)
+
+  pub fn run(data: Wibble(Int)) { todo }
+  ```
+
+  ([Daniele Scaratti](https://github.com/lupodevelop))
+
 ### Formatter
+
+- Performance of the formatter has been improved.
+  `gleam format` has been measured to be up to 13% faster on projects like
+  `lustre`, with a 10% smaller peak memory footprint.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ### Bug fixes
 
@@ -165,6 +192,7 @@
   use statement, only the selected statement(s) are extracted.
 
   For example,
+
   ```gleam
   pub fn wibble() {
       use wobble <- result.map(todo)
@@ -172,7 +200,9 @@
       echo wobble as "2"
   }
   ```
+
   is turned into
+
   ```gleam
   pub fn wibble() {
       use wobble <- result.map(todo)
@@ -184,4 +214,5 @@
     Nil
   }
   ```
+
   ([Gavin Morrow](https://github.com/gavinmorrow))

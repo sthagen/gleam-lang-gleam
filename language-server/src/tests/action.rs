@@ -185,6 +185,7 @@ const PATTERN_MATCH_ON_ARGUMENT: &str = "Pattern match on argument";
 const PATTERN_MATCH_ON_VARIABLE: &str = "Pattern match on variable";
 const PATTERN_MATCH_ON_VALUE: &str = "Pattern match on value";
 const GENERATE_FUNCTION: &str = "Generate function";
+const GENERATE_TYPE: &str = "Generate type";
 const CONVERT_TO_FUNCTION_CALL: &str = "Convert to function call";
 const INLINE_VARIABLE: &str = "Inline variable";
 const CONVERT_TO_PIPE: &str = "Convert to pipe";
@@ -8774,6 +8775,89 @@ pub fn main() -> Bool {
 }
 
 #[test]
+fn generate_type_works_for_unknown_type() {
+    assert_code_action!(
+        GENERATE_TYPE,
+        "
+pub fn main() {
+  let x: Wobble = todo
+}
+",
+        find_position_of("Wobble").to_selection()
+    );
+}
+
+#[test]
+fn generate_type_works_for_unknown_type_with_parameters() {
+    assert_code_action!(
+        GENERATE_TYPE,
+        "
+type Wibble {
+  Wibble(Wobble(Int, String))
+}
+",
+        find_position_of("Wobble").to_selection()
+    );
+}
+
+#[test]
+fn generate_type_works_for_unknown_type_in_argument_annotation() {
+    assert_code_action!(
+        GENERATE_TYPE,
+        "
+pub fn wibble(argument: Wibble(some, generics)) { todo }
+",
+        find_position_of("Wibble").to_selection()
+    );
+}
+
+#[test]
+fn generate_type_works_for_unknown_type_in_private_function() {
+    assert_code_action!(
+        GENERATE_TYPE,
+        "
+fn wibble(argument: Wobble) { todo }
+",
+        find_position_of("Wobble").to_selection()
+    );
+}
+
+#[test]
+fn generate_type_generates_non_colliding_parameter_names() {
+    assert_code_action!(
+        GENERATE_TYPE,
+        "
+pub fn wibble(argument: Wibble(b, Int)) { todo }
+",
+        find_position_of("Wibble").to_selection()
+    );
+}
+
+#[test]
+fn generate_type_generates_names_for_more_than_26_parameters() {
+    assert_code_action!(
+        GENERATE_TYPE,
+        "
+pub fn wibble(argument: Wibble(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int)) { todo }
+",
+        find_position_of("Wibble").to_selection()
+    );
+}
+
+#[test]
+fn generate_type_not_offered_when_cursor_is_elsewhere() {
+    assert_no_code_actions!(
+        GENERATE_TYPE,
+        "
+pub fn main() {
+  let x: Wobble = todo
+}
+",
+        find_position_of("main").to_selection()
+    );
+}
+
+#[test]
 fn generate_function_works_with_constants() {
     assert_code_action!(
         GENERATE_FUNCTION,
@@ -11774,6 +11858,102 @@ fn remove_unreachable_clauses() {
 }
 ",
         find_position_of("Ok(1)").to_selection()
+    );
+}
+
+#[test]
+fn remove_unreachable_clauses_removes_alternative_patterns() {
+    assert_code_action!(
+        REMOVE_UNREACHABLE_CLAUSES,
+        "pub fn main(x) {
+  case x {
+    Ok(n) -> 1
+    Ok(1) -> 3
+    Error(_) | Ok(_) -> todo
+  }
+}
+",
+        find_position_of("Ok(1)").to_selection()
+    );
+}
+
+#[test]
+fn remove_unreachable_clauses_removes_multiple_alternative_patterns_at_the_start_of_branch() {
+    assert_code_action!(
+        REMOVE_UNREACHABLE_CLAUSES,
+        "pub fn main(x) {
+  case x {
+    Ok(n) -> 1
+    Ok(1) -> 3
+    Ok(_) | Ok(_) | Ok(_) | Error(_) -> todo
+  }
+}
+",
+        find_position_of("Ok(1)").to_selection()
+    );
+}
+
+#[test]
+fn remove_unreachable_clauses_removes_multiple_alternative_patterns_at_the_end_of_branch() {
+    assert_code_action!(
+        REMOVE_UNREACHABLE_CLAUSES,
+        "pub fn main(x) {
+  case x {
+    Ok(n) -> 1
+    Ok(1) -> 3
+    Error(_) | Ok(_) | Ok(_) | Ok(_) -> todo
+  }
+}
+",
+        find_position_of("Ok(1)").to_selection()
+    );
+}
+
+#[test]
+fn remove_unreachable_clauses_removes_multiple_alternative_patterns_in_the_middle_of_branch() {
+    assert_code_action!(
+        REMOVE_UNREACHABLE_CLAUSES,
+        "pub fn main(x) {
+  case x {
+    1 -> todo
+    2 -> todo
+    3 | 3 | 3 | 3 | 4 -> todo
+  }
+}
+",
+        find_position_of("3").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn remove_unreachable_clauses_with_mix_of_reachable_and_unreachables() {
+    assert_code_action!(
+        REMOVE_UNREACHABLE_CLAUSES,
+        "pub fn main(x) {
+  case x {
+    1 -> todo
+    2 -> todo
+    3 | 3 | 3 | 4 | 3 | 5 -> todo
+  }
+}
+",
+        find_position_of("3").nth_occurrence(2).to_selection()
+    );
+}
+
+#[test]
+fn remove_unreachable_clauses_can_be_triggered_from_alternative_pattern() {
+    assert_code_action!(
+        REMOVE_UNREACHABLE_CLAUSES,
+        "pub fn main(x) {
+  case x {
+    Ok(n) -> 1
+    Error(_) | Ok(_) -> 3
+    Ok(1) -> todo
+  }
+}
+",
+        find_position_of("Ok(_)").to_selection()
     );
 }
 

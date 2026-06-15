@@ -1282,6 +1282,102 @@ pub fn code_action_import_module(
     }
 }
 
+pub fn code_action_generate_type(
+    module: &Module,
+    line_numbers: &LineNumbers,
+    params: &CodeActionParams,
+    error: &Option<Error>,
+    actions: &mut Vec<CodeAction>,
+) {
+    let uri = &params.text_document.uri;
+    let Some(errors) = type_errors_for_module(error, module) else {
+        return;
+    };
+
+    for error in errors {
+        let type_::Error::UnknownType {
+            location,
+            name,
+            parameter_names,
+            ..
+        } = error
+        else {
+            continue;
+        };
+
+        let range = src_span_to_lsp_range(*location, line_numbers);
+        if !within(params.range, range) {
+            continue;
+        }
+
+        // Insert the new type stub before the top-level definition that
+        // contains the error, so it appears close to where it is used.
+        let (insert_at, is_public) =
+            definition_start_and_publicity_containing(&module.ast.definitions, location.start)
+                .unwrap_or((module.code.len() as u32, false));
+        let insert_range = src_span_to_lsp_range(
+            SrcSpan {
+                start: insert_at,
+                end: insert_at,
+            },
+            line_numbers,
+        );
+
+        let pub_prefix = if is_public { "pub " } else { "" };
+        let new_text = if parameter_names.is_empty() {
+            format!("{pub_prefix}type {name}\n\n")
+        } else {
+            let parameters = parameter_names.join(", ");
+            format!("{pub_prefix}type {name}({parameters})\n\n")
+        };
+
+        let edit = TextEdit {
+            range: insert_range,
+            new_text,
+        };
+
+        CodeActionBuilder::new("Generate type")
+            .kind(CodeActionKind::QuickFix)
+            .changes(uri.clone(), vec![edit])
+            .preferred(true)
+            .push_to(actions);
+    }
+}
+
+/// Returns the source offset and publicity of the top-level definition that
+/// contains `position`, so the caller can insert code before it.
+fn definition_start_and_publicity_containing(
+    definitions: &TypedDefinitions,
+    position: u32,
+) -> Option<(u32, bool)> {
+    let functions = definitions
+        .functions
+        .iter()
+        .map(|function| (function.full_location(), function.publicity.is_public()));
+    let custom_types = definitions.custom_types.iter().map(|custom_type| {
+        (
+            custom_type.full_location(),
+            custom_type.publicity.is_public(),
+        )
+    });
+    let type_aliases = definitions
+        .type_aliases
+        .iter()
+        .map(|type_alias| (type_alias.location, type_alias.publicity.is_public()));
+    let constants = definitions
+        .constants
+        .iter()
+        .map(|constant| (constant.location, constant.publicity.is_public()));
+
+    functions
+        .chain(custom_types)
+        .chain(type_aliases)
+        .chain(constants)
+        .filter(|(span, _)| span.start <= position && position <= span.end)
+        .map(|(span, is_public)| (span.start, is_public))
+        .next()
+}
+
 fn suggest_imports(
     location: SrcSpan,
     importable_modules: &[ModuleSuggestion],
@@ -10127,23 +10223,108 @@ impl<'ast> ast::visit::Visit<'ast> for RemoveUnreachableCaseClauses<'ast> {
             let pattern_range = self.edits.src_span_to_lsp_range(clause.pattern_location());
             within(self.params.range, pattern_range)
         });
-        if is_hovering_clause {
-            self.clauses_to_delete = clauses
-                .iter()
-                .filter(|clause| {
-                    self.unreachable_clauses
-                        .contains(&clause.pattern_location())
-                })
-                .map(|clause| clause.location())
-                .collect_vec();
-            return;
-        }
 
         // If we're not hovering any of the clauses then we want to
         // keep visiting the case expression as the unreachable branch might be
         // in one of the nested cases.
-        ast::visit::visit_typed_expr_case(self, location, type_, subjects, clauses, compiled_case);
+        if !is_hovering_clause {
+            ast::visit::visit_typed_expr_case(
+                self,
+                location,
+                type_,
+                subjects,
+                clauses,
+                compiled_case,
+            );
+            return;
+        }
+
+        for clause in clauses {
+            let mut all_patterns_are_unreachable = true;
+            let mut unreachable_patterns = vec![];
+            let mut previous_pattern_end = None;
+            let mut all_previous_patterns_were_deleted = true;
+
+            for pattern in clause.patterns() {
+                let pattern_location = multi_pattern_location(pattern);
+                if self.unreachable_clauses.contains(&pattern_location) {
+                    // If an alternative is unreachable we want to delete
+                    // everything from the end of the previous alternative to
+                    // the start of this one.
+                    //
+                    // ```gleam
+                    // Error(_) | Error(_) | Ok(_)
+                    // //      ^^^^^^^^^^^ We want to delete all of this
+                    // ```
+                    unreachable_patterns.push(
+                        previous_pattern_end.map_or(pattern_location, |previous_end| {
+                            SrcSpan::new(previous_end, pattern_location.end)
+                        }),
+                    );
+                } else {
+                    // If all the previous alternatives have been deleted and
+                    // this one is reachable there's some final cleanup we need
+                    // to take care of:
+                    //
+                    // ```gleam
+                    // Ok(_) | Ok(_) | Error(_) -> todo
+                    // //^^^^^^^^^^^ All of this has been deleted, but there's
+                    // //            that last vertical bar that needs to be
+                    // //            taken care of!
+                    // ```
+                    //
+
+                    if all_previous_patterns_were_deleted && let Some(end) = previous_pattern_end {
+                        self.clauses_to_delete
+                            .push(SrcSpan::new(end, pattern_location.start));
+                    }
+
+                    all_previous_patterns_were_deleted = false;
+                    all_patterns_are_unreachable = false;
+                }
+
+                previous_pattern_end = pattern.last().map(|pattern| pattern.location().end);
+            }
+
+            if all_patterns_are_unreachable {
+                // If all the patterns of the clause are unreachable then we
+                // want to delete the entire branch:
+                //
+                // ```gleam
+                // case a, b {
+                //   _, _ -> todo
+                //   Ok(_), Ok(_) | Error(_), Error(_) -> todo
+                // // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                // // we want the entire branch to be deleted!
+                // }
+                // ```
+                self.clauses_to_delete.push(clause.location())
+            } else {
+                // If only some of the variants are unreachable but not all
+                // we want to delete just those.
+                // case a, b {
+                //   1, 2 | 1, 2 -> todo
+                // //       ^^^^ just this one should be deleted
+                // }
+                self.clauses_to_delete.extend(&unreachable_patterns);
+            }
+        }
     }
+}
+
+/// Given a pattern with possibly many subjects, this returns the location
+/// spanning the whole thing.
+fn multi_pattern_location(alternative: &[Pattern<Arc<Type>>]) -> SrcSpan {
+    let start = alternative
+        .first()
+        .map(|pattern| pattern.location().start)
+        .unwrap_or_default();
+    let end = alternative
+        .last()
+        .map(|pattern| pattern.location().end)
+        .unwrap_or_default();
+
+    SrcSpan::new(start, end)
 }
 
 /// Code action to remove a record update when all of its fields have been
