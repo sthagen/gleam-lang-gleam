@@ -746,7 +746,7 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                         string(),
                         *left_location,
                         VariableOrigin {
-                            syntax: VariableSyntax::AssignmentPattern,
+                            syntax: VariableSyntax::AssignmentPattern(*left_location),
                             declaration: self.position.to_declaration(),
                         },
                     );
@@ -797,12 +797,18 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                         name: name.clone(),
                     });
                 }
+                // Full location of assignment from the end of pattern to the
+                // end of assignment itself, so it includes the `as` keyword.
+                let full_location = SrcSpan {
+                    start: pattern.location().end,
+                    end: location.end,
+                };
                 self.insert_variable(
                     &name,
                     pattern.type_().clone(),
                     location,
                     VariableOrigin {
-                        syntax: VariableSyntax::AssignmentPattern,
+                        syntax: VariableSyntax::AssignmentPattern(full_location),
                         declaration: self.position.to_declaration(),
                     },
                 );
@@ -1235,6 +1241,22 @@ impl<'a, 'b> PatternTyper<'a, 'b> {
                             arguments,
                             constructor_field_map,
                         );
+
+                        if let Some(type_name) = return_.named_type_name() {
+                            for argument in &pattern_arguments {
+                                if let Some(label) = &argument.label
+                                    && let Some(label_location) = argument.label_location()
+                                    && !argument.is_implicit()
+                                {
+                                    self.environment.references.register_label_reference(
+                                        type_name.clone(),
+                                        label.clone(),
+                                        label_location,
+                                        argument.label_syntax(),
+                                    );
+                                }
+                            }
+                        }
 
                         Pattern::Constructor {
                             location,

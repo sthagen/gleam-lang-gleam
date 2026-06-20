@@ -1,0 +1,47 @@
+---
+source: language-server/src/tests/folding_range.rs
+expression: "\nfn wibble() {\n  // Useful comment\n  // Another useful comment\n\n  // Yet another useful comment\n  // Last useful comment\n\n  todo\n}\n"
+---
+----- Code -----
+
+fn wibble() {
+  // Useful comment
+  // Another useful comment
+
+  // Yet another useful comment
+  // Last useful comment
+
+  todo
+}
+
+
+----- Ranges -----
+1. lines 1..9 kind: none
+2. lines 2..3 kind: comment
+3. lines 5..6 kind: comment
+
+----- Fold 1 (lines 1..9) -----
+
+fn wibble() { ...
+
+----- Fold 2 (lines 2..3) -----
+
+fn wibble() {
+  // Useful comment ...
+
+  // Yet another useful comment
+  // Last useful comment
+
+  todo
+}
+
+----- Fold 3 (lines 5..6) -----
+
+fn wibble() {
+  // Useful comment
+  // Another useful comment
+
+  // Yet another useful comment ...
+
+  todo
+}

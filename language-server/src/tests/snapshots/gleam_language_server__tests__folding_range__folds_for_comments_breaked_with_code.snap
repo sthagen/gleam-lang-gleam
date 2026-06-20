@@ -1,0 +1,31 @@
+---
+source: language-server/src/tests/folding_range.rs
+expression: "\nfn wibble() {\n  // Wibble comment\n  // Wobble comment\n  todo // ToDo comment\n\n  // Wubble comment\n}\n"
+---
+----- Code -----
+
+fn wibble() {
+  // Wibble comment
+  // Wobble comment
+  todo // ToDo comment
+
+  // Wubble comment
+}
+
+
+----- Ranges -----
+1. lines 1..7 kind: none
+2. lines 2..3 kind: comment
+
+----- Fold 1 (lines 1..7) -----
+
+fn wibble() { ...
+
+----- Fold 2 (lines 2..3) -----
+
+fn wibble() {
+  // Wibble comment ...
+  todo // ToDo comment
+
+  // Wubble comment
+}

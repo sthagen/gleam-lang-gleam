@@ -1972,7 +1972,7 @@ fn module_with_references() {
                     vec![
                         Reference {
                             location: SrcSpan::new(6, 9),
-                            kind: ReferenceKind::Import,
+                            kind: ReferenceKind::Import(SrcSpan::new(9, 9)),
                         },
                         Reference {
                             location: SrcSpan::new(90, 108),
@@ -2046,6 +2046,8 @@ fn module_with_references() {
                 ],
             )]
             .into(),
+            label_references: HashMap::new(),
+            label_definitions: HashMap::new(),
         },
         inline_functions: HashMap::new(),
     };
