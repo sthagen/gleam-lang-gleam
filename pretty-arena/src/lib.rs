@@ -700,16 +700,233 @@ const_str!(
 );
 const_str!(QUOTE_COMMA_SPACE_QUOTE_DOCUMENT, "\", \"", 4);
 const_str!(INTERNAL_ATTRIBUTE_DOCUMENT, "@internal", 9);
+const_str!(TRUE_LOWERCASE_DOCUMENT, "true", 4);
+const_str!(FALSE_LOWERCASE_DOCUMENT, "false", 5);
+const_str!(OPEN_CLOSE_CURLY_DOCUMENT, "{}", 2);
+const_str!(SPACE_TIMES_AT_IGNORE_DOCUMENT, " * @ignore", 10);
+const_str!(SLASH_TIMES_TIMES_DOCUMENT, "/**", 3);
+const_str!(SPACE_TIMES_SLASH_DOCUMENT, " */", 3);
+const_str!(CONST_FILEPATH_EQUALS_DOCUMENT, "const FILEPATH = ", 17);
+const_str!(SEMICOLON_DOCUMENT, ";", 1);
+const_str!(FUNCTION_SPACE_DOCUMENT, "function ", 9);
+const_str!(EXPORT_FUNCTION_SPACE_DOCUMENT, "export function ", 16);
+const_str!(EXPORT_CONST_SPACE_DOCUMENT, "export const ", 13);
+const_str!(SUPER_CALL_SEMICOLON_DOCUMENT, "super();", 8);
+const_str!(CONSTRUCTOR_OPEN_PAREN_DOCUMENT, "constructor(", 12);
+const_str!(CLOSE_PAREN_SPACE_OPEN_CURLY_DOCUMENT, ") {", 3);
+const_str!(THIS_DOT_DOCUMENT, "this.", 5);
+const_str!(THIS_OPEN_SQUARE_DOCUMENT, "this[", 5);
+const_str!(CLOSE_SQUARE_SPACE_EQUAL_SPACE_DOCUMENT, "] = ", 4);
+const_str!(
+    SPACE_EXTENDS_CUSTOM_TYPE_OPEN_CURLY_DOCUMENT,
+    " extends $CustomType {",
+    22
+);
+const_str!(CLASS_SPACE_DOCUMENT, "class ", 6);
+const_str!(EXPORT_CLASS_SPACE_DOCUMENT, "export class ", 13);
+const_str!(VALUE_DOT_DOCUMENT, "value.", 6);
+const_str!(SPACE_EQUAL_SPACE_VALUE_SPACE_ARROW, " = (value) =>", 13);
+const_str!(
+    SPACE_EQUAL_OPEN_CLOSE_PAREN_SPACE_ARROW_DOCUMENT,
+    " = () =>",
+    8
+);
+const_str!(CLOSE_PAREN_SEMICOLON_DOCUMENT, ");", 2);
+const_str!(NEW_SPACE_DOCUMENT, "new ", 4);
+const_str!(VALUE_OPEN_SQUARE_DOCUMENT, "value[", 6);
+const_str!(CLOSE_SQUARE_SEMICOLON_DOCUMENT, "];", 2);
+const_str!(DOLLAR_IS_DOCUMENT, "$is", 3);
+const_str!(VALUE_INSTANCE_OF_SPACE_DOCUMENT, "value instanceof ", 17);
+const_str!(DOLLAR_DOCUMENT, "$", 1);
+const_str!(CLOSE_PAREN_ARROW_DOCUMENT, ") =>", 4);
+const_str!(SPACE_EQUAL_SPACE_OPEN_PAREN_DOCUMENT, " = (", 4);
+const_str!(DOLLAR_CONST_SEMICOLON_DOCUMENT, "$const;", 7);
+const_str!(DOLLAR_CONST_DOCUMENT, "$const", 6);
+const_str!(OPEN_CLOSE_PAREN_SEMICOLON_DOCUMENT, "();", 3);
+const_str!(EXPORT_SPACE_OPEN_CLOSE_CURLY_DOCUMENT, "export {}", 9);
+const_str!(EXPORT_SPACE_OPEN_CURLY_DOCUMENT, "export {", 8);
+const_str!(EXPORT_TYPE_SPACE_OPEN_CURLY_DOCUMENT, "export type {", 13);
+const_str!(DOT_MJS_DOT_MAP_DOCUMENT, ".mjs.map", 8);
+const_str!(
+    DOT_D_DOT_MTS_CLOSE_QUOTE_CLOSE_TAG_DOCUMENT,
+    ".d.mts\" />",
+    10
+);
+const_str!(
+    SOURCE_MAPPING_URL_EQUAL_DOCUMENT,
+    "//# sourceMappingURL=",
+    21
+);
+const_str!(REFERENCE_TYPES_DOCUMENT, "/// <reference types=\"./", 24);
+const_str!(CLOSE_CURLY_SEMICOLON_DOCUMENT, "};", 2);
+const_str!(TIMES_SPACE_AS_SPACE_DOCUMENT, "* as ", 5);
+const_str!(SPACE_FROM_SPACE_DOUBLE_QUOTE_DOCUMENT, " from \"", 7);
+const_str!(DOUBLE_QUOTE_SEMICOLON_DOCUMENT, "\";", 2);
+const_str!(
+    CLOSE_CURLY_SPACE_FROM_SPACE_DOUBLE_QUOTE_DOCUMENT,
+    "} from \"",
+    8
+);
+const_str!(EXPORT_TYPE_SPACE_DOCUMENT, "export type ", 12);
+const_str!(X_DOCUMENT, "x", 1);
+const_str!(ANY_DOCUMENT, "any", 3);
+const_str!(EXPORT_SPACE_DOCUMENT, "export ", 7);
+const_str!(DECLARE_SPACE_DOCUMENT, "declare ", 8);
+const_str!(
+    SPACE_EXTENDS_UNDERSCORE_CUSTOM_TYPE_DOCUMENT,
+    " extends _.CustomType {",
+    23
+);
+const_str!(CONSTRUCTOR_DOCUMENT, "constructor", 11);
+const_str!(
+    DEPRECATED_MULTILINE_COMMENT_DOCUMENT,
+    "/** @deprecated */",
+    18
+);
+const_str!(CLOSE_PAREN_COLON_SPACE_DOCUMENT, "): ", 3);
+const_str!(VALUE_COLON_SPACE_ANY_DOCUMENT, "value: any", 10);
+const_str!(
+    CLOSE_PAREN_COLON_SPACE_VALUE_IS_SPACE_DOCUMENT,
+    "): value is ",
+    12
+);
+const_str!(LT_INT_UNKNOWN_DOCUMENT, "<unknown", 8);
+const_str!(COMMA_SPACE_UNKNOWN_DOCUMENT, ", unknown", 9);
+const_str!(VALUE_COLON_SPACE_DOCUMENT, "value: ", 7);
+const_str!(UNDEFINED_DOCUMENT, "undefined", 9);
+const_str!(NUMBER_DOCUMENT, "number", 6);
+const_str!(UNDERSCORE_DOT_UTF_CODEPOINT_DOCUMENT, "_.UtfCodepoint", 14);
+const_str!(STRING_DOCUMENT, "string", 6);
+const_str!(BOOLEAN_DOCUMENT, "boolean", 7);
+const_str!(UNDERSCORE_DOT_BIT_ARRAY_DOCUMENT, "_.BitArray", 10);
+const_str!(UNDERSCORE_DOT_LIST_DOCUMENT, "_.List", 6);
+const_str!(UNDERSCORE_DOT_RESULT_DOCUMENT, "_.Result", 8);
+const_str!(SPACE_EQUAL_RIGHT_ARROW_SPACE_DOCUMENT, " => ", 4);
+const_str!(IF_SPACE_OPEN_PAREN_DOCUMENT, "if (", 4);
+const_str!(CLOSE_PAREN_SPACE_DOCUMENT, ") ", 2);
+const_str!(DOUBLE_CLOSE_PAREN_SPACE_DOCUMENT, ")) ", 3);
+const_str!(
+    IF_SPACE_OPEN_PAREN_EXCLAMATION_OPEN_PAREN_DOCUMENT,
+    "if (!(",
+    6
+);
+const_str!(SPACE_ELSE_SPACE_DOCUMENT, " else ", 6);
+const_str!(DOT_CHAR_CODE_AT_ZERO_DOCUMENT, ".charCodeAt(0)", 14);
+const_str!(SPACE_TRIPLE_EQUAL_SPACE_DOCUMENT, " === ", 5);
+const_str!(TRIPLE_EQUAL_DOCUMENT, "===", 3);
+const_str!(DOT_STARTS_WITH_OPEN_PAREN_DOCUMENT, ".startsWith(", 12);
+const_str!(ZERO_DOCUMENT, "0", 1);
+const_str!(DOT_BIT_SIZE_MODULO_8_DOCUMENT, ".bitSize % 8", 12);
+const_str!(DOT_BIT_SIZE_MINUS_SPACE_DOCUMENT, ".bitSize - ", 11);
+const_str!(DOT_BIT_SIZE_DOCUMENT, ".bitSize", 8);
+const_str!(CLOSE_PAREN_MODULO_8_DOCUMENT, ") % 8", 5);
+const_str!(SPACE_GT_EQ_ZERO_DOCUMENT, " >= 0", 5);
+const_str!(SPACE_GT_EQ_SPACE_DOCUMENT, " >= ", 4);
+const_str!(
+    NUMBER_DOT_IS_FINITE_OPEN_PAREN_DOCUMENT,
+    "Number.isFinite(",
+    16
+);
+const_str!(SPACE_INSTANCE_OF_SPACE_DOCUMENT, " instanceof ", 12);
+const_str!(
+    SPACE_INSTANCE_OF_NON_EMPTY_DOCUMENT,
+    " instanceof $NonEmpty",
+    21
+);
+const_str!(SPACE_INSTANCE_OF_EMPTY_DOCUMENT, " instanceof $Empty", 18);
+const_str!(DOT_BYTE_AT_OPEN_PAREN_DOCUMENT, ".byteAt(", 8);
+const_str!(COMMA_SPACE_DOCUMENT, ", ", 2);
+const_str!(
+    BIT_ARRAY_SLICE_TO_INT_OPEN_PAREN_DOCUMENT,
+    "bitArraySliceToInt(",
+    19
+);
+const_str!(
+    BIT_ARRAY_SLICE_TO_FLOAT_OPEN_PAREN_DOCUMENT,
+    "bitArraySliceToFloat(",
+    21
+);
+const_str!(BIT_ARRAY_SLICE_OPEN_PAREN_DOCUMENT, "bitArraySlice(", 14);
+const_str!(RETURN_SPACE_DOCUMENT, "return ", 7);
+const_str!(SPACE_EQUAL_LOOP_DOLLAR_DOCUMENT, " = loop$", 8);
+const_str!(WHILE_TRUE_OPEN_PAREN_DOCUMENT, "while (true) {", 14);
+const_str!(
+    DOLLAR_LIST_DOLLAR_EMPTY_DOLLAR_CONST_DOCUMENT,
+    "$List$Empty$const",
+    17
+);
+const_str!(SIZED_INT_OPEN_PAREN_DOCUMENT, "sizedInt(", 9);
+const_str!(SIZED_FLOAT_OPEN_PAREN_DOCUMENT, "sizedFloat(", 11);
+const_str!(STRING_BITS_OPEN_PAREN_DOCUMENT, "stringBits(", 11);
+const_str!(STRING_TO_UTF16_OPEN_PAREN_DOCUMENT, "stringToUtf16(", 14);
+const_str!(STRING_TO_UTF32_OPEN_PAREN_DOCUMENT, "stringToUtf32(", 14);
+const_str!(
+    CODEPOINT_TO_UTF16_OPEN_PAREN_DOCUMENT,
+    "codepointToUtf16(",
+    17
+);
+const_str!(
+    CODEPOINT_TO_UTF32_OPEN_PAREN_DOCUMENT,
+    "codepointToUtf32(",
+    17
+);
+const_str!(TO_BIT_ARRAY_OPEN_PAREN_DOCUMENT, "toBitArray(", 11);
+const_str!(COMMA_ZERO_COMMA_SPACE, ", 0, ", 5);
+const_str!(THROW_MAKE_ERROR_DOCUMENT, "throw makeError", 15);
+const_str!(FILEPATH_UPPERCASE_DOCUMENT, "FILEPATH", 8);
+const_str!(SPACE_EQUAL_ARROW_SPACE_OPEN_CURLY_DOCUMENT, " => {", 5);
+const_str!(INFINITY_DOCUMENT, "Infinity", 8);
+const_str!(MINUS_INFINITY_DOCUMENT, "-Infinity", 9);
+const_str!(NAN_DOCUMENT, "NaN", 3);
+const_str!(TO_LIST_OPEN_PAREN_DOCUMENT, "toList(", 7);
+const_str!(LIST_PREPEND_DOCUMENT, "listPrepend", 11);
+const_str!(CLOSE_CURLY_CLOSE_PAREN_OPEN_CLOSE_PAREN_DOCUMENT, "})()", 4);
+const_str!(
+    OPEN_PAREN_OPEN_CLOSE_PAREN_EQUAL_ARROW_OPEN_CURLY_DOCUMENT,
+    "(() => {",
+    8
+);
+const_str!(CODEPOINT_BITS_OPEN_PAREN_DOCUMENT, "codepointBits(", 14);
+const_str!(CLOSE_CURLY_ELSE_OPEN_CURLY_DOCUMENT, "} else {", 8);
+const_str!(EXCLAMATION_MARK_OPEN_PAREN_DOCUMENT, "!(", 2);
+const_str!(SPACE_DOUBLE_VERTICAL_BAR_SPACE_DOCUMENT, " || ", 4);
+const_str!(SPACE_DOUBLE_AMPERSAND_SPACE_DOCUMENT, " && ", 4);
+const_str!(LOOP_DOLLAR_DOCUMENT, "loop$", 5);
+const_str!(DIVIDE_INT_DOCUMENT, "divideInt", 9);
+const_str!(DIVIDE_FLOAT_DOCUMENT, "divideFloat", 9);
+const_str!(
+    GLOBAL_THIS_DOT_MATH_DOT_TRUNC_DOCUMENT,
+    "globalThis.Math.trunc",
+    21
+);
+const_str!(SPACE_MODULO_SPACE_DOCUMENT, " % ", 3);
+const_str!(
+    SPACE_EXCLAMATION_MARK_DOUBLE_EQUAL_SPACE_DOCUMENT,
+    " !== ",
+    5
+);
+const_str!(EXCLAMATION_MARK_DOUBLE_EQUAL_DOCUMENT, "!==", 3);
+const_str!(IS_EQUAL_DOCUMENT, "isEqual", 7);
+const_str!(EXCLAMATION_MARK_IS_EQUAL_DOCUMENT, "!isEqual", 8);
+const_str!(SPACE_LT_INT_SPACE_DOCUMENT, " < ", 3);
+const_str!(SPACE_LT_EQ_INT_SPACE_DOCUMENT, " <= ", 4);
+const_str!(SPACE_GT_INT_SPACE_DOCUMENT, " > ", 3);
+const_str!(SPACE_GT_EQ_INT_SPACE_DOCUMENT, " >= ", 4);
+const_str!(CAMEL_CASE_REMAINDER_INT_DOCUMENT, "remainderInt", 12);
+const_str!(PURE_JAVASCRIPT_COMMENT_DOCUMENT, "/* @__PURE__ */ ", 16);
+
 const_break!(EMPTY_BREAK_DOCUMENT, "", "");
 const_break!(BREAKABLE_SPACE_DOCUMENT, "", " ");
 const_break!(COMMA_BREAK_DOCUMENT, ",", ", ");
 const_break!(TRAILING_COMMA_BREAK_DOCUMENT, ",", "");
+const_break!(TRAILING_COMMA_OR_SPACE_BREAK_DOCUMENT, ",", " ");
 const_break!(OPEN_CURLY_BREAK_DOCUMENT, "{", "{ ");
 const_break!(OPEN_SQUARE_BREAK_DOCUMENT, "[", "[");
 const_break!(OPEN_PAREN_BREAK_DOCUMENT, "(", "(");
 const_break!(OPEN_TUPLE_BREAK_DOCUMENT, "#(", "#(");
 const_break!(OPEN_BIT_ARRAY_BREAK_DOCUMENT, "<<", "<<");
 const_break!(CASE_BREAK_DOCUMENT, "case", "case ");
+const_break!(SPACE_DOUBLE_AMPERSAND_BREAK_DOCUMENT, " &&", " && ");
 
 /// A structure used to efficiently allocate documents that can then be pretty
 /// printed.

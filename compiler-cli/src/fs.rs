@@ -14,6 +14,7 @@ use gleam_core::{
     warning::WarningEmitterIO,
 };
 use gleam_language_server::{DownloadDependencies, Locker, MakeLocker};
+use regex::Regex;
 use std::{
     collections::HashSet,
     fmt::Debug,
@@ -422,24 +423,23 @@ pub fn write_to_open_file(
     })
 }
 
+static IS_GLEAM_PATH_PATTERN: OnceLock<Regex> = OnceLock::new();
+
 fn is_gleam_path(path: &Utf8Path, dir: impl AsRef<Utf8Path>) -> bool {
-    use regex::Regex;
-
-    static RE: OnceLock<Regex> = OnceLock::new();
-
-    RE.get_or_init(|| {
-        Regex::new(&format!(
-            "^({module}{slash})*{module}\\.gleam$",
-            module = "[a-z][_a-z0-9]*",
-            slash = "(/|\\\\)",
-        ))
-        .expect("is_gleam_path() RE regex")
-    })
-    .is_match(
-        path.strip_prefix(dir.as_ref())
-            .expect("is_gleam_path(): strip_prefix")
-            .as_str(),
-    )
+    IS_GLEAM_PATH_PATTERN
+        .get_or_init(|| {
+            Regex::new(&format!(
+                "^({module}{slash})*{module}\\.gleam$",
+                module = "[a-z][_a-z0-9]*",
+                slash = "(/|\\\\)",
+            ))
+            .expect("is_gleam_path() RE regex")
+        })
+        .is_match(
+            path.strip_prefix(dir.as_ref())
+                .expect("is_gleam_path(): strip_prefix")
+                .as_str(),
+        )
 }
 
 fn is_gleam_build_dir(e: &ignore::DirEntry) -> bool {
@@ -668,10 +668,9 @@ pub fn copy(path: impl AsRef<Utf8Path>, to: impl AsRef<Utf8Path>) -> Result<(), 
     let to = to.as_ref();
     tracing::debug!(from=?path, to=?to, "copying_file");
 
-    // TODO: include the destination in the error message
     std::fs::copy(path, to)
         .map_err(|err| Error::FileIo {
-            action: FileIoAction::Copy,
+            action: FileIoAction::Copy(Some(to.to_path_buf())),
             kind: FileKind::File,
             path: Utf8PathBuf::from(path),
             err: Some(err.to_string()),
@@ -684,7 +683,6 @@ pub fn copy_dir(path: impl AsRef<Utf8Path>, to: impl AsRef<Utf8Path>) -> Result<
     let to = to.as_ref();
     tracing::debug!(from=?path, to=?to, "copying_directory");
 
-    // TODO: include the destination in the error message
     fs_extra::dir::copy(
         path,
         to,
@@ -693,7 +691,7 @@ pub fn copy_dir(path: impl AsRef<Utf8Path>, to: impl AsRef<Utf8Path>) -> Result<
             .content_only(true),
     )
     .map_err(|err| Error::FileIo {
-        action: FileIoAction::Copy,
+        action: FileIoAction::Copy(Some(to.to_path_buf())),
         kind: FileKind::Directory,
         path: Utf8PathBuf::from(path),
         err: Some(err.to_string()),
@@ -708,14 +706,14 @@ pub fn symlink_dir(src: impl AsRef<Utf8Path>, dest: impl AsRef<Utf8Path>) -> Res
     let src = canonicalise(src)?;
 
     #[cfg(target_family = "windows")]
-    let result = std::os::windows::fs::symlink_dir(src, dest);
+    let result = std::os::windows::fs::symlink_dir(&src, dest);
     #[cfg(not(target_family = "windows"))]
-    let result = std::os::unix::fs::symlink(src, dest);
+    let result = std::os::unix::fs::symlink(&src, dest);
 
     result.map_err(|err| Error::FileIo {
-        action: FileIoAction::Link,
+        action: FileIoAction::Link(dest.to_path_buf()),
         kind: FileKind::File,
-        path: Utf8PathBuf::from(dest),
+        path: src,
         err: Some(err.to_string()),
     })?;
     Ok(())
@@ -727,7 +725,7 @@ pub fn hardlink(from: impl AsRef<Utf8Path>, to: impl AsRef<Utf8Path>) -> Result<
     tracing::debug!(from=?from, to=?to, "hardlinking");
     std::fs::hard_link(from, to)
         .map_err(|err| Error::FileIo {
-            action: FileIoAction::Link,
+            action: FileIoAction::Link(to.to_path_buf()),
             kind: FileKind::File,
             path: Utf8PathBuf::from(from),
             err: Some(err.to_string()),
@@ -882,7 +880,7 @@ impl<W: Write + io::Seek> ZipArchive<W> {
         })?;
         let _: u64 = io::copy(&mut file, &mut self.zip).map_err(|e| Error::FileIo {
             kind: FileKind::File,
-            action: FileIoAction::Copy,
+            action: FileIoAction::Copy(None),
             path: disc_path.to_path_buf(),
             err: Some(e.to_string()),
         })?;

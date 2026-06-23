@@ -6,6 +6,7 @@ mod tests;
 
 use std::{
     collections::{HashMap, HashSet},
+    sync::OnceLock,
     time::{Duration, SystemTime},
 };
 
@@ -15,6 +16,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use ecow::EcoString;
 use itertools::Itertools;
+use regex::Regex;
 use vec1::Vec1;
 
 use crate::{
@@ -1730,6 +1732,8 @@ pub struct GleamFile {
     pub module_name: EcoString,
 }
 
+static IS_GLEAM_PATH_PATTERN: OnceLock<Regex> = OnceLock::new();
+
 impl GleamFile {
     pub fn new(dir: &Utf8Path, path: Utf8PathBuf) -> Self {
         Self {
@@ -1781,23 +1785,20 @@ impl GleamFile {
     }
 
     fn is_gleam_path(path: &Utf8Path, dir: &Utf8Path) -> bool {
-        use regex::Regex;
-        use std::cell::OnceCell;
-        const RE: OnceCell<Regex> = OnceCell::new();
-
-        RE.get_or_init(|| {
-            Regex::new(&format!(
-                "^({module}{slash})*{module}\\.gleam$",
-                module = "[a-z][_a-z0-9]*",
-                slash = "(/|\\\\)",
-            ))
-            .expect("is_gleam_path() RE regex")
-        })
-        .is_match(
-            path.strip_prefix(dir)
-                .expect("is_gleam_path(): strip_prefix")
-                .as_str(),
-        )
+        IS_GLEAM_PATH_PATTERN
+            .get_or_init(|| {
+                Regex::new(&format!(
+                    "^({module}{slash})*{module}\\.gleam$",
+                    module = "[a-z][_a-z0-9]*",
+                    slash = "(/|\\\\)",
+                ))
+                .expect("is_gleam_path() RE regex")
+            })
+            .is_match(
+                path.strip_prefix(dir)
+                    .expect("is_gleam_path(): strip_prefix")
+                    .as_str(),
+            )
     }
 }
 
