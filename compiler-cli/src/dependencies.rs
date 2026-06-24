@@ -90,7 +90,7 @@ pub fn tree(paths: &ProjectPaths, options: TreeOptions) -> Result<()> {
 
     // Get the manifest packages and add the root package to the vec
     let mut packages = manifest.packages.iter().cloned().collect_vec();
-    packages.append(&mut vec![root_package.clone()]);
+    packages.push(root_package);
 
     list_package_and_dependencies_tree(std::io::stdout(), options, packages.clone(), config.name)
 }
@@ -148,13 +148,8 @@ fn list_package_and_dependencies_tree<W: std::io::Write>(
 
     if let Some(package) = package {
         let tree = Vec::from([eco_format!("{0} v{1}", package.name, package.version)]);
-        let tree = list_dependencies_tree(
-            tree.clone(),
-            package.clone(),
-            packages,
-            EcoString::new(),
-            invert,
-        );
+        let tree =
+            list_dependencies_tree(tree, package.clone(), packages, EcoString::new(), invert);
 
         tree.iter()
             .try_for_each(|line| writeln!(buffer, "{line}"))
@@ -303,6 +298,25 @@ pub fn cleanup<Telem: Telemetry>(paths: &ProjectPaths, telemetry: Telem) -> Resu
 
     let changes = PackageChanges::between_manifests(&old_manifest, &manifest);
     telemetry.resolved_package_versions(&changes);
+
+    // Cleanup build cache of the root package if there are some changes.
+    // Without this, if a removed dependency is still used, teh build will
+    // succeed, resulting in runtime crash due to missing files.
+    if changes.any_changes() {
+        tracing::debug!("cleaning_root_package_build_cache");
+        for mode in Mode::iter() {
+            for target in Target::iter() {
+                let lock = BuildLock::new_target(paths, mode, target)?;
+                let _guard = lock.lock(&telemetry)?;
+
+                let build_directory_path =
+                    paths.build_directory_for_package(mode, target, &config.name);
+                if build_directory_path.exists() {
+                    fs::delete_directory(build_directory_path.as_ref())?;
+                }
+            }
+        }
+    }
 
     Ok(manifest)
 }

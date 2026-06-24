@@ -281,6 +281,21 @@
   `lustre`, with a 10% smaller peak memory footprint.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Formatter now removes import aliases if the aliased name is the
+  same as the original name. For example,
+
+  ```gleam
+  import wibble.{Wibble as Wibble}
+  ```
+
+  becomes
+
+  ```gleam
+  import wibble.{Wibble}
+  ```
+
+  ([Daniel Venable](https://github.com/DanielVenable))
+
 ### Bug fixes
 
 - When using the language server to extract a function from within an anonymous
@@ -382,3 +397,7 @@
 - The formatter now properly formats binary operations in bit array size
   segments.
   ([Andrey Kozhev](https://github.com/ankddev))
+
+- Fixed a bug where after removing dependencies with `gleam remove` if a
+  removed dependency is still used the build would succeed, resulting in
+  runtime crash due to missing files.

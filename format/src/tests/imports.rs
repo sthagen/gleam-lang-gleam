@@ -221,3 +221,16 @@ import gleam/list
 "#
     );
 }
+
+// https://github.com/gleam-lang/gleam/issues/5869
+#[test]
+fn redundant_as_name_is_removed_in_unqualified_imports() {
+    assert_format_rewrite!(
+        "import wibble.{Wibble as Wibble}",
+        "import wibble.{Wibble}\n",
+    );
+    assert_format_rewrite!(
+        "import wibble.{type Wibble as Wibble}",
+        "import wibble.{type Wibble}\n",
+    );
+}
