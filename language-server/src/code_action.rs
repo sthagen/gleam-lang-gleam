@@ -10675,6 +10675,8 @@ enum ExtractedValue<'a> {
     Statements {
         location: SrcSpan,
         position: StatementPosition,
+        /// The type of the final statement.
+        type_: Arc<Type>,
     },
     /// We're extracting a single use statement. We need this special case to
     /// properly handle the statements inside of them.
@@ -10716,50 +10718,9 @@ impl ExtractedValue<'_> {
     }
 }
 
-/// When we are extracting multiple statements, there are two possible cases:
-/// The first is if we are extracting statements in the middle of a function.
-/// In this case, we will need to return some number of arguments, or `Nil`.
-/// For example:
-///
-/// ```gleam
-/// pub fn main() {
-///   let message = "Hello!"
-///   let log_message = "[INFO] " <> message
-/// //^ Select from here
-///   io.println(log_message)
-///   //                    ^ Until here
-///
-///   do_some_more_things()
-/// }
-/// ```
-///
-/// Here, the extracted function doesn't bind any variables which we need
-/// afterwards, it purely performs side effects. In this case we can just return
-/// `Nil` from the new function.
-///
-/// However, consider the following:
-///
-/// ```gleam
-/// pub fn main() {
-///   let a = 1
-///   let b = 2
-/// //^ Select from here
-///   a + b
-///   //  ^ Until here
-/// }
-/// ```
-///
-/// Here, despite us not needing any variables from the extracted code, there
-/// is one key difference: the `a + b` expression is at the end of the function,
-/// and so its value is returned from the entire function. This is known as the
-/// "tail" position. In that case, we can't return `Nil` as that would make the
-/// `main` function return `Nil` instead of the result of the addition. If we
-/// extract the tail-position statement, we need to return that last value rather
-/// than `Nil`.
-///
 #[derive(Debug)]
 enum StatementPosition {
-    Tail { type_: Arc<Type> },
+    Tail,
     NotTail,
 }
 
@@ -10848,11 +10809,11 @@ impl<'a> ExtractFunction<'a> {
                     .location()
                     .merge(&statements.last().location());
 
-                self.extract_code_in_tail_position(
+                self.extract_unbound_statements(
                     *full_location,
                     location,
-                    statements.last().type_(),
                     extracted.parameters,
+                    statements.last().type_(),
                     end,
                 )
             }
@@ -10905,23 +10866,36 @@ impl<'a> ExtractFunction<'a> {
                 } else {
                     expression.type_()
                 };
-                self.extract_code_in_tail_position(
+                self.extract_unbound_statements(
                     expression.location(),
                     expression.location(),
-                    expression_type,
                     extracted.parameters,
+                    expression_type,
                     end,
                 )
             }
             ExtractedValue::Statements {
                 location,
                 position: StatementPosition::NotTail,
-            } => self.extract_statements(
-                location,
-                extracted.parameters,
-                extracted.returned_variables,
-                end,
-            ),
+                type_,
+            } => {
+                if extracted.returned_variables.is_empty() {
+                    self.extract_unbound_statements(
+                        location,
+                        location,
+                        extracted.parameters,
+                        type_,
+                        end,
+                    );
+                } else {
+                    self.extract_bound_statements(
+                        location,
+                        extracted.parameters,
+                        extracted.returned_variables,
+                        end,
+                    )
+                };
+            }
 
             ExtractedValue::Use {
                 location,
@@ -10930,12 +10904,13 @@ impl<'a> ExtractFunction<'a> {
             }
             | ExtractedValue::Statements {
                 location,
-                position: StatementPosition::Tail { type_ },
-            } => self.extract_code_in_tail_position(
-                location,
-                location,
+                position: StatementPosition::Tail,
                 type_,
+            } => self.extract_unbound_statements(
+                location,
+                location,
                 extracted.parameters,
+                type_,
                 end,
             ),
             ExtractedValue::PipelineSteps {
@@ -11166,14 +11141,28 @@ impl<'a> ExtractFunction<'a> {
         self.edits.insert(function_end, function);
     }
 
-    /// Extracts code from the end of a function or block. This could either be
-    /// a single expression, or multiple statements followed by a final expression.
-    fn extract_code_in_tail_position(
+    /// Extracts a function whose return value does not get bound to a variable
+    /// in the calling function.
+    ///
+    /// There are two cases:
+    /// 1. The function is in tail position, and its return value is used as the
+    ///    return value of the calling function.
+    /// 2. The function's return value is unused in the calling function, and so
+    ///    does not get bound to a variable.
+    ///
+    /// # Parameters
+    ///
+    /// In most cases, `location` and `code_location` are the same. They differ
+    /// only when the code being extracted is a single block expression. In
+    /// that case, the code being replaced in the calling function (`location`)
+    /// includes the braces around the block, while the code being put into the
+    /// body of the extracted function (`code_location`) does not.
+    fn extract_unbound_statements(
         &mut self,
         location: SrcSpan,
         code_location: SrcSpan,
-        type_: Arc<Type>,
         parameters: Vec<(EcoString, Arc<Type>)>,
+        return_type: Arc<Type>,
         function_end: u32,
     ) {
         let expression_code = code_at(self.module, code_location);
@@ -11194,7 +11183,7 @@ impl<'a> ExtractFunction<'a> {
             .iter()
             .map(|(name, type_)| eco_format!("{name}: {}", printer.print_type(type_)))
             .join(", ");
-        let return_type = printer.print_type(&type_);
+        let return_type = printer.print_type(&return_type);
 
         let function = format!(
             "\n\nfn {name}({parameters}) -> {return_type} {{
@@ -11205,7 +11194,47 @@ impl<'a> ExtractFunction<'a> {
         self.edits.insert(function_end, function);
     }
 
-    fn extract_statements(
+    /// Extracts a function that does get bound to one or more variables in the
+    /// calling function.
+    ///
+    /// For example, in the code
+    ///
+    /// ```gleam
+    /// pub fn main() {
+    ///   let a = 10
+    /// //^ Select from here
+    ///   let b = 20
+    ///   let c = a + b
+    ///   //          ^ Until here
+    ///
+    ///   echo a
+    ///   echo b
+    ///   echo c
+    /// }
+    /// ```
+    ///
+    /// multiple values defined in the extracted block are used in the calling
+    /// function. So, the extracted function must return multiple values that
+    /// are bound to variables: `let #(a, b, c) = function()`.
+    ///
+    /// There is a special case when there is only one value being bound, as it
+    /// is unnecessary to create a single-element tuple. For example:
+    ///
+    /// ```gleam
+    /// pub fn main() {
+    ///   let a = 10
+    /// //^ Select from here
+    ///   let b = 20
+    ///   let c = a + b
+    ///   //          ^ Until here
+    ///
+    ///   echo c
+    /// }
+    /// ```
+    ///
+    /// Here, the return value of the extracted function will be bound to a
+    /// single variable in the calling function: `let c = function()`.
+    fn extract_bound_statements(
         &mut self,
         location: SrcSpan,
         parameters: Vec<(EcoString, Arc<Type>)>,
@@ -11214,92 +11243,29 @@ impl<'a> ExtractFunction<'a> {
     ) {
         let code = code_at(self.module, location);
 
-        let returns_anything = !returned_variables.is_empty();
-
-        // Here, we decide what value to return from the function. There are
-        // three cases:
-        // The first is when the extracted code is purely for side-effects, and
-        // does not produce any values which are needed outside of the extracted
-        // code. For example:
-        //
-        // ```gleam
-        // pub fn main() {
-        //   let message = "Something important"
-        // //^ Select from here
-        //   io.println("Something important")
-        //   io.println("Something else which is repeated")
-        //   //                                           ^ Until here
-        //
-        //   do_final_thing()
-        // }
-        // ```
-        //
-        // It doesn't make sense to return any values from this function, since
-        // no values from the extract code are used afterwards, so we simply
-        // return `Nil`.
-        //
-        // The next is when we need just a single value defined in the extracted
-        // function, such as in this piece of code:
-        //
-        // ```gleam
-        // pub fn main() {
-        //   let a = 10
-        // //^ Select from here
-        //   let b = 20
-        //   let c = a + b
-        //   //          ^ Until here
-        //
-        //   echo c
-        // }
-        // ```
-        //
-        // Here, we can just return the single value, `c`.
-        //
-        // The last situation is when we need multiple defined values, such as
-        // in the following code:
-        //
-        // ```gleam
-        // pub fn main() {
-        //   let a = 10
-        // //^ Select from here
-        //   let b = 20
-        //   let c = a + b
-        //   //          ^ Until here
-        //
-        //   echo a
-        //   echo b
-        //   echo c
-        // }
-        // ```
-        //
-        // In this case, we must return a tuple containing `a`, `b` and `c` in
-        // order for the calling function to have access to the correct values.
         let (return_type, return_value) = match returned_variables.as_slice() {
-            [] => (type_::nil(), "Nil".into()),
-            [(name, type_)] => (type_.clone(), name.clone()),
+            [(returned_name, type_)] => (type_.clone(), returned_name.clone()),
             _ => {
-                let values = returned_variables.iter().map(|(name, _)| name).join(", ");
-                let type_ = type_::tuple(
-                    returned_variables
-                        .into_iter()
-                        .map(|(_, type_)| type_)
-                        .collect(),
-                );
+                let returned_names = returned_variables
+                    .iter()
+                    .map(|(name, _type)| name)
+                    .join(", ");
+                let return_value = eco_format!("#({returned_names})");
 
-                (type_, eco_format!("#({values})"))
+                let returned_types = returned_variables
+                    .into_iter()
+                    .map(|(_name, type_)| type_)
+                    .collect();
+                let type_ = type_::tuple(returned_types);
+
+                (type_, return_value)
             }
         };
 
         let name = self.function_name();
         let arguments = parameters.iter().map(|(name, _)| name).join(", ");
+        let call = format!("let {return_value} = {name}({arguments})");
 
-        // If any values are returned from the extracted function, we need to
-        // bind them so that they are accessible in the current scope.
-        let call = if returns_anything {
-            format!("let {return_value} = {name}({arguments})")
-        } else {
-            format!("{name}({arguments})")
-        };
         self.edits.replace(location, call);
 
         let mut printer = Printer::new(&self.module.ast.names);
@@ -11308,7 +11274,6 @@ impl<'a> ExtractFunction<'a> {
             .iter()
             .map(|(name, type_)| eco_format!("{name}: {}", printer.print_type(type_)))
             .join(", ");
-
         let return_type = printer.print_type(&return_type);
 
         let function = format!(
@@ -11648,9 +11613,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
             // it will be in tail position there and the extracted function should
             // return its returned value.
             let position = if statement.is_use() || is_in_tail_position {
-                StatementPosition::Tail {
-                    type_: statement.type_(),
-                }
+                StatementPosition::Tail
             } else {
                 StatementPosition::NotTail
             };
@@ -11665,6 +11628,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                             Some(ExtractedFunction::new(ExtractedValue::Statements {
                                 location: statement_location,
                                 position,
+                                type_: statement.type_(),
                             }))
                         }
                         TypedStatement::Use(use_) => {
@@ -11702,6 +11666,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                             value: ExtractedValue::Statements {
                                 location: statement_location,
                                 position,
+                                type_: statement.type_(),
                             },
                             parameters: parameters.to_vec(),
                             returned_variables: returned_variables.to_vec(),
@@ -11718,6 +11683,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                     *value = ExtractedValue::Statements {
                         location: value.location().merge(&statement_location),
                         position,
+                        type_: statement.type_(),
                     };
                 }
 
@@ -11736,11 +11702,13 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                         ExtractedValue::Statements {
                             location,
                             position: extracted_position,
+                            type_: extracted_type,
                         },
                     ..
                 }) => {
                     *location = location.merge(&statement_location);
                     *extracted_position = position;
+                    *extracted_type = statement.type_();
                 }
                 Some(ExtractedFunction {
                     value: value @ ExtractedValue::PipelineSteps { .. },
@@ -11752,6 +11720,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                     *value = ExtractedValue::Statements {
                         location: value.location(),
                         position,
+                        type_: statement.type_(),
                     }
                 }
             }
