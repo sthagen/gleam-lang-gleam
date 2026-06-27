@@ -398,9 +398,8 @@
       function(wobble)
       echo wobble as "2"
   }
-  fn function(wobble: a) -> Nil {
+  fn function(wobble: a) -> a {
     echo wobble as "1"
-    Nil
   }
   ```
 
@@ -434,3 +433,7 @@
 
 - The build tool will no longer panic when unable to lock the build directory.
   ([Louis Pilfold](https://github.com/lpil))
+
+- The formatter now properly indents multiline trailing comments inside of
+  multiline lists and tuples.
+  ([0xda157](https://github.com/0xda157))
