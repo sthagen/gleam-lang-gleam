@@ -336,6 +336,13 @@ file_names.iter().map(|x| x.as_str()).join(", "))]
         source_2: String,
     },
 
+    #[error("The path {path} does not exist in the git repository {repo} for package {package}")]
+    GitDependencyPathNotFound {
+        package: String,
+        path: String,
+        repo: String,
+    },
+
     #[error("The package was missing required fields for publishing")]
     MissingHexPublishFields {
         description_missing: bool,
@@ -412,7 +419,7 @@ file_names.iter().map(|x| x.as_str()).join(", "))]
     FailedToEncryptLocalHexApiKey { detail: String },
 
     #[error("Failed to decrypt local Hex API key")]
-    FailedToDecryptLocalHexApiKey { detail: String },
+    FailedToDecryptLocalHexApiKey,
 
     #[error("Cannot add a package with the same name as a dependency")]
     CannotAddSelfAsDependency { name: EcoString },
@@ -1902,17 +1909,19 @@ The error from the encryption library was:
                 }]
             }
 
-            Error::FailedToDecryptLocalHexApiKey { detail } => {
+            Error::FailedToDecryptLocalHexApiKey => {
                 let text = wrap_format!(
                     "Unable to decrypt the local Hex API key with the given password.
-The error from the encryption library was:
-
-    {detail}"
+Did you make a typo? Please try again."
                 );
                 vec![Diagnostic {
                     title: "Failed to decrypt local Hex API key".into(),
                     text,
-                    hint: None,
+                    hint: Some(
+                        "If you have forgotten your local password you can create a new one
+with `gleam hex authenticate`."
+                            .into(),
+                    ),
                     level: Level::Error,
                     location: None,
                 }]
@@ -2271,6 +2280,25 @@ manifest.toml and a version range specified in gleam.toml:
 
                 vec![Diagnostic {
                     title: "Conflicting provided dependencies".into(),
+                    text,
+                    hint: None,
+                    location: None,
+                    level: Level::Error,
+                }]
+            }
+
+            Error::GitDependencyPathNotFound {
+                package,
+                path,
+                repo,
+            } => {
+                let text = format!(
+                    "The path `{path}` does not exist in the git repository `{repo}` \
+for package `{package}`."
+                );
+
+                vec![Diagnostic {
+                    title: "Git dependency path not found".into(),
                     text,
                     hint: None,
                     location: None,

@@ -114,7 +114,7 @@ pub fn command(paths: &ProjectPaths, replace: bool, i_am_sure: bool) -> Result<(
     cli::print_published("package and documentation");
     println!(
         "\nView your package at https://hex.pm/packages/{}",
-        &config.name
+        config.name
     );
 
     // Prompt the user to make a git tag if they have not.
@@ -262,7 +262,7 @@ fn is_default_main(main: &TypedFunction, package_name: &EcoString) -> bool {
                     value: TypedExpr::String { value, .. },
                     ..
                 }) => {
-                    let default_argument = format!("Hello from {}!", &package_name);
+                    let default_argument = format!("Hello from {}!", package_name);
                     value == &default_argument
                 }
                 _ => false,
@@ -339,7 +339,7 @@ fn check_repo_url(config: &PackageConfig, i_am_sure: bool) -> Result<bool, Error
     println!(
         "The repository configuration in your `gleam.toml` file does not appear to be
 valid, {} returned status {}",
-        &url,
+        url,
         response.status()
     );
     let should_publish = i_am_sure || cli::confirm("\nDo you wish to continue?")?;
@@ -736,8 +736,8 @@ fn generated_erlang_files(
     }
 
     // src/package.app.src file
-    let app = format!("{}.app", &package.config.name);
-    let appsrc = format!("{}.src", &app);
+    let app = format!("{}.app", package.config.name);
+    let appsrc = format!("{}.src", app);
     files.push((tar_src.join(appsrc), fs::read(ebin.join(app))?));
 
     Ok(files)

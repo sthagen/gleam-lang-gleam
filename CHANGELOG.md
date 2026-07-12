@@ -35,6 +35,21 @@
   JavaScript target, allowing for faster comparison in most cases.
   ([Surya Rose](https://github.com/GearsDatapacks))
 
+- The use of pipes to turn the Gleam code `a |> b(c)` into `b(c)(a)` has been
+  deprecated.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The compiler now gives a better error message when an `@external`
+  attribute is incomplete. For example:
+
+  ```gleam
+  @external
+  pub fn wibble()
+  ```
+
+  now points to the attribute itself and explains that it is incomplete.
+  ([Asish Kumar](https://github.com/officialasishkumar))
+
 ### Build tool
 
 - The build tool now generates Hexdocs URLs using the new format of
@@ -47,6 +62,30 @@
 - The build tool now includes destination path in the error when it fails to
   link or copy file or directory.
   ([Andrey Kozhev](https://github.com/ankddev))
+
+- Git dependencies now support an optional `path` field to specify a
+  subdirectory within the repository. This is useful for monorepos that
+  contain multiple Gleam packages. For example:
+
+  ```toml
+  [dependencies]
+  my_package = {
+    git = "https://github.com/example/monorepo",
+    ref = "main",
+    path = "packages/my_package",
+  }
+  ```
+
+  ([John Downey](https://github.com/jtdowney))
+
+- The `gleam hex owner transfer` command now uses the flag `--user` instead of
+  the flag `--to`. The `gleam hex owner add` command now takes the package name
+  via the flag `--package`.
+  ([Louis Pilfold](https://github.com/lpil))
+
+- The error message when failing to decrypt the local Hex API key is now more
+  informative and helpful.
+  ([Moritz Böhme](https://github.com/MoritzBoehme))
 
 ### Language server
 
@@ -303,6 +342,67 @@
 
   ([Gavin Morrow](https://github.com/gavinmorrow))
 
+- The language server now offers a code action to fix the new deprecated pipeline
+  syntax.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The language server can now find references for and rename items when
+  triggered from an import statement:
+
+  ```gleam
+  import wibble.{type Wibble}
+  //                  ^^^^^^ Trigger find references or rename here
+
+  pub fn main() {
+    let _ = Wibble
+  }
+  ```
+
+  ([Gavin Morrow](https://github.com/gavinmorrow))
+
+- The language server now has "Convert to documentation comment" and
+  "Convert to regular comment" code actions. For example:
+
+  ```gleam
+  // Module description.
+  // Code action available here.
+
+  // Comment before function.
+  // Another code action here.
+  pub fn wibble() {
+    // No code action here.
+    todo
+  }
+
+  /// Doc comment.
+  /// Another code action here.
+  pub fn wobble () {
+    todo
+  }
+  ```
+
+  Triggering the code actions in all of these places will result in:
+
+  ```gleam
+  //// Module description.
+  //// Code action available here.
+
+  /// Comment before function.
+  /// Another code action here.
+  pub fn wibble() {
+    // No code action here.
+    todo
+  }
+
+  // Doc comment.
+  // Another code action here.
+  pub fn wobble () {
+    todo
+  }
+  ```
+
+  ([Daniel Venable](https://github.com/DanielVenable))
+
 ### Formatter
 
 - Performance of the formatter has been improved.
@@ -326,6 +426,11 @@
   ([Daniel Venable](https://github.com/DanielVenable))
 
 ### Bug fixes
+
+- Fixed a bug where the generated Erlang `.app` file's `modules` list would only
+  contain the modules recompiled by the latest build, becoming empty on a warm
+  rebuild where nothing changed.
+  ([Charlie Tonneslan](https://github.com/c-tonneslan))
 
 - When using the language server to extract a function from within an anonymous
   function, the return value of the extracted function is respected.
@@ -437,3 +542,27 @@
 - The formatter now properly indents multiline trailing comments inside of
   multiline lists and tuples.
   ([0xda157](https://github.com/0xda157))
+
+- Fixed a bug where the compiler would panic on the first HTTPS request on
+  Android.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where the language server would not show autocomplete for record
+  fields of internal types within the same package.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where warnings and errors in the arguments of a call to a
+  function literal would be reported multiple times.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where pattern matching on overlapping string prefixes with guards
+  could generate incorrect JavaScript.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where running `gleam docs build` on non-Erlang target projects
+  with a warm cache would not produce the module pages.
+  ([Matt Champagne](https://github.com/han-tyumi))
+
+- Fixed a bug where an incorrect `package-interface.json` would be generated for
+  certain type aliases.
+  ([Surya Rose](https://github.com/GearsDatapacks))

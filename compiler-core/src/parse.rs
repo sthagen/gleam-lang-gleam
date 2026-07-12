@@ -3122,7 +3122,7 @@ where
                     let mut import = UnqualifiedImport {
                         name,
                         location,
-                        imported_name_location: location,
+                        name_position: location.start,
                         as_name: None,
                     };
                     if self.maybe_one(&Token::As).is_some() {
@@ -3140,7 +3140,7 @@ where
                     let mut import = UnqualifiedImport {
                         name,
                         location,
-                        imported_name_location: location,
+                        name_position: location.start,
                         as_name: None,
                     };
                     if self.maybe_one(&Token::As).is_some() {
@@ -3158,7 +3158,7 @@ where
                     let mut import = UnqualifiedImport {
                         name,
                         location,
-                        imported_name_location: SrcSpan::new(name_start, end),
+                        name_position: name_start,
                         as_name: None,
                     };
                     if self.maybe_one(&Token::As).is_some() {
@@ -4594,7 +4594,10 @@ functions are declared separately from types.";
 
         let end = match name.as_str() {
             "external" => {
-                let _ = self.expect_one(&Token::LeftParen)?;
+                let _ = self.maybe_one(&Token::LeftParen).ok_or(ParseError {
+                    error: ParseErrorType::ExpectedExternalArguments,
+                    location: SrcSpan { start, end },
+                })?;
                 self.parse_external_attribute(start, end, attributes)
             }
             "target" => self.parse_target_attribute(start, end, attributes),

@@ -420,7 +420,7 @@ pub enum Command {
         packages: Vec<String>,
     },
 
-    /// Delete any build artifacts for this project
+    /// Delete any build artefacts for this project
     Clean,
 
     /// Run the language server, to be used by editors
@@ -799,7 +799,9 @@ pub enum Hex {
         version: String,
     },
 
-    /// Revert a release from Hex
+    /// Revert a release, removing it from Hex.
+    ///
+    /// Releases can only be reverted within 24 hours since they were published.
     ///
     /// This command uses this environment variable:
     ///
@@ -834,6 +836,7 @@ pub enum Owner {
     ///
     #[command(verbatim_doc_comment)]
     Add {
+        #[arg(long)]
         package: String,
 
         /// The username or email of the additional owner
@@ -858,7 +861,7 @@ pub enum Owner {
         package: String,
 
         /// The username or email of the new owner
-        #[arg(long = "to")]
+        #[arg(long = "user")]
         username_or_email: String,
     },
 }

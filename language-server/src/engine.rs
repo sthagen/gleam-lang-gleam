@@ -41,7 +41,7 @@ use std::{
 use crate::{
     code_action::{
         DiscardUnusedVariable, RemoveRedundantRecordUpdate, ReplaceUnderscoreWithType,
-        type_errors_for_module,
+        code_action_fix_deprecated_pipe, type_errors_for_module,
     },
     reference::find_module_references_in_module,
     rename::{rename_module_alias, rename_module_occurrences, rename_type_variable},
@@ -51,13 +51,14 @@ use super::{
     DownloadDependencies, MakeLocker,
     code_action::{
         AddAnnotations, AddMissingTypeParameter, AddOmittedLabels, AnnotateTopLevelDefinitions,
-        CodeActionBuilder, CollapseNestedCase, ConvertFromUse, ConvertToFunctionCall,
-        ConvertToPipe, ConvertToUse, CreateUnknownModule, ExpandFunctionCapture, ExtractConstant,
-        ExtractFunction, ExtractVariable, FillInMissingLabelledArgs, FillUnusedFields,
-        FixBinaryOperation, FixTruncatedBitArraySegment, GenerateDynamicDecoder, GenerateFunction,
-        GenerateJsonEncoder, GenerateVariant, InlineVariable, InterpolateString, LetAssertToCase,
-        MergeCaseBranches, PatternMatchOnValue, RedundantTupleInCaseSubject, RemoveBlock,
-        RemoveEchos, RemovePrivateOpaque, RemoveUnreachableCaseClauses, RemoveUnusedImports,
+        CodeActionBuilder, CollapseNestedCase, ConvertBetweenDocAndRegularComment, ConvertFromUse,
+        ConvertToFunctionCall, ConvertToPipe, ConvertToUse, CreateUnknownModule,
+        ExpandFunctionCapture, ExtractConstant, ExtractFunction, ExtractVariable,
+        FillInMissingLabelledArgs, FillUnusedFields, FixBinaryOperation,
+        FixTruncatedBitArraySegment, GenerateDynamicDecoder, GenerateFunction, GenerateJsonEncoder,
+        GenerateVariant, InlineVariable, InterpolateString, LetAssertToCase, MergeCaseBranches,
+        PatternMatchOnValue, RedundantTupleInCaseSubject, RemoveBlock, RemoveEchos,
+        RemovePrivateOpaque, RemoveUnreachableCaseClauses, RemoveUnusedImports,
         UnwrapAnonymousFunction, UseLabelShorthandSyntax, WrapInAnonymousFunction, WrapInBlock,
         code_action_add_missing_patterns, code_action_convert_qualified_constructor_to_unqualified,
         code_action_convert_unqualified_constructor_to_qualified, code_action_generate_type,
@@ -263,7 +264,7 @@ where
             None => (params.text_document.uri.clone(), line_numbers),
             Some(name) => {
                 let module = self.compiler.get_source(&name)?;
-                let url = Url::parse(&format!("file:///{}", &module.path))
+                let url = Url::parse(&format!("file:///{}", module.path))
                     .expect("goto definition URL parse");
                 (url, &module.line_numbers)
             }
@@ -554,6 +555,10 @@ where
                 .code_actions(),
             );
             actions.extend(DiscardUnusedVariable::new(module, &lines, &params).code_actions());
+            code_action_fix_deprecated_pipe(module, &lines, &params, &mut actions);
+            actions.extend(
+                ConvertBetweenDocAndRegularComment::new(module, &lines, &params).code_actions(),
+            );
 
             actions.sort_by_key(|one| {
                 let preferred_key = if one.is_preferred == Some(true) { 0 } else { 1 };
@@ -887,12 +892,14 @@ where
                     Referenced::ModuleValue {
                         module,
                         location,
+                        name_start,
                         target_kind,
                         ..
                     }
                     | Referenced::ModuleType {
                         module,
                         location,
+                        name_start,
                         target_kind,
                         ..
                     },
@@ -903,6 +910,21 @@ where
                         RenameTarget::Unqualified | RenameTarget::Definition => true,
                     };
                     if rename_allowed {
+                        // The location field is sometimes larger than the
+                        // location of the actual name. In most cases they are
+                        // the same, but in import statements that are for types
+                        // and/or are aliased, the location is larger than the
+                        // name.
+                        //
+                        // For example, in `import m.{type Wibble as Wobble}`,
+                        // location will cover `type Wibble as Wobble` but
+                        // the name is just `Wobble`. In every case (including
+                        // non-imports), the name is at the very end of the
+                        // location span.
+                        let location = SrcSpan {
+                            start: name_start,
+                            end: location.end,
+                        };
                         success_response(location)
                     } else {
                         None
@@ -1133,12 +1155,7 @@ where
                     ))
                 }
             },
-            Some(Referenced::ModuleType {
-                module,
-                name,
-                location,
-                ..
-            }) if location.contains(byte_index) => match search_scope {
+            Some(Referenced::ModuleType { module, name, .. }) => match search_scope {
                 FindReferencesSearchScope::AllModules => Some(find_module_references(
                     module,
                     name,
@@ -1305,16 +1322,19 @@ where
                 Located::VariantConstructorDefinition(constructor) => {
                     Some(hover_for_constructor(constructor, lines, module))
                 }
-                Located::UnqualifiedImport(UnqualifiedImport {
-                    name,
-                    module: module_name,
-                    is_type,
-                    location,
-                }) => this
+                Located::UnqualifiedImport(
+                    import @ UnqualifiedImport {
+                        name,
+                        module: module_name,
+                        location,
+                        name_position: _,
+                        as_name: _,
+                    },
+                ) => this
                     .compiler
                     .get_module_interface(module_name.as_str())
                     .and_then(|module_interface| {
-                        if is_type {
+                        if import.is_type() {
                             module_interface.types.get(name).map(|constructor| {
                                 hover_for_annotation(
                                     *location,

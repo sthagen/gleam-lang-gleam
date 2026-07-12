@@ -66,6 +66,14 @@ impl ProjectPaths {
         self.build_directory().join("packages")
     }
 
+    pub fn build_git_directory(&self) -> Utf8PathBuf {
+        self.build_directory().join("git")
+    }
+
+    pub fn build_git_repo(&self, name: &str) -> Utf8PathBuf {
+        self.build_git_directory().join(name)
+    }
+
     pub fn build_packages_toml(&self) -> Utf8PathBuf {
         self.build_packages_directory().join("packages.toml")
     }
@@ -128,7 +136,7 @@ impl ProjectPaths {
     }
 
     /// A path to a special file that contains the version of gleam
-    /// that last built the artifacts along with build-impacting
+    /// that last built the artefacts along with build-impacting
     /// configuration, such as whether to generate source maps. If
     /// this file does not match the current version of gleam we
     /// will rebuild from scratch
