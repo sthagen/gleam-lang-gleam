@@ -25,6 +25,7 @@
     clippy::verbose_file_reads,
     clippy::unnested_or_patterns,
     clippy::default_trait_access,
+    clippy::format_push_string,
     rust_2018_idioms,
     missing_debug_implementations,
     missing_copy_implementations,
@@ -56,6 +57,7 @@
     clippy::match_like_matches_macro,
     clippy::inconsistent_struct_constructor,
     clippy::len_without_is_empty,
+    clippy::let_unit_value,
     // TODO: fix
     clippy::arc_with_non_send_sync,
 )]
@@ -85,7 +87,6 @@ pub mod metadata;
 pub mod package_interface;
 pub mod parse;
 pub mod paths;
-pub mod pretty;
 pub mod requirement;
 pub mod strings;
 pub mod type_;

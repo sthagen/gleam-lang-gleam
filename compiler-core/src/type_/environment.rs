@@ -470,7 +470,7 @@ impl Environment<'_> {
                     }
                 })?;
                 self.references
-                    .register_module_reference(module_name.clone());
+                    .register_module_reference_by_alias(module_name.clone());
                 module.get_importable_type(name).ok_or_else(|| {
                     UnknownTypeConstructorError::ModuleType {
                         name: name.clone(),
@@ -556,7 +556,7 @@ impl Environment<'_> {
                     }
                 })?;
                 self.references
-                    .register_module_reference(module_name.clone());
+                    .register_module_reference_by_alias(module_name.clone());
                 module.get_importable_value(name).ok_or_else(|| {
                     UnknownValueConstructorError::ModuleValue {
                         name: name.clone(),
@@ -583,6 +583,7 @@ impl Environment<'_> {
                 }
             })
             .cloned()
+            .sorted()
             .collect_vec()
     }
 
@@ -606,6 +607,7 @@ impl Environment<'_> {
                 }
             })
             .cloned()
+            .sorted()
             .collect_vec()
     }
 
@@ -1157,7 +1159,7 @@ pub fn unify(t1: Arc<Type>, t2: Arc<Type>) -> Result<(), UnifyError> {
                     arguments1.len(),
                     &t2,
                     arguments2.len(),
-                ))?
+                ))?;
             }
 
             for (i, (a, b)) in arguments1.iter().zip(arguments2).enumerate() {

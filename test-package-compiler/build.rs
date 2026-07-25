@@ -25,20 +25,34 @@ pub fn main() {
     for name in names {
         let path = cases.join(&name);
         let path = path.to_str().unwrap().replace('\\', "/");
-        module.push_str(&format!(
-            r#"
+        module.push_str(
+            "
 #[rustfmt::skip]
 #[test]
-fn {name}() {{
-    let output = crate::prepare("{path}");
+fn ",
+        );
+        module.push_str(&name);
+        module.push_str("() {\n");
+        module.push_str("    let output = crate::prepare(\"");
+        module.push_str(&path);
+        module.push_str(
+            "\");
     insta::assert_snapshot!(
-        "{name}",
+        \"",
+        );
+        module.push_str(&name);
+        module.push_str(
+            "\",
         output,
-        "{path}",
+        \"",
+        );
+        module.push_str(&path);
+        module.push_str(
+            "\",
     );
-}}
-"#
-        ));
+}
+",
+        );
     }
 
     let out = PathBuf::from("./src/generated_tests.rs");

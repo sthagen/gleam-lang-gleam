@@ -61,7 +61,7 @@ impl<'a> Erlang<'a> {
         let line_numbers = LineNumbers::new(&module.code);
         let output = erlang::module(&module.ast, &line_numbers, root);
         tracing::debug!(name = ?name, "Generated Erlang module");
-        writer.write(&path, &output?)
+        writer.write(&path, &output)
     }
 
     fn erlang_record_headers<Writer: FileSystemWriter>(
@@ -213,7 +213,7 @@ impl<'a> JavaScript<'a> {
             if self.typescript == TypeScriptDeclarations::Emit {
                 self.ts_declaration(writer, module, &js_name)?;
             }
-            self.js_module(writer, module, &js_name, stdlib_package)?
+            self.js_module(writer, module, &js_name, stdlib_package)?;
         }
         self.write_prelude(writer)?;
         Ok(())

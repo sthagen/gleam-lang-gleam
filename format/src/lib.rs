@@ -271,7 +271,7 @@ impl<'a, 'doc> Formatter<'a> {
             self.doc_comments.iter().map(|comment| {
                 DOC_COMMENT_DOCUMENT
                     .to_doc(arena)
-                    .append(arena, EcoString::from(comment.content))
+                    .append(arena, arena.zero_width_str(comment.content))
             }),
             LINE_DOCUMENT,
         );
@@ -286,7 +286,7 @@ impl<'a, 'doc> Formatter<'a> {
             let comments = self.module_comments.iter().map(|s| {
                 MODULE_COMMENT_DOCUMENT
                     .to_doc(arena)
-                    .append(arena, EcoString::from(s.content))
+                    .append(arena, arena.zero_width_str(s.content))
             });
             arena
                 .join(comments, LINE_DOCUMENT)
@@ -845,7 +845,7 @@ impl<'a, 'doc> Formatter<'a> {
                 .join(
                     comments.map(|comment| match comment {
                         Some(comment) => {
-                            DOC_COMMENT_DOCUMENT.append(arena, EcoString::from(comment))
+                            DOC_COMMENT_DOCUMENT.append(arena, arena.zero_width_str(comment))
                         }
                         None => unreachable!("empty lines dropped by pop_doc_comments"),
                     }),
@@ -1460,7 +1460,8 @@ impl<'a, 'doc> Formatter<'a> {
     }
 
     fn int(&self, arena: &'doc DocumentArena<'a, 'doc>, value: &'a str) -> Document<'a, 'doc> {
-        if value.starts_with("0x") || value.starts_with("0b") || value.starts_with("0o") {
+        let digits = value.trim_start_matches('-');
+        if digits.starts_with("0x") || digits.starts_with("0b") || digits.starts_with("0o") {
             return value.to_doc(arena);
         }
 
@@ -3093,14 +3094,17 @@ impl<'a, 'doc> Formatter<'a> {
         left: &'a UntypedClauseGuard,
         right: &'a UntypedClauseGuard,
     ) -> Document<'a, 'doc> {
-        self.clause_guard_bin_op_side(arena, name, left, left.precedence())
-            .append(arena, BREAKABLE_SPACE_DOCUMENT)
-            .append(arena, binop(*name))
-            .append(arena, SPACE_DOCUMENT)
-            .append(
-                arena,
-                self.clause_guard_bin_op_side(arena, name, right, right.precedence() - 1),
-            )
+        let left_comments = self.pop_comments(left.location().start);
+        let left = self.clause_guard_bin_op_side(arena, name, left, left.precedence());
+        let left = commented(arena, left, left_comments);
+
+        let right_comments = self.pop_comments(right.location().start);
+        let right = self.clause_guard_bin_op_side(arena, name, right, right.precedence() - 1);
+        let right = docvec![arena, binop(*name), SPACE_DOCUMENT, right];
+        let right = commented(arena, right, right_comments);
+
+        left.append(arena, BREAKABLE_SPACE_DOCUMENT)
+            .append(arena, right)
     }
 
     fn clause_guard_bin_op_side(
@@ -3660,7 +3664,9 @@ impl<'a, 'doc> Formatter<'a> {
                 }
                 (_, None) => continue,
             };
-            doc.push(COMMENT_DOCUMENT.append(arena, EcoString::from(comment)));
+            doc.push(
+                COMMENT_DOCUMENT.append(arena, arena.zero_width_string(EcoString::from(comment))),
+            );
             match comments.peek() {
                 // Next line is a comment
                 Some((_, Some(_))) => doc.push(LINE_DOCUMENT),
@@ -4246,12 +4252,17 @@ fn printed_comments<'a, 'doc>(
     let _ = comments.peek()?;
 
     let mut doc = Vec::new();
-    while let Some(c) = comments.next() {
-        let c = match c {
-            Some(c) => c,
-            None => continue,
-        };
-        doc.push("//".to_doc(arena).append(arena, EcoString::from(c)));
+    while let Some(comment) = comments.next() {
+        let Some(comment) = comment else { continue };
+
+        // The comment is turned into a zero width string rather than a regular
+        // string document: comment lines are never touched by the formatter and
+        // we don't need to know how long each one is.
+        // So we can do this to avoid counting the graphemes of each one, which
+        // is a lot of wasted work.
+        let comment = arena.zero_width_str(comment);
+
+        doc.push(COMMENT_DOCUMENT.append(arena, comment));
         match comments.peek() {
             // Next line is a comment
             Some(Some(_)) => doc.push(LINE_DOCUMENT),

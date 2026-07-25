@@ -864,6 +864,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
+name = "erlang-generation"
+version = "1.0.0"
+dependencies = [
+ "ecow",
+ "erlang-term-format",
+ "itertools",
+ "num-bigint",
+ "num-traits",
+ "regex",
+]
+
+[[package]]
+name = "erlang-term-format"
+version = "1.0.0"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1148,7 +1169,7 @@ dependencies = [
 
 [[package]]
 name = "gleam"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "gleam-cli",
  "static_vcruntime",
@@ -1156,7 +1177,7 @@ dependencies = [
 
 [[package]]
 name = "gleam-cli"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "async-trait",
  "base16",
@@ -1209,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "gleam-core"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "age",
  "askama",
@@ -1224,6 +1245,7 @@ dependencies = [
  "debug-ignore",
  "dirs-next",
  "ecow",
+ "erlang-generation",
  "flate2",
  "futures",
  "gen-lsp-types",
@@ -1268,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "gleam-format"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "camino",
  "ecow",
@@ -1281,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "gleam-language-server"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "camino",
  "debug-ignore",
@@ -1294,6 +1316,7 @@ dependencies = [
  "insta",
  "itertools",
  "lsp-server",
+ "num-bigint",
  "serde",
  "serde_json",
  "strum",
@@ -1304,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "gleam-wasm"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "camino",
  "console_error_panic_hook",
@@ -1377,7 +1400,7 @@ checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
 name = "hexpm"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "base16",
  "bytes",
@@ -3420,7 +3443,7 @@ dependencies = [
 
 [[package]]
 name = "test-commands"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "camino",
  "gleam-cli",
@@ -3445,7 +3468,7 @@ dependencies = [
 
 [[package]]
 name = "test-output"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "camino",
  "gleam-cli",
@@ -3456,7 +3479,7 @@ dependencies = [
 
 [[package]]
 name = "test-package-compiler"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "camino",
  "gleam-core",
@@ -3470,7 +3493,7 @@ dependencies = [
 
 [[package]]
 name = "test-project-compiler"
-version = "1.17.0"
+version = "1.18.0-rc2"
 dependencies = [
  "camino",
  "gleam-core",

@@ -18,8 +18,7 @@ fn return_person() {
 
 ----- COMPILED ERLANG
 -module(my@mod).
--compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
--define(FILEPATH, "project/test/my/mod.gleam").
+-compile([no_auto_import, nowarn_ignored, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -export([main/0]).
 -export_type([person/0]).
 
@@ -28,7 +27,7 @@ fn return_person() {
 -file("project/test/my/mod.gleam", 9).
 -spec return_person() -> person().
 return_person() ->
-    {person, <<"Quinn"/utf8>>, 27}.
+    {person, ~"Quinn", 27}.
 
 -file("project/test/my/mod.gleam", 4).
 -spec main() -> person().

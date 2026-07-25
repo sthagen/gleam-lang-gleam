@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2023 The Gleam contributors
 
-use std::{collections::HashSet, iter, sync::Arc};
+use std::{collections::HashSet, iter, ops::Neg, sync::Arc};
 
 use ecow::{EcoString, eco_format};
 use gleam_core::{
@@ -36,6 +36,7 @@ use lsp_types::{
     CodeAction, CodeActionKind, CodeActionParams, CreateFile, CreateFileOptions, DocumentChange,
     Position, Range, TextEdit, Uri as Url,
 };
+use num_bigint::BigInt;
 use vec1::{Vec1, vec1};
 
 use crate::engine::{completely_within, position_within};
@@ -235,7 +236,7 @@ impl<'ast> ast::visit::Visit<'ast> for RedundantTupleInCaseSubject<'_> {
                         elements.last().map(|element| element.location()),
                     ),
                     Some(Pattern::Discard { location, .. }) => {
-                        self.discard_tuple_items(*location, elements.len())
+                        self.discard_tuple_items(*location, elements.len());
                     }
                     _ => panic!("safe: we've just checked all patterns must be discards/tuples"),
                 }
@@ -244,7 +245,7 @@ impl<'ast> ast::visit::Visit<'ast> for RedundantTupleInCaseSubject<'_> {
             self.hovered = self.hovered || overlaps(self.params.range, range);
         }
 
-        ast::visit::visit_typed_expr_case(self, location, type_, subjects, clauses, compiled_case)
+        ast::visit::visit_typed_expr_case(self, location, type_, subjects, clauses, compiled_case);
     }
 }
 
@@ -339,7 +340,7 @@ impl<'a> RedundantTupleInCaseSubject<'a> {
         self.edits.replace(
             discard_location,
             itertools::intersperse(iter::repeat_n("_", tuple_items), ", ").collect(),
-        )
+        );
     }
 }
 
@@ -725,12 +726,12 @@ impl<'ast> ast::visit::Visit<'ast> for UseLabelShorthandSyntax<'_> {
                 value: TypedExpr::Var { name, location, .. },
                 ..
             } if is_selected && !arg.uses_label_shorthand() && label == name => {
-                self.edits.delete(*location)
+                self.edits.delete(*location);
             }
             _ => (),
         }
 
-        ast::visit::visit_typed_call_arg(self, arg)
+        ast::visit::visit_typed_call_arg(self, arg);
     }
 
     fn visit_typed_pattern_call_arg(&mut self, arg: &'ast CallArg<TypedPattern>) {
@@ -743,12 +744,12 @@ impl<'ast> ast::visit::Visit<'ast> for UseLabelShorthandSyntax<'_> {
                 value: TypedPattern::Variable { name, location, .. },
                 ..
             } if is_selected && !arg.uses_label_shorthand() && label == name => {
-                self.edits.delete(*location)
+                self.edits.delete(*location);
             }
             _ => (),
         }
 
-        ast::visit::visit_typed_pattern_call_arg(self, arg)
+        ast::visit::visit_typed_pattern_call_arg(self, arg);
     }
 }
 
@@ -996,7 +997,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
                     .as_ref()
                     .map(|constructor| constructor.type_.clone()),
                 enclosing_function: None,
-            })
+            });
         }
 
         // We only want to take into account the innermost function call
@@ -1037,7 +1038,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
                 kind: SelectedCallKind::Value,
                 fun_type: Some(fun.type_()),
                 enclosing_function: self.current_function,
-            })
+            });
         }
 
         // We only want to take into account the innermost function call
@@ -1074,7 +1075,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
                 kind: SelectedCallKind::Pattern,
                 fun_type: None,
                 enclosing_function: self.current_function,
-            })
+            });
         }
 
         ast::visit::visit_typed_pattern_constructor(
@@ -1265,8 +1266,8 @@ pub fn code_action_import_module(
                     import_location,
                     import,
                     &after_import_newlines,
-                ))
-            };
+                ));
+            }
 
             let title = match &suggestion.import {
                 Some(import) => &format!("Import `{import}`"),
@@ -1765,7 +1766,7 @@ impl<'a> AnnotateTopLevelDefinitions<'a> {
         // which is lacking some annotations in the module
         if !self.is_hovering_definition_requiring_annotations {
             return vec![];
-        };
+        }
 
         let mut action = Vec::with_capacity(1);
         CodeActionBuilder::new("Annotate all top level definitions")
@@ -2024,7 +2025,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
             module_name,
             module_alias,
             constructor,
-        )
+        );
     }
 
     fn visit_typed_pattern_constructor(
@@ -2168,7 +2169,7 @@ impl<'a> QualifiedToUnqualifiedImportSecondPass<'a> {
         self.edits.delete(SrcSpan {
             start: location.start,
             end: location.start + self.qualified_constructor.used_name.len() as u32 + 1, // plus .
-        })
+        });
     }
 
     fn edit_import(&mut self) {
@@ -2258,7 +2259,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
             module_name,
             module_alias,
             constructor,
-        )
+        );
     }
 
     fn visit_typed_pattern_constructor(
@@ -2431,7 +2432,7 @@ impl<'a> UnqualifiedToQualifiedImportFirstPass<'a> {
                             layer: ast::Layer::Value,
                         })
                     })
-            })
+            });
     }
 
     fn get_module_import_from_type_constructor(&mut self, constructor_name: &EcoString) {
@@ -2454,7 +2455,7 @@ impl<'a> UnqualifiedToQualifiedImportFirstPass<'a> {
                         });
                     }
                     None
-                })
+                });
     }
 }
 
@@ -2992,7 +2993,7 @@ impl<'a> ConvertFromUse<'a> {
                 } else {
                     callback_start
                 },
-            )
+            );
         } else {
             // On the other hand, if the function on the right hand side doesn't
             // end with a closed parenthese then we have to manually add it.
@@ -3001,8 +3002,8 @@ impl<'a> ConvertFromUse<'a> {
             //                  ^ No parentheses
             //
             self.edits
-                .insert(use_line_end, format!("(fn({assignments}) {{"))
-        };
+                .insert(use_line_end, format!("(fn({assignments}) {{"));
+        }
 
         // Then we have to increase indentation for all the lines of the use
         // body.
@@ -3016,7 +3017,7 @@ impl<'a> ConvertFromUse<'a> {
                     end: Position { line, character: 0 },
                 },
                 new_text: "  ".to_string(),
-            })
+            });
         }
 
         let final_line_indentation = " ".repeat(use_body_range.start.character as usize);
@@ -3158,7 +3159,7 @@ impl<'a> ConvertToUse<'a> {
                 SrcSpan::new(arg_before_callback.end, callback_body_span.start),
                 format!(")\n{indentation}"),
             ),
-        };
+        }
 
         // Then we have to remove two spaces of indentation from each line of
         // the callback function's body.
@@ -3167,7 +3168,7 @@ impl<'a> ConvertToUse<'a> {
             self.edits.delete_range(Range::new(
                 Position { line, character: 0 },
                 Position { line, character: 2 },
-            ))
+            ));
         }
 
         // Then we have to remove the anonymous fn closing `}` and the call's
@@ -3199,7 +3200,7 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertToUse<'ast> {
             self.selected_call = Some(call_data);
         }
 
-        ast::visit::visit_typed_function(self, fun)
+        ast::visit::visit_typed_function(self, fun);
     }
 
     fn visit_typed_expr_fn(
@@ -3246,7 +3247,7 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertToUse<'ast> {
         if within(self.params.range, statement_range) {
             // Only the last statement of a block can be turned into a use!
             if let Some(selected_call) = turn_statement_into_use(last_statement) {
-                self.selected_call = Some(selected_call)
+                self.selected_call = Some(selected_call);
             }
         }
 
@@ -3454,7 +3455,7 @@ impl<'a> ExtractVariable<'a> {
             self.edits.insert(*line_end, format!("{indent}}}\n"));
             indent += "  ";
             insertion = format!("{{\n{indent}{insertion}");
-        };
+        }
 
         self.edits
             .insert(insert_location.start, format!("{insertion}\n{indent}"));
@@ -3567,8 +3568,8 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
 
     fn visit_typed_assignment(&mut self, assignment: &'ast TypedAssignment) {
         if let Pattern::Variable { name, .. } = &assignment.pattern {
-            self.name_generator.add_used_name(name.clone())
-        };
+            self.name_generator.add_used_name(name.clone());
+        }
         ast::visit::visit_typed_assignment(self, assignment);
     }
 
@@ -3591,7 +3592,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
                 finally_kind,
             );
             return;
-        };
+        }
 
         // Visiting a pipeline requires a bit of care, we don't want to extract
         // intermediate steps as variables (those are function calls)!
@@ -3632,7 +3633,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
         }
 
         self.at_position(ExtractVariablePosition::PipelineCall, |this| {
-            this.visit_typed_expr(finally)
+            this.visit_typed_expr(finally);
         });
     }
 
@@ -3801,7 +3802,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractVariable<'ast> {
                     // variable inside the parenthesis where the call argument is located.
                 } else {
                     self.statement_before_selected_expression = self.latest_statement;
-                };
+                }
                 self.selected_expression = Some(ExtractedToVariable::Expression {
                     location: *location,
                     name: self.generate_candidate_name(expr.type_()),
@@ -4451,7 +4452,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExpandFunctionCapture<'ast> {
             arguments,
             body,
             return_annotation,
-        )
+        );
     }
 }
 
@@ -4973,7 +4974,7 @@ impl<'a, 'b, IO> DecoderPrinter<'a, 'b, IO> {
             } else {
                 return Some(eco_format!("#({})", field_zeroes.iter().join(", ")));
             }
-        };
+        }
 
         let (module, name, _) = type_.named_type_information()?;
         match (module.as_str(), name.as_str()) {
@@ -5022,7 +5023,7 @@ impl<'a, 'b, IO> DecoderPrinter<'a, 'b, IO> {
 
         if already_seen_type {
             return None;
-        };
+        }
 
         let type_is_inside_current_module = &self.type_module == custom_type_module;
 
@@ -5112,7 +5113,7 @@ impl<'a, 'b, IO> DecoderPrinter<'a, 'b, IO> {
         // Only proceed if we were able to construct every field successfully
         if zero_params.len() < zero_constructor.parameters.len() {
             return None;
-        };
+        }
 
         let zero_constructor = if !type_is_inside_current_module {
             // Type constructors from other modules need to be qualified appropriately,
@@ -5931,7 +5932,7 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
             self.edits.insert(
                 statement_location.end,
                 format!(" {{\n{patterns}\n{nesting}}}"),
-            )
+            );
         }
     }
 
@@ -6223,7 +6224,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
                 self.selected_value = Some(PatternMatchedValue::Statement {
                     location: statement.location(),
                     type_: type_.clone(),
-                })
+                });
             }
 
             ast::Statement::Expression(_)
@@ -6476,7 +6477,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
         let location = PatternLocation::ListTail {
             location: tail_location,
         };
-        self.pattern_variable_under_cursor = Some((name, location, tail_type.clone()))
+        self.pattern_variable_under_cursor = Some((name, location, tail_type.clone()));
     }
 }
 
@@ -6742,7 +6743,7 @@ impl<'a> GenerateFunction<'a> {
                     return_type,
                     previous_definition_end: self.last_visited_definition_end,
                     module: None,
-                })
+                });
             }
         }
     }
@@ -6764,7 +6765,7 @@ impl<'a> GenerateFunction<'a> {
                 return_type,
                 previous_definition_end: self.last_visited_definition_end,
                 module: Some(module),
-            })
+            });
         }
     }
 }
@@ -6790,10 +6791,10 @@ impl<'ast> ast::visit::Visit<'ast> for GenerateFunction<'ast> {
         if within(self.params.range, invalid_range) {
             match extra_information {
                 Some(InvalidExpression::ModuleSelect { module_name, label }) => {
-                    self.try_save_function_from_other_module(module_name, label, type_, None)
+                    self.try_save_function_from_other_module(module_name, label, type_, None);
                 }
                 Some(InvalidExpression::UnknownVariable { name }) => {
-                    self.try_save_function_to_generate(name, type_, None)
+                    self.try_save_function_to_generate(name, type_, None);
                 }
                 None => {}
             }
@@ -6814,10 +6815,10 @@ impl<'ast> ast::visit::Visit<'ast> for GenerateFunction<'ast> {
         {
             match extra_information {
                 InvalidExpression::ModuleSelect { module_name, label } => {
-                    self.try_save_function_from_other_module(module_name, label, type_, None)
+                    self.try_save_function_from_other_module(module_name, label, type_, None);
                 }
                 InvalidExpression::UnknownVariable { name } => {
-                    self.try_save_function_to_generate(name, type_, None)
+                    self.try_save_function_to_generate(name, type_, None);
                 }
             }
         }
@@ -6919,6 +6920,7 @@ pub struct GenerateVariant<'a, IO> {
     params: &'a CodeActionParams,
     line_numbers: &'a LineNumbers,
     variant_to_generate: Option<VariantToGenerate<'a>>,
+    printer: Printer<'a>,
 }
 
 struct VariantToGenerate<'a> {
@@ -6963,6 +6965,9 @@ struct VariantToGenerate<'a> {
     /// The module this variant will be added to.
     ///
     module_name: EcoString,
+
+    /// The type to add this variant to.
+    type_: Arc<Type>,
 
     /// The arguments actually supplied as input to the variant, if any.
     /// A variant to generate might as well be just a name passed as an argument
@@ -7060,6 +7065,7 @@ impl<'a, IO> GenerateVariant<'a, IO> {
             compiler,
             line_numbers,
             variant_to_generate: None,
+            printer: Printer::new(&module.ast.names),
         }
     }
 
@@ -7068,6 +7074,7 @@ impl<'a, IO> GenerateVariant<'a, IO> {
 
         let Some(VariantToGenerate {
             name,
+            type_,
             constructors,
             arguments_types,
             given_arguments,
@@ -7126,9 +7133,12 @@ impl<'a, IO> GenerateVariant<'a, IO> {
             );
         }
 
-        let mut builder = CodeActionBuilder::new("Generate variant")
-            .kind(CodeActionKind::QuickFix)
-            .preferred(true);
+        let mut builder = CodeActionBuilder::new(&format!(
+            "Generate `{}` variant",
+            self.printer.print_type(type_)
+        ))
+        .kind(CodeActionKind::QuickFix)
+        .preferred(true);
 
         match edits {
             GenerateVariantEdits::GenerateInCurrentModule {
@@ -7137,7 +7147,7 @@ impl<'a, IO> GenerateVariant<'a, IO> {
                 builder = builder.changes(
                     self.params.text_document.uri.clone(),
                     current_module_edits.edits,
-                )
+                );
             }
             GenerateVariantEdits::GenerateInDifferentModule {
                 current_module_edits,
@@ -7155,9 +7165,9 @@ impl<'a, IO> GenerateVariant<'a, IO> {
                     );
                 }
 
-                builder = builder.changes(variant_module_path, variant_module_edits.edits)
+                builder = builder.changes(variant_module_path, variant_module_edits.edits);
             }
-        };
+        }
 
         let mut action = Vec::with_capacity(1);
         builder.push_to(&mut action);
@@ -7289,6 +7299,7 @@ impl<'a, IO> GenerateVariant<'a, IO> {
             arguments_types,
             given_arguments,
             module_name,
+            type_: custom_type,
             end_position,
             type_braces,
             variant_start: function_name_location.start,
@@ -7371,7 +7382,7 @@ impl<'a, IO> GenerateVariant<'a, IO> {
             current_module_edits.insert(insert_positions, new_text);
         } else {
             // We need to qualify the variant that triggered the code action!
-            current_module_edits.insert(variant_start, format!("{variant_module_name}."))
+            current_module_edits.insert(variant_start, format!("{variant_module_name}."));
         }
     }
 }
@@ -7787,7 +7798,7 @@ impl<'a> ConvertToFunctionCall<'a> {
             // missing parentheses:
             // `[1, 2] |> length` becomes `length([1, 2])`
             PipelineAssignmentKind::FunctionCall => {
-                self.edits.insert(call.end, format!("({first_value_text})"))
+                self.edits.insert(call.end, format!("({first_value_text})"));
             }
 
             // When the piped value is inserted as the first argument there's two
@@ -7808,7 +7819,7 @@ impl<'a> ConvertToFunctionCall<'a> {
             // have to insert the value after the `echo` with no parentheses:
             // `a |> echo` is rewritten as `echo a`.
             PipelineAssignmentKind::Echo => {
-                self.edits.insert(call.end, format!(" {first_value_text}"))
+                self.edits.insert(call.end, format!(" {first_value_text}"));
             }
         }
 
@@ -8205,7 +8216,7 @@ impl<'a> ConvertToPipe<'a> {
             // In all other cases we're piping something that is not the first
             // argument so we just replace it with an `_`.
             _ => self.edits.replace(arg.location, "_".into()),
-        };
+        }
 
         // Finally we can add the argument that was removed as the first step
         // of the newly defined pipeline.
@@ -8434,7 +8445,7 @@ impl<'a> InterpolateString<'a> {
             }
 
             StringInterpolation::SplitString { .. } => return vec![],
-        };
+        }
 
         if self.string_literal_position == StringLiteralPosition::FirstPipelineStep {
             self.edits.insert(string_location.end, " }".into());
@@ -8608,7 +8619,7 @@ impl<'a> FillUnusedFields<'a> {
         // Do not suggest this code action if there's no ignored fields at all.
         if positional.is_empty() && labelled.is_empty() {
             return vec![];
-        };
+        }
 
         // We add all the missing positional arguments before the first
         // labelled one (and so after all the already existing positional ones).
@@ -8659,10 +8670,10 @@ impl<'a> FillUnusedFields<'a> {
             // This way we also get rid of any comma separating the last argument
             // and the spread to be removed.
             self.edits
-                .delete(SrcSpan::new(delete_start, spread_location.end))
+                .delete(SrcSpan::new(delete_start, spread_location.end));
         } else {
             // Otherwise we just delete the spread.
-            self.edits.delete(spread_location)
+            self.edits.delete(spread_location);
         }
 
         let mut action = Vec::with_capacity(1);
@@ -8713,7 +8724,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillUnusedFields<'ast> {
                 last_argument_end,
                 spread_location: *spread_location,
             });
-        };
+        }
 
         ast::visit::visit_typed_pattern(self, pattern);
     }
@@ -8757,7 +8768,7 @@ impl<'a> RemoveEchos<'a> {
         // the module
         if !self.is_hovering_echo {
             return vec![];
-        };
+        }
 
         for span in self.echo_spans_to_delete {
             self.edits.delete(span);
@@ -9072,7 +9083,7 @@ impl<'ast> ast::visit::Visit<'ast> for WrapInBlock<'ast> {
             | TypedExpr::Invalid { .. } => {
                 self.selected_expression = Some(assignment.value.location());
             }
-        };
+        }
         ast::visit::visit_typed_assignment(self, assignment);
     }
 
@@ -9089,7 +9100,7 @@ impl<'ast> ast::visit::Visit<'ast> for WrapInBlock<'ast> {
         // To avoid wrapping the same expression in multiple, nested blocks.
         if !matches!(clause.then, TypedExpr::Block { .. }) {
             self.selected_expression = Some(clause.then.location());
-        };
+        }
 
         ast::visit::visit_typed_clause(self, clause);
     }
@@ -9157,9 +9168,9 @@ impl<'a> FixBinaryOperation<'a> {
         } else if operator.is_float_operator() && left.is_int() && right.is_int() {
             self.fix = operator
                 .int_equivalent()
-                .map(|fix| (operator_location, fix))
+                .map(|fix| (operator_location, fix));
         } else if operator == ast::BinOp::AddInt && left.is_string() && right.is_string() {
-            self.fix = Some((operator_location, ast::BinOp::Concatenate))
+            self.fix = Some((operator_location, ast::BinOp::Concatenate));
         }
     }
 }
@@ -9442,9 +9453,9 @@ impl<'a> RemoveUnusedImports<'a> {
                         self.edits.delete(SrcSpan {
                             start: location.start,
                             end: location.end + 1,
-                        })
+                        });
                     } else {
-                        self.edits.delete(*location)
+                        self.edits.delete(*location);
                     }
                 }
 
@@ -9500,7 +9511,7 @@ impl<'a> RemoveUnusedImports<'a> {
                             self.edits.delete(SrcSpan {
                                 start: previous_value.end,
                                 end: location.end,
-                            })
+                            });
                         }
 
                         // In all other cases it means that this is the only
@@ -9613,7 +9624,7 @@ impl<'ast> ast::visit::Visit<'ast> for RemoveBlock<'ast> {
                 ast::Statement::Use(_)
                 | ast::Statement::Assert(_)
                 | ast::Statement::Assignment(_) => {
-                    ast::visit::visit_typed_expr_block(self, location, statements)
+                    ast::visit::visit_typed_expr_block(self, location, statements);
                 }
 
                 ast::Statement::Expression(expr) => match expr {
@@ -9707,7 +9718,7 @@ impl<'ast> ast::visit::Visit<'ast> for RemovePrivateOpaque<'ast> {
             self.opaque_span = Some(SrcSpan {
                 start: custom_type.location.start,
                 end: custom_type.location.start + 7,
-            })
+            });
         }
     }
 }
@@ -9925,8 +9936,8 @@ impl<'a> CollapseNestedCase<'a> {
                             // When it's a list literal, we remove the surrounding brackets.
                             let len = trimmed_contents.len();
                             if let Some(slice) = new_content.trim().get(1..(len - 1)) {
-                                new_content = slice.to_string()
-                            };
+                                new_content = slice.to_string();
+                            }
 
                             *tail_location
                         }
@@ -9984,7 +9995,7 @@ impl<'a> CollapseNestedCase<'a> {
                     let mut pattern_code = code_at(self.module, pattern_location).to_string();
                     if !references_to_matched_variable.is_empty() {
                         pattern_code = format!("{pattern_code} as {}", matched_variable.name());
-                    };
+                    }
                     pattern_with_variable(pattern_code)
                 })
                 .join(" | ");
@@ -9995,10 +10006,10 @@ impl<'a> CollapseNestedCase<'a> {
                     let mut outer_code = code_at(self.module, outer.location()).to_string();
                     let mut inner_code = code_at(self.module, inner.location()).to_string();
                     if ast::BinOp::And.precedence() > outer.precedence() {
-                        outer_code = format!("{{ {outer_code} }}")
+                        outer_code = format!("{{ {outer_code} }}");
                     }
                     if ast::BinOp::And.precedence() > inner.precedence() {
-                        inner_code = format!("{{ {inner_code} }}")
+                        inner_code = format!("{{ {inner_code} }}");
                     }
                     format!(" if {outer_code} && {inner_code}")
                 }
@@ -10123,7 +10134,7 @@ impl<'ast> ast::visit::Visit<'ast> for CollapseNestedCase<'ast> {
             // We're done, there's no need to keep exploring as we know the
             // cursor is over this pattern and it can't be over any other one!
             return;
-        };
+        }
 
         ast::visit::visit_typed_clause(self, clause);
     }
@@ -10328,7 +10339,7 @@ impl<'ast> ast::visit::Visit<'ast> for RemoveUnreachableCaseClauses<'ast> {
                 // // we want the entire branch to be deleted!
                 // }
                 // ```
-                self.clauses_to_delete.push(clause.location())
+                self.clauses_to_delete.push(clause.location());
             } else {
                 // If only some of the variants are unreachable but not all
                 // we want to delete just those.
@@ -10476,7 +10487,7 @@ impl<'a> AddOmittedLabels<'a> {
                 self.edits.insert(call_argument.location.end, ":".into());
             } else {
                 self.edits
-                    .insert(call_argument.location.start, format!("{label}: "))
+                    .insert(call_argument.location.start, format!("{label}: "));
             }
         }
 
@@ -10559,7 +10570,7 @@ impl<'ast> ast::visit::Visit<'ast> for AddOmittedLabels<'ast> {
                 location: argument.location,
                 omitted_label: label,
                 can_use_shorthand_syntax,
-            })
+            });
         }
         self.arguments_and_omitted_labels = Some(omitted_labels);
     }
@@ -10816,7 +10827,7 @@ impl<'a> ExtractFunction<'a> {
                     extracted.parameters,
                     statements.last().type_(),
                     end,
-                )
+                );
             }
             ExtractedValue::Expression(TypedExpr::Fn {
                 type_,
@@ -10836,7 +10847,7 @@ impl<'a> ExtractFunction<'a> {
                         arguments,
                         return_type,
                         end,
-                    )
+                    );
                 } else if arguments.len() == 1 {
                     self.extract_anonymous_function_with_capture_hole(
                         *full_location,
@@ -10845,7 +10856,7 @@ impl<'a> ExtractFunction<'a> {
                         extracted.parameters,
                         return_type,
                         end,
-                    )
+                    );
                 } else {
                     self.extract_anonymous_function_body(
                         location,
@@ -10853,7 +10864,7 @@ impl<'a> ExtractFunction<'a> {
                         extracted.parameters,
                         return_type,
                         end,
-                    )
+                    );
                 }
             }
             ExtractedValue::Expression(expression) => {
@@ -10873,7 +10884,7 @@ impl<'a> ExtractFunction<'a> {
                     extracted.parameters,
                     expression_type,
                     end,
-                )
+                );
             }
             ExtractedValue::Statements {
                 location,
@@ -10894,8 +10905,8 @@ impl<'a> ExtractFunction<'a> {
                         extracted.parameters,
                         extracted.returned_variables,
                         end,
-                    )
-                };
+                    );
+                }
             }
 
             ExtractedValue::Use {
@@ -11753,7 +11764,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
             && position_within(self.params.range.end, final_step_range)
         {
             extracted_function.try_add_pipeline_step(finally.type_(), finally.location());
-        };
+        }
 
         self.visit_typed_expr(finally);
         self.previous_pipeline_assignment_type = None;
@@ -11776,7 +11787,7 @@ impl<'ast> ast::visit::Visit<'ast> for ExtractFunction<'ast> {
                 }));
             }
             Some(extracted_function) => {
-                extracted_function.try_add_pipeline_step(assignment.type_(), assignment.location)
+                extracted_function.try_add_pipeline_step(assignment.type_(), assignment.location);
             }
         }
         ast::visit::visit_typed_pipeline_assignment(self, assignment);
@@ -12141,7 +12152,7 @@ impl<'ast> ast::visit::Visit<'ast> for MergeCaseBranches<'ast> {
         }
 
         if let result @ Some(_) = self.select_mergeable_branches(clauses) {
-            self.patterns_to_merge = result
+            self.patterns_to_merge = result;
         }
 
         // We still need to visit the case expression in case we want to apply
@@ -12359,7 +12370,7 @@ impl<'ast> ast::visit::Visit<'ast> for ReplaceUnderscoreWithType<'ast> {
             self.hovered_hole = Some(HoveredHole {
                 type_,
                 location: *location,
-            })
+            });
         }
     }
 }
@@ -12689,7 +12700,7 @@ impl<'a> UnwrapAnonymousFunction<'a> {
             outer_function_body_start: outer_body.start,
             inner_function: *call_location,
             inner_function_arguments_start: *arguments_start,
-        })
+        });
     }
 }
 
@@ -12718,7 +12729,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnwrapAnonymousFunction<'ast> {
             arguments,
             body,
             return_annotation,
-        )
+        );
     }
 }
 
@@ -12981,9 +12992,9 @@ impl<'a> ConvertBetweenDocAndRegularComment<'a> {
 
     pub fn code_actions(self) -> Vec<CodeAction> {
         let line = self.params.range.start.line;
-        let num_slashes = self
-            .count_leading_slashes(line)
-            .expect("Line number should be valid");
+        let Some(num_slashes) = self.count_leading_slashes(line) else {
+            return vec![];
+        };
 
         if !(2..=4).contains(&num_slashes) {
             return vec![];
@@ -13001,7 +13012,7 @@ impl<'a> ConvertBetweenDocAndRegularComment<'a> {
         }
 
         let comment = match num_slashes {
-            2 if self.is_module_comment(start_line, end_line) => "////",
+            2 if self.can_be_module_comment(start_line, end_line) => "////",
             2 if self.can_have_doc_comment(end_line) => "///",
             3 | 4 => "//",
             _ => return vec![],
@@ -13009,10 +13020,10 @@ impl<'a> ConvertBetweenDocAndRegularComment<'a> {
 
         let mut edits = TextEdits::new(self.lines);
         for line in start_line..=end_line {
-            let start = next_nonwhitespace(
-                &self.module.code,
-                self.line_start(line).expect("Line number should be valid"),
-            );
+            let Some(line_start) = self.line_start(line) else {
+                return vec![];
+            };
+            let start = next_nonwhitespace(&self.module.code, line_start);
             edits.replace(SrcSpan::new(start, start + num_slashes), comment.to_owned());
         }
 
@@ -13047,21 +13058,20 @@ impl<'a> ConvertBetweenDocAndRegularComment<'a> {
     }
 
     /// Find the last line in the range that is part of the same comment.
-    fn find_comment_edge(&self, range: impl Iterator<Item = u32>, num_slashes: u32) -> Option<u32> {
-        range
-            .take_while(|&i| {
-                self.count_leading_slashes(i)
+    fn find_comment_edge(&self, lines: impl Iterator<Item = u32>, num_slashes: u32) -> Option<u32> {
+        lines
+            .take_while(|&line| {
+                self.count_leading_slashes(line)
                     .is_some_and(|n| n == num_slashes)
             })
             .last()
     }
 
-    fn is_module_comment(&self, start_line: u32, end_line: u32) -> bool {
-        previous_nonwhitespace(
-            &self.module.code,
-            self.line_start(start_line)
-                .expect("Line number should be valid"),
-        ) == 0
+    fn can_be_module_comment(&self, start_line: u32, end_line: u32) -> bool {
+        let Some(line_start) = self.line_start(start_line) else {
+            return false;
+        };
+        previous_nonwhitespace(&self.module.code, line_start) == 0
             && self
                 .line_start(end_line + 1)
                 .is_none_or(|position| self.module.extra.empty_lines.contains(&position))
@@ -13069,33 +13079,176 @@ impl<'a> ConvertBetweenDocAndRegularComment<'a> {
 
     /// Check if the comment is before a node that can have a doc comment, e.g. a function.
     fn can_have_doc_comment(&self, end_line: u32) -> bool {
-        self.line_start(end_line + 1).is_some_and(|position| {
-            let next_node = next_nonwhitespace(&self.module.code, position);
-            let definitions = &self.module.ast.definitions;
-            definitions
-                .functions
+        let Some(position) = self.line_start(end_line + 1) else {
+            return false;
+        };
+
+        let next_node = next_nonwhitespace(&self.module.code, position);
+        let definitions = &self.module.ast.definitions;
+        definitions
+            .functions
+            .iter()
+            .any(|function| function.location.contains(next_node))
+            || definitions
+                .constants
                 .iter()
-                .any(|function| function.location.contains(next_node))
-                || definitions
-                    .constants
-                    .iter()
-                    .any(|constant| constant.location.contains(next_node))
-                || definitions
-                    .type_aliases
-                    .iter()
-                    .any(|type_alias| type_alias.location.contains(next_node))
-                || definitions.custom_types.iter().any(|custom_type| {
-                    custom_type.location.contains(next_node)
-                        || custom_type.constructors.iter().any(|constructor| {
-                            constructor.location.contains(next_node)
-                                || constructor.arguments.iter().any(|argument| {
-                                    argument
-                                        .label
-                                        .as_ref()
-                                        .is_some_and(|label| label.0.contains(next_node))
-                                })
-                        })
-                })
-        })
+                .any(|constant| constant.location.contains(next_node))
+            || definitions
+                .type_aliases
+                .iter()
+                .any(|type_alias| type_alias.location.contains(next_node))
+            || definitions.custom_types.iter().any(|custom_type| {
+                custom_type.location.contains(next_node)
+                    || custom_type.constructors.iter().any(|constructor| {
+                        constructor.location.contains(next_node)
+                            || constructor.arguments.iter().any(|argument| {
+                                argument
+                                    .label
+                                    .as_ref()
+                                    .is_some_and(|label| label.0.contains(next_node))
+                            })
+                    })
+            })
+    }
+}
+
+/// Code action to convert integers to a different base from the current one.
+///
+pub struct ConvertIntToDifferentBase<'a> {
+    module: &'a Module,
+    params: &'a CodeActionParams,
+    edits: TextEdits<'a>,
+    /// This is gonna hold the base the hovered integer is written in, and its
+    /// decimal value. And its position in the source code.
+    int: Option<(SrcSpan, Base, BigInt)>,
+}
+
+enum Base {
+    Binary,
+    Octal,
+    Decimal,
+    Hexadecimal,
+}
+
+impl<'a> ConvertIntToDifferentBase<'a> {
+    pub fn new(
+        module: &'a Module,
+        line_numbers: &'a LineNumbers,
+        params: &'a CodeActionParams,
+    ) -> Self {
+        Self {
+            module,
+            params,
+            edits: TextEdits::new(line_numbers),
+            int: None,
+        }
+    }
+
+    pub fn code_actions(mut self) -> Vec<CodeAction> {
+        self.visit_typed_module(&self.module.ast);
+
+        let Some((location, base, int)) = self.int else {
+            return vec![];
+        };
+
+        let missing_bases = match base {
+            Base::Binary => [Base::Decimal, Base::Octal, Base::Hexadecimal],
+            Base::Octal => [Base::Decimal, Base::Binary, Base::Hexadecimal],
+            Base::Decimal => [Base::Binary, Base::Octal, Base::Hexadecimal],
+            Base::Hexadecimal => [Base::Decimal, Base::Binary, Base::Octal],
+        };
+
+        let is_negative = int < BigInt::ZERO;
+        let int = if is_negative { int.neg() } else { int };
+
+        let mut action = Vec::with_capacity(3);
+        for base in missing_bases {
+            let minus = if is_negative { "-" } else { "" };
+            let converted_number = match base {
+                Base::Binary => format!("{minus}0b{:b}", int),
+                Base::Octal => format!("{minus}0o{:o}", int),
+                Base::Hexadecimal => format!("{minus}0x{:x}", int),
+                Base::Decimal => {
+                    format!("{minus}{}", format_int_with_thousands_separator(&int))
+                }
+            };
+            let title = format!("Convert to `{converted_number}`");
+            self.edits.replace(location, converted_number);
+
+            CodeActionBuilder::new(&title)
+                .kind(CodeActionKind::RefactorRewrite)
+                .changes(
+                    self.params.text_document.uri.clone(),
+                    self.edits.edits.drain(..).collect(),
+                )
+                .preferred(false)
+                .push_to(&mut action);
+        }
+        action
+    }
+}
+
+fn format_int_with_thousands_separator(int: &BigInt) -> String {
+    if int <= &BigInt::from(9999) {
+        return int.to_string();
+    }
+
+    // We get chunks of three digits. If we start from 1234567
+    // we will have `765`, `432`, `1`
+    (int.to_string().chars().rev().chunks(3).into_iter())
+        // Each chunk is turned into a string and those are joined with a
+        // separator.
+        .map(|chunk| chunk.collect::<EcoString>())
+        .join("_")
+        // And finally reverse everything to bring it back to normal, the number
+        // is spelled in reverse right now!
+        .chars()
+        .rev()
+        .collect()
+}
+
+impl<'ast> ast::visit::Visit<'ast> for ConvertIntToDifferentBase<'ast> {
+    fn visit_typed_function(&mut self, fun: &'ast TypedFunction) {
+        // We skip all the functions the cursor is not inside of.
+        // This is gonna make it faster to find the int we're hovering, if any.
+        let fun_range = self.edits.src_span_to_lsp_range(fun.full_location());
+        if within(self.params.range, fun_range) {
+            ast::visit::visit_typed_function(self, fun);
+        }
+    }
+
+    fn visit_typed_expr(&mut self, expr: &'ast TypedExpr) {
+        // We skip all the expression's the cursor is not inside of.
+        // This is gonna make it faster to find the int we're hovering, if any.
+        let expression_range = self.edits.src_span_to_lsp_range(expr.location());
+        if within(self.params.range, expression_range) {
+            ast::visit::visit_typed_expr(self, expr);
+        }
+    }
+
+    fn visit_typed_expr_int(
+        &mut self,
+        location: &'ast SrcSpan,
+        _type_: &'ast Arc<Type>,
+        string_value: &'ast EcoString,
+        int_value: &'ast BigInt,
+    ) {
+        let int_range = self.edits.src_span_to_lsp_range(*location);
+        if !within(self.params.range, int_range) {
+            return;
+        }
+
+        let string_value = string_value.trim_start_matches('-');
+        let base = if string_value.starts_with("0b") {
+            Base::Binary
+        } else if string_value.starts_with("0o") {
+            Base::Octal
+        } else if string_value.starts_with("0x") {
+            Base::Hexadecimal
+        } else {
+            Base::Decimal
+        };
+
+        self.int = Some((*location, base, int_value.clone()))
     }
 }

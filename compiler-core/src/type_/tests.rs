@@ -99,9 +99,16 @@ macro_rules! assert_module_error {
 
         let mut output = String::from("----- SOURCE CODE\n");
         for (name, src) in [$(($name, $module_src)),*] {
-            output.push_str(&format!("-- {name}.gleam\n{src}\n\n"));
+            output.push_str("-- ");
+            output.push_str(name);
+            output.push_str(".gleam\n");
+            output.push_str(src);
+            output.push_str("\n\n");
         }
-        output.push_str(&format!("-- main.gleam\n{}\n\n----- ERROR\n{error}", $src));
+        output.push_str("-- main.gleam\n");
+        output.push_str($src);
+        output.push_str("\n\n----- ERROR\n");
+        output.push_str(&error);
         insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 
@@ -115,9 +122,16 @@ macro_rules! assert_module_error {
 
         let mut output = String::from("----- SOURCE CODE\n");
         for (name, src) in [$(($name, $module_src)),*] {
-            output.push_str(&format!("-- {name}.gleam\n{src}\n\n"));
+            output.push_str("-- ");
+            output.push_str(name);
+            output.push_str(".gleam\n");
+            output.push_str(src);
+            output.push_str("\n\n");
         }
-        output.push_str(&format!("-- main.gleam\n{}\n\n----- ERROR\n{error}", $src));
+        output.push_str("-- main.gleam\n");
+        output.push_str($src);
+        output.push_str("\n\n----- ERROR\n");
+        output.push_str(&error);
         insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 }
@@ -243,13 +257,21 @@ macro_rules! assert_warning {
 
         let mut output = String::from("----- SOURCE CODE\n");
         for (name, src) in [$(($name, $module_src)),*] {
-            output.push_str(&format!("-- {name}.gleam\n{src}\n\n"));
+            output.push_str("-- ");
+            output.push_str(name);
+            output.push_str(".gleam\n");
+            output.push_str(src);
+            output.push_str("\n\n");
         }
-        output.push_str(&format!("-- main.gleam\n{}\n\n----- WARNING\n{warning}", $src));
+
+        output.push_str("-- main.gleam\n");
+        output.push_str($src);
+        output.push_str("\n\n----- WARNING\n");
+        output.push_str(&warning);
         insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 
-    ($(($package:expr, $name:expr, $module_src:literal)),+, $src:expr) => {
+    ($(($package:expr, $name:expr, $module_src:literal)),+, $src:literal $(,)?) => {
         let warning = $crate::type_::tests::get_printed_warnings(
             $src,
             vec![$(($package, $name, $module_src)),*],
@@ -260,9 +282,17 @@ macro_rules! assert_warning {
 
         let mut output = String::from("----- SOURCE CODE\n");
         for (name, src) in [$(($name, $module_src)),*] {
-            output.push_str(&format!("-- {name}.gleam\n{src}\n\n"));
+            output.push_str("-- ");
+            output.push_str(name);
+            output.push_str(".gleam\n");
+            output.push_str(src);
+            output.push_str("\n\n");
         }
-        output.push_str(&format!("-- main.gleam\n{}\n\n----- WARNING\n{warning}", $src));
+
+        output.push_str("-- main.gleam\n");
+        output.push_str($src);
+        output.push_str("\n\n----- WARNING\n");
+        output.push_str(&warning);
         insta::assert_snapshot!(insta::internals::AutoName, output, $src);
     };
 }
@@ -344,7 +374,7 @@ macro_rules! assert_no_warnings {
         let warnings = $crate::type_::tests::get_warnings($src, vec![], crate::build::Target::Erlang, None);
         assert_eq!(warnings, vec![]);
     };
-    ($(($name:expr, $module_src:literal)),+, $src:expr $(,)?) => {
+    ($(($name:expr, $module_src:literal)),+, $src:literal $(,)?) => {
         let warnings = $crate::type_::tests::get_warnings(
             $src,
             vec![$(("thepackage", $name, $module_src)),*],
@@ -353,7 +383,7 @@ macro_rules! assert_no_warnings {
         );
         assert_eq!(warnings, vec![]);
     };
-    ($(($package:expr, $name:expr, $module_src:literal)),+, $src:expr $(,)?) => {
+    ($(($package:expr, $name:expr, $module_src:literal)),+, $src:literal $(,)?) => {
         let warnings = $crate::type_::tests::get_warnings(
             $src,
             vec![$(($package, $name, $module_src)),*],

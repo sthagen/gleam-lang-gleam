@@ -200,7 +200,11 @@ fn compile_documentation(
 
     output.push_str("---- SOURCE CODE\n");
     for (_package, name, src) in modules {
-        output.push_str(&format!("-- {name}.gleam\n{src}\n\n"));
+        output.push_str("-- ");
+        output.push_str(name);
+        output.push_str(".gleam\n");
+        output.push_str(src);
+        output.push_str("\n\n");
     }
     output.push_str("-- ");
     output.push_str(module_name);

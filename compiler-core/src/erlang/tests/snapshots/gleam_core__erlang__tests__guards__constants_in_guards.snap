@@ -21,8 +21,7 @@ pub fn main(arg) {
 
 ----- COMPILED ERLANG
 -module(my@mod).
--compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
--define(FILEPATH, "project/test/my/mod.gleam").
+-compile([no_auto_import, nowarn_ignored, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -export([main/1]).
 
 -file("project/test/my/mod.gleam", 8).
@@ -30,7 +29,7 @@ pub fn main(arg) {
 main(Arg) ->
     _ = [1, 2, 3],
     case Arg of
-        {W, X, Y, Z} when (((W =:= {1, 2.0, <<"3"/utf8>>}) andalso (X =:= <<"constant value"/utf8>>)) andalso (Y > 3.14)) andalso (Z =:= 42) ->
+        {W, X, Y, Z} when (((W =:= {1, 2.0, ~"3"}) andalso (X =:= ~"constant value")) andalso (Y > 3.14)) andalso (Z =:= 42) ->
             1;
 
         _ ->

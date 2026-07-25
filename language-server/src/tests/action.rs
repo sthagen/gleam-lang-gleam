@@ -193,7 +193,6 @@ const INTERPOLATE_STRING: &str = "Interpolate string";
 const FILL_UNUSED_FIELDS: &str = "Fill unused fields";
 const REMOVE_ALL_ECHOS_FROM_THIS_MODULE: &str = "Remove all `echo`s from this module";
 const WRAP_IN_BLOCK: &str = "Wrap in block";
-const GENERATE_VARIANT: &str = "Generate variant";
 const REMOVE_BLOCK: &str = "Remove block";
 const REMOVE_OPAQUE_FROM_PRIVATE_TYPE: &str = "Remove opaque from private type";
 const COLLAPSE_NESTED_CASE: &str = "Collapse nested case";
@@ -210,6 +209,10 @@ const DISCARD_UNUSED_VARIABLE: &str = "Discard unused variable";
 const ADD_EXTRA_PARENTHESES: &str = "Add extra parentheses";
 const CONVERT_TO_DOCUMENTATION_COMMENT: &str = "Convert to documentation comment";
 const CONVERT_TO_REGULAR_COMMENT: &str = "Convert to regular comment";
+
+fn generate_variant_message(type_name: &str) -> String {
+    format!("Generate `{type_name}` variant")
+}
 
 macro_rules! assert_code_action {
     ($title:expr, $code:literal, $range_selector:expr $(,)?) => {
@@ -248,7 +251,8 @@ macro_rules! assert_code_action {
         );
 
         if !file_operations.is_empty() {
-            output.push_str(&format!("\n----- FILE OPERATIONS -----\n{file_operations}"));
+            output.push_str("\n----- FILE OPERATIONS -----\n");
+            output.push_str(&file_operations);
         }
 
         insta::assert_snapshot!(insta::internals::AutoName, output, src);
@@ -291,6 +295,23 @@ macro_rules! assert_no_code_actions {
         );
         assert_eq!(expected, result);
     };
+
+    ($title:expr, $code:literal, $range_selector:expr $(,)?) => {
+        let project = TestProject::for_source($code);
+        assert_no_code_actions!($title, project, $range_selector);
+    };
+
+    ($title:expr, $project:expr, $range_selector:expr $(,)?) => {
+        let expected: Vec<lsp_types::CodeAction> = vec![];
+        let result = actions_with_title(
+            vec![$title],
+            &$project,
+            Origin::Src,
+            LSP_TEST_ROOT_PACKAGE_NAME,
+            $range_selector
+        );
+        assert_eq!(expected, result);
+    };
 }
 
 #[test]
@@ -322,7 +343,7 @@ pub fn main() {
 #[test]
 fn generate_variant_with_fields_in_same_module() {
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         r#"
 pub type Wibble {
   Wibble
@@ -338,7 +359,7 @@ pub fn main() -> Wibble {
 #[test]
 fn generate_variant_with_no_fields_in_same_module() {
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         r#"
 pub type Wibble {
   Wibble
@@ -354,7 +375,7 @@ pub fn main() -> Wibble {
 #[test]
 fn generate_variant_with_labels_in_same_module() {
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         r#"
 pub type Wibble {
   Wibble
@@ -370,7 +391,7 @@ pub fn main() -> Wibble {
 #[test]
 fn generate_variant_from_pattern_with_fields() {
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         r#"
 pub type Wibble {
   Wibble
@@ -390,7 +411,7 @@ pub fn main() -> Wibble {
 #[test]
 fn generate_variant_from_pattern_with_labelled_fields() {
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         r#"
 pub type Wibble {
   Wibble
@@ -410,7 +431,7 @@ pub fn main() -> Wibble {
 #[test]
 fn generate_variant_from_pattern_with_no_fields() {
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         r#"
 pub type Wibble {
   Wibble
@@ -440,7 +461,7 @@ pub fn new() -> other.Wibble { todo }
 "#;
 
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("other.Wibble"),
         TestProject::for_source(src).add_module("other", "pub type Wibble"),
         find_position_of("Wobble").to_selection()
     );
@@ -460,7 +481,7 @@ pub fn new() -> other.Wibble { todo }
 "#;
 
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("other.Wibble"),
         TestProject::for_source(src).add_module(
             "other",
             "pub type Wibble {
@@ -485,7 +506,7 @@ pub fn new() -> other.Wibble { todo }
 "#;
 
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("other.Wibble"),
         TestProject::for_source(src).add_module(
             "other",
             "pub type Wibble {
@@ -508,7 +529,7 @@ pub fn main() -> other.Wibble {
 pub fn new() -> other.Wibble { todo }
 "#;
     assert_code_action!(
-        GENERATE_VARIANT,
+        &generate_variant_message("other.Wibble"),
         TestProject::for_source(src).add_module("other", "pub type Wibble"),
         find_position_of("Wobble").to_selection()
     );
@@ -517,7 +538,7 @@ pub fn new() -> other.Wibble { todo }
 #[test]
 fn do_not_generate_variant_if_one_with_the_same_name_exists() {
     assert_no_code_actions!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         r#"
 pub fn main() -> Wibble {
   let assert Wobble = new()
@@ -545,7 +566,7 @@ pub fn main() -> Wibble {
 pub fn new() -> Wibble { todo }
 "#;
     assert_no_code_actions!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         TestProject::for_source(src).add_module("other", "pub type Wibble { Wobble(String) }"),
         find_position_of("Wobble").to_selection()
     );
@@ -563,7 +584,7 @@ pub fn main() -> Wibble {
 pub fn new() -> Wibble { todo }
 "#;
     assert_no_code_actions!(
-        GENERATE_VARIANT,
+        &generate_variant_message("Wibble"),
         TestProject::for_source(src).add_module("other", "pub type Wibble { Wobble(String) }"),
         find_position_of("Wobble").to_selection()
     );
@@ -15599,5 +15620,229 @@ fn convert_to_regular_comment_no_affect_other_comment() {
 
 /// wobble",
         find_position_of("wibble").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_decimal_to_binary() {
+    assert_code_action!(
+        "Convert to `0b1101111`",
+        "pub fn main() { 111 }",
+        find_position_of("111").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_decimal_to_octal() {
+    assert_code_action!(
+        "Convert to `0o157`",
+        "pub fn main() { 111 }",
+        find_position_of("111").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_decimal_to_hexadecimal() {
+    assert_code_action!(
+        "Convert to `0x6f`",
+        "pub fn main() { 111 }",
+        find_position_of("111").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_binary_to_octal() {
+    assert_code_action!(
+        "Convert to `0o157`",
+        "pub fn main() { 0b1101111 }",
+        find_position_of("0b1101111").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_binary_to_decimal() {
+    assert_code_action!(
+        "Convert to `111`",
+        "pub fn main() { 0b1101111 }",
+        find_position_of("0b1101111").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_binary_to_hexadecimal() {
+    assert_code_action!(
+        "Convert to `0x6f`",
+        "pub fn main() { 0b1101111 }",
+        find_position_of("0b1101111").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_octal_to_binary() {
+    assert_code_action!(
+        "Convert to `0b1101111`",
+        "pub fn main() { 0o157 }",
+        find_position_of("0o157").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_octal_to_decimal() {
+    assert_code_action!(
+        "Convert to `111`",
+        "pub fn main() { 0o157 }",
+        find_position_of("0o157").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_octal_to_hexadecimal() {
+    assert_code_action!(
+        "Convert to `0x6f`",
+        "pub fn main() { 0o157 }",
+        find_position_of("0o157").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_hexadecimal_to_binary() {
+    assert_code_action!(
+        "Convert to `0b1101111`",
+        "pub fn main() { 0x6f }",
+        find_position_of("0x6f").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_hexadecimal_to_octal() {
+    assert_code_action!(
+        "Convert to `0o157`",
+        "pub fn main() { 0x6f }",
+        find_position_of("0x6f").to_selection()
+    );
+}
+
+#[test]
+fn convert_int_hexadecimal_to_decimal() {
+    assert_code_action!(
+        "Convert to `111`",
+        "pub fn main() { 0x6f }",
+        find_position_of("0x6f").to_selection()
+    );
+}
+#[test]
+fn convert_negative_int_decimal_to_binary() {
+    assert_code_action!(
+        "Convert to `-0b1101111`",
+        "pub fn main() { -111 }",
+        find_position_of("111").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_decimal_to_octal() {
+    assert_code_action!(
+        "Convert to `-0o157`",
+        "pub fn main() { -111 }",
+        find_position_of("111").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_decimal_to_hexadecimal() {
+    assert_code_action!(
+        "Convert to `-0x6f`",
+        "pub fn main() { -111 }",
+        find_position_of("111").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_binary_to_octal() {
+    assert_code_action!(
+        "Convert to `-0o157`",
+        "pub fn main() { -0b1101111 }",
+        find_position_of("0b1101111").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_binary_to_decimal() {
+    assert_code_action!(
+        "Convert to `-111`",
+        "pub fn main() { -0b1101111 }",
+        find_position_of("0b1101111").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_binary_to_hexadecimal() {
+    assert_code_action!(
+        "Convert to `-0x6f`",
+        "pub fn main() { -0b1101111 }",
+        find_position_of("0b1101111").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_octal_to_binary() {
+    assert_code_action!(
+        "Convert to `-0b1101111`",
+        "pub fn main() { -0o157 }",
+        find_position_of("0o157").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_octal_to_decimal() {
+    assert_code_action!(
+        "Convert to `-111`",
+        "pub fn main() { -0o157 }",
+        find_position_of("0o157").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_octal_to_hexadecimal() {
+    assert_code_action!(
+        "Convert to `-0x6f`",
+        "pub fn main() { -0o157 }",
+        find_position_of("0o157").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_hexadecimal_to_binary() {
+    assert_code_action!(
+        "Convert to `-0b1101111`",
+        "pub fn main() { -0x6f }",
+        find_position_of("0x6f").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_hexadecimal_to_octal() {
+    assert_code_action!(
+        "Convert to `-0o157`",
+        "pub fn main() { -0x6f }",
+        find_position_of("0x6f").to_selection()
+    );
+}
+
+#[test]
+fn convert_negative_int_hexadecimal_to_decimal() {
+    assert_code_action!(
+        "Convert to `-111`",
+        "pub fn main() { -0x6f }",
+        find_position_of("0x6f").to_selection()
+    );
+}
+
+#[test]
+fn convert_to_int_has_nicely_separated_digits() {
+    assert_code_action!(
+        "Convert to `1_234_567`",
+        "pub fn main() { 0b100101101011010000111 }",
+        find_position_of("0b100101101011010000111").to_selection()
     );
 }

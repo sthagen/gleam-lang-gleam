@@ -171,10 +171,13 @@ impl DerivationTreePrinter {
                 .ranges_between(previous, next)
                 .expect("path edge is in the graph");
 
-            message.push_str(&format!(
-                "\n    - {previous_name} requires {next_name} {}",
-                pretty_range(next_range)
-            ));
+            message.push_str("\n    - ");
+            message.push_str(previous_name);
+            message.push_str(" requires ");
+            message.push_str(next_name);
+            message.push(' ');
+            message.push_str(&pretty_range(next_range));
+
             previous = next;
         }
         message
@@ -336,7 +339,7 @@ fn simplify_derivation_tree_outer(
                         package_range.union(other_package_range),
                         required_package.clone(),
                         required_package_range.union(other_required_package_range),
-                    ))
+                    ));
                 }
 
                 _ => {}

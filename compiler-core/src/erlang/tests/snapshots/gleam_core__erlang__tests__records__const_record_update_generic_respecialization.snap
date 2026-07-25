@@ -18,8 +18,7 @@ pub fn main() {
 
 ----- COMPILED ERLANG
 -module(my@mod).
--compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
--define(FILEPATH, "project/test/my/mod.gleam").
+-compile([no_auto_import, nowarn_ignored, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -export([main/0]).
 -export_type([box/1]).
 
@@ -28,4 +27,4 @@ pub fn main() {
 -file("project/test/my/mod.gleam", 9).
 -spec main() -> {box(integer()), box(binary())}.
 main() ->
-    {{box, <<"score"/utf8>>, 50}, {box, <<"score"/utf8>>, <<"Hello"/utf8>>}}.
+    {{box, ~"score", 50}, {box, ~"score", ~"Hello"}}.

@@ -24,6 +24,7 @@
     clippy::verbose_file_reads,
     clippy::unnested_or_patterns,
     clippy::default_trait_access,
+    clippy::format_push_string,
     rust_2018_idioms,
     missing_debug_implementations,
     missing_copy_implementations,
@@ -50,7 +51,8 @@
     clippy::match_single_binding,
     clippy::inconsistent_struct_constructor,
     clippy::assign_op_pattern,
-    clippy::len_without_is_empty
+    clippy::len_without_is_empty,
+    clippy::let_unit_value
 )]
 
 #[cfg(test)]
@@ -148,6 +150,12 @@ pub struct TreeOptions {
 )]
 pub enum Command {
     /// Build the project
+    ///
+    /// This command optionally accepts the environment variable
+    /// `HEXPM_READ_API_KEY`, which can hold a Hex API key to authenticate
+    /// with Hex with a higher rate limit.
+    ///
+    #[command(verbatim_doc_comment)]
     Build {
         /// Consider the build failed if the package contains any warnings
         #[arg(long)]
@@ -273,10 +281,20 @@ pub enum Command {
     /// and for applications made of multiple packages in a single version
     /// control repository.
     ///
+    /// This command optionally accepts the environment variable
+    /// `HEXPM_READ_API_KEY`, which can hold a Hex API key to authenticate
+    /// with Hex with a higher rate limit.
+    ///
     #[command(subcommand, verbatim_doc_comment)]
     Deps(Dependencies),
 
     /// Update dependency packages to their latest versions
+    ///
+    /// This command optionally accepts the environment variable
+    /// `HEXPM_READ_API_KEY`, which can hold a Hex API key to authenticate
+    /// with Hex with a higher rate limit.
+    ///
+    #[command(verbatim_doc_comment)]
     Update(UpdateOptions),
 
     /// Work with the Hex package manager

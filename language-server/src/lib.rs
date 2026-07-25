@@ -23,6 +23,7 @@
     clippy::verbose_file_reads,
     clippy::unnested_or_patterns,
     clippy::default_trait_access,
+    clippy::format_push_string,
     rust_2018_idioms,
     missing_debug_implementations,
     missing_copy_implementations,
@@ -52,7 +53,8 @@
     clippy::match_single_binding,
     clippy::match_like_matches_macro,
     clippy::inconsistent_struct_constructor,
-    clippy::len_without_is_empty
+    clippy::len_without_is_empty,
+    clippy::let_unit_value
 )]
 
 mod code_action;
@@ -142,22 +144,22 @@ impl<'a> TextEdits<'a> {
         self.edits.push(TextEdit {
             range: src_span_to_lsp_range(location, self.line_numbers),
             new_text,
-        })
+        });
     }
 
     pub fn insert(&mut self, at: u32, new_text: String) {
-        self.replace(SrcSpan { start: at, end: at }, new_text)
+        self.replace(SrcSpan { start: at, end: at }, new_text);
     }
 
     pub fn delete(&mut self, location: SrcSpan) {
-        self.replace(location, "".to_string())
+        self.replace(location, "".to_string());
     }
 
     fn delete_range(&mut self, range: Range) {
         self.edits.push(TextEdit {
             range,
             new_text: "".into(),
-        })
+        });
     }
 }
 

@@ -3,7 +3,7 @@
 
 [package]
 name = "gleam-language-server"
-version = "1.17.0"
+version = "1.18.0-rc2"
 authors = ["Louis Pilfold <louis@lpil.uk>"]
 edition = "2024"
 license = "Apache-2.0"
@@ -26,6 +26,7 @@ vec1.workspace = true
 serde.workspace = true
 tracing.workspace = true
 toml.workspace = true
+num-bigint.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

@@ -1484,7 +1484,7 @@ your app.src file \"{app_ver}\"."
                         }
                         match program.as_str() {
                             "erl" | "erlc" | "escript" => {
-                                text.push_str(&brew_install("Erlang", "erlang"))
+                                text.push_str(&brew_install("Erlang", "erlang"));
                             }
                             "rebar3" => text.push_str(&brew_install("Rebar3", "rebar3")),
                             "deno" => text.push_str(&brew_install("Deno", "deno")),
@@ -3459,7 +3459,7 @@ but no type in scope with that name."
                     text.push_str(hint.as_str());
                 }
                 UnknownTypeHint::AlternativeTypes(_) => {}
-            };
+            }
 
             Diagnostic {
                 title: "Unknown type".into(),
@@ -3528,9 +3528,18 @@ but no type in scope with that name."
                     // If there are some suggestions about public values in imported
                     // modules put a "did you mean" text after the main message
                     if !possible_modules.is_empty() {
-                        text.push_str("\nDid you mean one of these:\n\n");
+                        let message = if possible_modules.len() == 1 {
+                            "\nDid you mean:\n\n"
+                        } else {
+                            "\nDid you mean one of these:\n\n"
+                        };
+                        text.push_str(message);
                         for module_name in possible_modules {
-                            text.push_str(&format!("  - {module_name}.{name}\n"))
+                            text.push_str("  - ");
+                            text.push_str(module_name);
+                            text.push('.');
+                            text.push_str(name);
+                            text.push('\n');
                         }
                     }
 
@@ -4641,19 +4650,18 @@ here takes {expected_string}.\n"
                     text.push_str(
                         "The only argument that was supplied is \
 the `use` callback function.\n",
-                    )
+                    );
                 } else {
-                    text.push_str(&format!(
-                        "You supplied {supplied_arguments_string} \
-and the final one is the `use` callback function.\n"
-                    ));
+                    text.push_str("You supplied ");
+                    text.push_str(&supplied_arguments_string);
+                    text.push_str(" and the final one is the `use` callback function.\n");
                 }
             } else {
                 text.push_str(
                     "All the arguments have already been supplied, \
 so it cannot take the `use` callback function as a final argument.\n",
-                )
-            };
+                );
+            }
 
             text.push_str("\nSee: https://tour.gleam.run/advanced-features/use/");
 
@@ -5243,7 +5251,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<Cow<'_, str>> {
                 let mut new_lines = break_line(line, width);
                 lines.append(&mut new_lines);
             }
-        };
+        }
     }
 
     lines
@@ -5299,12 +5307,14 @@ fn break_line(line: &str, width: usize) -> Vec<Cow<'_, str>> {
 // breaks word into n lines based on width. Returns list of new lines and remainder
 fn break_word(word: &str, width: usize) -> (Vec<Cow<'_, str>>, &str) {
     let mut new_lines: Vec<Cow<'_, str>> = Vec::new();
-    let (first, mut remainder) = word.split_at(width);
+    // Split on a char boundary so a multi-byte UTF-8 char straddling `width`
+    // doesn't cause a panic.
+    let (first, mut remainder) = word.split_at(word.floor_char_boundary(width));
     new_lines.push(Cow::from(first));
 
     // split remainder until it's small enough
     while remainder.len() > width {
-        let (first, second) = remainder.split_at(width);
+        let (first, second) = remainder.split_at(remainder.floor_char_boundary(width));
         new_lines.push(Cow::from(first));
         remainder = second;
     }

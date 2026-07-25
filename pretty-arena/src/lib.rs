@@ -839,9 +839,9 @@ const_str!(CLOSE_PAREN_MODULO_8_DOCUMENT, ") % 8", 5);
 const_str!(SPACE_GT_EQ_ZERO_DOCUMENT, " >= 0", 5);
 const_str!(SPACE_GT_EQ_SPACE_DOCUMENT, " >= ", 4);
 const_str!(
-    NUMBER_DOT_IS_FINITE_OPEN_PAREN_DOCUMENT,
-    "Number.isFinite(",
-    16
+    GLOBAL_THIS_DOT_NUMBER_DOT_IS_FINITE_OPEN_PAREN_DOCUMENT,
+    "globalThis.Number.isFinite(",
+    27
 );
 const_str!(SPACE_INSTANCE_OF_SPACE_DOCUMENT, " instanceof ", 12);
 const_str!(
@@ -1084,6 +1084,17 @@ impl<'string, 'doc> DocumentArena<'string, 'doc> {
         Document(
             self.documents
                 .alloc(PrintableDocument::ZeroWidthString { string }),
+        )
+    }
+
+    /// Same as the `zero_width_string` but this works with string references.
+    /// This is useful when you already have a string reference and you want to
+    /// avoid allocating a further string.
+    ///
+    pub fn zero_width_str(&'doc self, string: &'string str) -> Document<'string, 'doc> {
+        Document(
+            self.documents
+                .alloc(PrintableDocument::ZeroWidthStr { string }),
         )
     }
 

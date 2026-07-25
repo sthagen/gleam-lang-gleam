@@ -5,7 +5,40 @@
 
 # Changelog
 
-## Unreleased
+## v1.18.0-rc2 - 2026-07-25
+
+### Bug fixes
+
+- Fixed a bug where the compiler would crash when wrapping an error message
+  whose line broke in the middle of a multi-byte UTF-8 character.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where invalid JavaScript would be generated for code which used a
+  bit array pattern to extract a `Float` and had a constructor called `Number`.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where `-0.0` would be encoded incorrectly in 16-bit bit array
+  segments on the JavaScript target.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the formatter would insert underscores into negative
+  hexadecimal, octal, and binary literals, producing code that no longer
+  compiles.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where type annotations on discarded variables in `use` bindings
+  were ignored.
+  ([Francesco Cappetti](https://github.com/frakappa))
+
+- Fixed a bug where the language server would crash on code that contains syntax
+  errors.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where bit array segments would not be compiled properly, using an
+  invalid Erlang segment option.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+## v1.18.0-rc1 - 2026-07-21
 
 ### Compiler
 
@@ -50,6 +83,11 @@
   now points to the attribute itself and explains that it is incomplete.
   ([Asish Kumar](https://github.com/officialasishkumar))
 
+- The "did you mean one of these:" hint is now phrased in singular when there
+  is only one suggestion, additionally multiple suggestions are listed
+  in a consistent alphabetical order.
+  ([Zbyněk Juřica](https://github.com/zbyju))
+
 ### Build tool
 
 - The build tool now generates Hexdocs URLs using the new format of
@@ -86,6 +124,13 @@
 - The error message when failing to decrypt the local Hex API key is now more
   informative and helpful.
   ([Moritz Böhme](https://github.com/MoritzBoehme))
+
+- The build tool can now authenticate requests to Hex with the API key from the
+  `HEXPM_READ_API_KEY` environment variable, when resolving and downloading
+  dependencies. This raises the request rate limit from the stricter per-IP
+  limit to the higher per-user limit, avoiding "rate limit exceeded" errors
+  when building large projects.
+  ([John Downey](https://github.com/jtdowney))
 
 ### Language server
 
@@ -132,6 +177,20 @@
   }
   ```
 
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The language server now offers a code action to rewrite integers in a
+  different base. For example:
+
+  ```gleam
+  pub fn lucky_number() {
+    0b1011
+  //^^^^^^ Hovering this
+  }
+  ```
+
+  The language server is going to show code actions to rewrite it as `11`,
+  `0o13`, or `0xB`.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - The "remove unreachable patterns" code action can now be triggered on
@@ -403,6 +462,10 @@
 
   ([Daniel Venable](https://github.com/DanielVenable))
 
+- The "Generate Variant" code action now includes the name of the type to add
+  the variant to in its title.
+  ([0xda157](https://github.com/0xda157))
+
 ### Formatter
 
 - Performance of the formatter has been improved.
@@ -474,8 +537,27 @@
   definitions for records with a field named `constructor`.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a bug where the compiler would generate invalid code for `let assert`
+  expression with bit array patterns.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would evaluate the numerator and denominator
+  of a division in the wrong order.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would generate Erlang code that raises further
+  warnings for unused values.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - Fixed a bug where the compiler would raise a warning for truncated int
   segments when compiling a function with a JavaScript external.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would produce a confusing error message when
+  writing a constructor with a lowercase name.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where guards with comments wouldn't be formatted properly.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - A `gleam@@compile.erl` is no longer left in the build output of
@@ -527,6 +609,10 @@
   when finding the Gleam files of a package.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
+- Fixed a bug where the compiler would not be able to correctly parse negative
+  numbers written in binary, octal, or hexadecimal base.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
 - The formatter now properly formats binary operations in bit array size
   segments.
   ([Andrey Kozhev](https://github.com/ankddev))
@@ -566,3 +652,7 @@
 - Fixed a bug where an incorrect `package-interface.json` would be generated for
   certain type aliases.
   ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where the compiler would report a module import as unused when
+  its local name matched another imported module's full name.
+  ([John Downey](https://github.com/jtdowney))

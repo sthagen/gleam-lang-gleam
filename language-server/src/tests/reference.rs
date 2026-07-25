@@ -101,18 +101,21 @@ macro_rules! assert_references {
 
         let mut output = String::new();
         for (name, src) in project.root_package_modules.iter() {
-            output.push_str(&format!(
-                "-- {name}.gleam\n{}\n\n",
-                show_references(src, None, result.get(*name).unwrap_or(&Vec::new()))
-            ));
-        }
-        output.push_str(&format!(
-            "-- app.gleam\n{}",
-            show_references(
+            output.push_str("-- ");
+            output.push_str(name);
+            output.push_str(".gleam\n");
+            output.push_str(&show_references(
                 src,
-                Some(position),
-                result.get("app").unwrap_or(&Vec::new())
-            )
+                None,
+                result.get(*name).unwrap_or(&Vec::new()),
+            ));
+            output.push_str("\n\n");
+        }
+        output.push_str("-- app.gleam\n");
+        output.push_str(&show_references(
+            src,
+            Some(position),
+            result.get("app").unwrap_or(&Vec::new()),
         ));
 
         insta::assert_snapshot!(insta::internals::AutoName, output, src);

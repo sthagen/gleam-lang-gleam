@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2021 The Gleam contributors
 
 use camino::{Utf8Path, Utf8PathBuf};
+use std::fmt::Write as _;
 
 use gleam_core::{
     Error, Result,
@@ -88,7 +89,7 @@ pub fn command(paths: &ProjectPaths, packages_to_add: Vec<String>, dev: bool) ->
                     gleam_toml["dependencies"] = toml_edit::table();
                 }
                 gleam_toml["dependencies"][&added_package] = toml_edit::value(range.clone());
-            };
+            }
             manifest_toml["requirements"][&added_package]["version"] = range.into();
         }
     }
@@ -113,10 +114,13 @@ fn read_toml_edit(name: &Utf8Path) -> Result<toml_edit::DocumentMut, Error> {
 
 fn version_to_string(version: &Version) -> String {
     let mut text = String::new();
-    text.push_str(&format!(
+    write!(
+        text,
         "{}.{}.{}",
         version.major, version.minor, version.patch
-    ));
+    )
+    .expect("write to a string");
+
     if !version.pre.is_empty() {
         text.push('-');
         for (i, identifier) in version.pre.iter().enumerate() {
@@ -130,7 +134,8 @@ fn version_to_string(version: &Version) -> String {
         }
     }
     if let Some(build) = version.build.as_ref() {
-        text.push_str(&format!("+{build}"));
+        text.push('+');
+        text.push_str(build);
     }
     text
 }

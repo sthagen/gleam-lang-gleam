@@ -440,31 +440,43 @@ comment so it is not attached to any definition.",
                     type_,
                     names,
                 } => {
-                    let mut text = String::new();
-                    text.push_str(
-                        "\
+                    let (title, text) = match kind {
+                        TodoKind::Keyword => {
+                            let text = "\
 This code will crash if it is run. Be sure to finish it before
-running your program.",
-                    );
-                    let title = match kind {
-                        TodoKind::Keyword => "Todo found",
+running your program.";
+
+                            ("Todo found", text)
+                        }
+
                         TodoKind::EmptyBlock => {
-                            text.push_str(
-                                "
-A block must always contain at least one expression.",
-                            );
-                            "Incomplete block"
+                            let text = "\
+A block must always contain at least one expression.
+
+A todo expression has been used in place of the missing code,
+so this code will crash if it is run. Be sure to finish it before
+running your program.";
+                            ("Incomplete block", text)
                         }
-                        TodoKind::EmptyFunction { .. } => "Unimplemented function",
+                        TodoKind::EmptyFunction { .. } => {
+                            let text = "\
+A function must always have an implementation.
+
+A todo expression has been used in place of the missing body,
+so this code will crash if it is run. Be sure to finish it before
+running your program.";
+                            ("Unimplemented function", text)
+                        }
                         TodoKind::IncompleteUse => {
-                            text.push_str(
-                                "
-A use expression must always be followed by at least one expression.",
-                            );
-                            "Incomplete use expression"
+                            let text = "\
+A use expression must always be followed by at least one expression.
+
+A todo expression has been used in place of the missing code, so
+this code will crash if it is run. Be sure to finish it before
+running your program.";
+                            ("Incomplete use expression", text)
                         }
-                    }
-                    .into();
+                    };
 
                     let hint = if !type_.is_variable() {
                         Some(format!(
@@ -476,8 +488,8 @@ A use expression must always be followed by at least one expression.",
                     };
 
                     Diagnostic {
-                        title,
-                        text,
+                        title: title.into(),
+                        text: text.into(),
                         level: diagnostic::Level::Warning,
                         location: Some(Location {
                             path: path.to_path_buf(),
@@ -1100,16 +1112,20 @@ Either change the pattern or use `panic` to unconditionally fail.",
                     };
                     let mut text = format!("`{name}` is not a function");
                     match arguments {
-                        0 => text.push_str(&format!(
-                            ", you can just write `{name}` instead of `{name}()`."
-                        )),
+                        0 => {
+                            text.push_str(", you can just write `");
+                            text.push_str(name);
+                            text.push_str("` instead of `");
+                            text.push_str(name);
+                            text.push_str("()`.");
+                        }
                         1 => text.push_str(
                             " and will crash before it can do anything with this argument.",
                         ),
                         _ => text.push_str(
                             " and will crash before it can do anything with these arguments.",
                         ),
-                    };
+                    }
 
                     let hint = match arguments {
                         0 => None,
