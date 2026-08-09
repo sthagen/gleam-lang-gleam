@@ -46,6 +46,9 @@ pub enum LexicalErrorType {
         tok: char,
     },
     InvalidTripleEqual,
+    /// Operators that commonly exist in procedural language, but do
+    /// not exist in Gleam. e.g. `++`, `-=`, `/=`, `%=`, `+=`, `*=`
+    UnsupportedProceduralOperator,
     /// A character was encountered that visually looks like a correct
     /// character, but in reality it's some other unicode characters.
     /// For example, a non-breaking-space instead of a regular space.
@@ -950,6 +953,22 @@ impl LexicalError {
                 vec![
                     "Gleam uses `==` to check for equality between two values.".into(),
                     "See: https://tour.gleam.run/basics/equality".into(),
+                ],
+            ),
+            LexicalErrorType::UnsupportedProceduralOperator => (
+                "Unknown operator",
+                vec![
+                    "Gleam is an immutable language and does not have any operators that
+change the value of an existing variable. You might want to create a
+new variable with the same name as the previous one:
+
+    let wibble = 10
+    let blobby = wibble
+    let wibble = wibble + 20
+    assert wibble == 30
+    assert blobby == 10
+"
+                    .into(),
                 ],
             ),
             LexicalErrorType::VisuallySimilarInvalidCharacter { name, correct } => (

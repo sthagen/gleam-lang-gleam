@@ -53,8 +53,11 @@ class Echo$Inspector {
       const index = string.indexOf("e");
       if (index >= 0) {
         return string.slice(0, index) + ".0" + string.slice(index);
+      } else if (globalThis.Number.isInteger(float)) {
+        return string + ".0"
       } else {
-        return string + ".0";
+        // For NaN and Infinity we return it as JS representation.
+        return "//js(" + string + ")";
       }
     }
   }
@@ -66,7 +69,7 @@ class Echo$Inspector {
     if (v === null) return "//js(null)";
     if (v === undefined) return "Nil";
     if (t === "string") return this.#string(v);
-    if (t === "bigint" || globalThis.Number.isInteger(v)) return v.toString();
+    if (t === "bigint" || globalThis.Number.isSafeInteger(v)) return v.toString();
     if (t === "number") return this.#float(v);
     if (v instanceof $UtfCodepoint) return this.#utfCodepoint(v);
     if (v instanceof $BitArray) return this.#bit_array(v);

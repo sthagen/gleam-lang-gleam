@@ -22,16 +22,12 @@ use crate::{
     uid::UniqueIdGenerator,
 };
 
-pub fn encode(module: &ModuleInterface) -> Result<Vec<u8>, bincode::error::EncodeError> {
-    bincode::serde::encode_to_vec(module, bincode::config::legacy())
+pub fn encode(module: &ModuleInterface) -> Result<Vec<u8>, bitcode::Error> {
+    bitcode::serialize(module)
 }
 
-pub fn decode(
-    bytes: &[u8],
-    ids: UniqueIdGenerator,
-) -> Result<ModuleInterface, bincode::error::DecodeError> {
-    bincode::serde::decode_from_slice(bytes, bincode::config::legacy())
-        .map(|(module, _)| remap_type_variable_ids(module, ids))
+pub fn decode(bytes: &[u8], ids: UniqueIdGenerator) -> Result<ModuleInterface, bitcode::Error> {
+    bitcode::deserialize(bytes).map(|module| remap_type_variable_ids(module, ids))
 }
 
 fn remap_type_variable_ids(module: ModuleInterface, ids: UniqueIdGenerator) -> ModuleInterface {
@@ -335,6 +331,7 @@ impl RemapIds {
             },
             Constant::Record {
                 location,
+                arguments_start_position,
                 module,
                 name,
                 arguments,
@@ -343,6 +340,7 @@ impl RemapIds {
                 record_constructor,
             } => Constant::Record {
                 location,
+                arguments_start_position,
                 module,
                 name,
                 arguments: arguments.map(|arguments| {

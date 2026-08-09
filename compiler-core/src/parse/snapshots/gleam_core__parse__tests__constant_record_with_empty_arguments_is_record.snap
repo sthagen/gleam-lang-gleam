@@ -28,6 +28,7 @@ Parsed {
                                 start: 19,
                                 end: 27,
                             },
+                            arguments_start_position: 25,
                             module: None,
                             name: "Wibble",
                             arguments: Some(

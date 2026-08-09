@@ -48,3 +48,28 @@ pub fn list_1_test() {
 pub fn list_2_test() {
   assert const_list_2 == [1, 2]
 }
+
+const message = "hello"
+
+// https://github.com/gleam-lang/gleam/issues/6045
+pub fn constant_string_in_bit_array_segment_test() {
+  assert <<"hello">> == <<message:utf8>>
+  assert <<"hello":utf8>> == <<message:utf8>>
+}
+
+const message_2 = message
+
+const message_3 = message_2 <> "?"
+
+// https://github.com/gleam-lang/gleam/issues/6086
+pub fn constant_aliased_string_in_bit_arrays_test() {
+  assert <<"hello">> == <<message_2:utf8>>
+  assert <<"hello":utf8>> == <<message_2:utf8>>
+  assert "hello!" == message_2 <> "!"
+  assert "hello?!" == message_3 <> "!"
+  let subject = "hello!"
+  assert case subject {
+    wibble if wibble == message_2 <> "!" -> True
+    _ -> False
+  }
+}

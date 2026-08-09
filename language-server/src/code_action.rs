@@ -973,6 +973,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
     fn visit_typed_constant_record(
         &mut self,
         location: &'ast SrcSpan,
+        arguments_start_position: &'ast u32,
         module: &'ast Option<(EcoString, SrcSpan)>,
         name: &'ast EcoString,
         arguments: &'ast Option<Vec<CallArg<ast::TypedConstant>>>,
@@ -1007,6 +1008,7 @@ impl<'ast> ast::visit::Visit<'ast> for FillInMissingLabelledArgs<'ast> {
         ast::visit::visit_typed_constant_record(
             self,
             location,
+            arguments_start_position,
             module,
             name,
             arguments,
@@ -2068,6 +2070,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
     fn visit_typed_constant_record(
         &mut self,
         location: &'ast SrcSpan,
+        arguments_start_position: &'ast u32,
         module: &'ast Option<(EcoString, SrcSpan)>,
         name: &'ast EcoString,
         arguments: &'ast Option<Vec<CallArg<ast::TypedConstant>>>,
@@ -2090,6 +2093,7 @@ impl<'ast, IO> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportFirstPass
         ast::visit::visit_typed_constant_record(
             self,
             location,
+            arguments_start_position,
             module,
             name,
             arguments,
@@ -2303,6 +2307,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
     fn visit_typed_constant_record(
         &mut self,
         location: &'ast SrcSpan,
+        arguments_start_position: &'ast u32,
         module: &'ast Option<(EcoString, SrcSpan)>,
         name: &'ast EcoString,
         arguments: &'ast Option<Vec<CallArg<ast::TypedConstant>>>,
@@ -2325,6 +2330,7 @@ impl<'ast> ast::visit::Visit<'ast> for QualifiedToUnqualifiedImportSecondPass<'a
         ast::visit::visit_typed_constant_record(
             self,
             location,
+            arguments_start_position,
             module,
             name,
             arguments,
@@ -2538,6 +2544,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
     fn visit_typed_constant_record(
         &mut self,
         location: &'ast SrcSpan,
+        arguments_start_position: &'ast u32,
         module: &'ast Option<(EcoString, SrcSpan)>,
         name: &'ast EcoString,
         arguments: &'ast Option<Vec<CallArg<ast::TypedConstant>>>,
@@ -2564,6 +2571,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportFirstPass<'as
         ast::visit::visit_typed_constant_record(
             self,
             location,
+            arguments_start_position,
             module,
             name,
             arguments,
@@ -2771,6 +2779,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportSecondPass<'a
     fn visit_typed_constant_record(
         &mut self,
         location: &'ast SrcSpan,
+        arguments_start_position: &'ast u32,
         module: &'ast Option<(EcoString, SrcSpan)>,
         name: &'ast EcoString,
         arguments: &'ast Option<Vec<CallArg<ast::TypedConstant>>>,
@@ -2791,6 +2800,7 @@ impl<'ast> ast::visit::Visit<'ast> for UnqualifiedToQualifiedImportSecondPass<'a
         ast::visit::visit_typed_constant_record(
             self,
             location,
+            arguments_start_position,
             module,
             name,
             arguments,
@@ -4531,7 +4541,16 @@ impl<'a, IO> GenerateDynamicDecoder<'a, IO> {
     }
 
     pub fn code_actions(&mut self) {
-        self.visit_typed_module(&self.module.ast);
+        let project_config = &self.compiler.project_compiler.config;
+        if project_config
+            .dependencies
+            .contains_key(STDLIB_PACKAGE_NAME)
+            || project_config
+                .dev_dependencies
+                .contains_key(STDLIB_PACKAGE_NAME)
+        {
+            self.visit_typed_module(&self.module.ast);
+        }
     }
 
     fn custom_type_decoder_body(

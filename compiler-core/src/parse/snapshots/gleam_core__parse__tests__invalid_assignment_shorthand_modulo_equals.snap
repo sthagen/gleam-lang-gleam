@@ -1,0 +1,24 @@
+---
+source: compiler-core/src/parse/tests.rs
+expression: "let wobble: Int = 32\nwobble %= 1"
+---
+----- SOURCE CODE
+let wobble: Int = 32
+wobble %= 1
+
+----- ERROR
+error: Syntax error
+  ┌─ /src/parse/error.gleam:2:8
+  │
+2 │ wobble %= 1
+  │        ^^ Unknown operator
+
+Gleam is an immutable language and does not have any operators that
+change the value of an existing variable. You might want to create a
+new variable with the same name as the previous one:
+
+    let wibble = 10
+    let blobby = wibble
+    let wibble = wibble + 20
+    assert wibble == 30
+    assert blobby == 10

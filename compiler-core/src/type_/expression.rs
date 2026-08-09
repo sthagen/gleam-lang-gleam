@@ -3823,7 +3823,12 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 module,
                 name: value_name,
                 ..
-            } if value_name != referenced_name => {
+            } if let Some(UnqualifiedImport { has_alias, .. }) = self
+                .environment
+                .unqualified_imported_names
+                .get(referenced_name)
+                && *has_alias =>
+            {
                 self.environment.references.register_value_reference(
                     module.clone(),
                     value_name.clone(),
@@ -4220,6 +4225,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 Constant::Record {
                     module,
                     location,
+                    arguments_start_position: constructor_location.end,
                     name,
                     arguments: Some(final_arguments),
                     type_: expected_type,
@@ -4231,10 +4237,17 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             Constant::Record {
                 module,
                 location,
+                arguments_start_position,
                 name,
                 arguments,
                 ..
-            } => self.infer_constant_record(module, location, name, arguments),
+            } => self.infer_constant_record(
+                module,
+                location,
+                arguments_start_position,
+                name,
+                arguments,
+            ),
 
             Constant::Var {
                 location,
@@ -4347,6 +4360,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         &mut self,
         module: Option<(EcoString, SrcSpan)>,
         location: SrcSpan,
+        arguments_start_position: u32,
         name: EcoString,
         arguments: Option<Vec<CallArg<UntypedConstant>>>,
     ) -> Constant<Arc<Type>> {
@@ -4364,13 +4378,18 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
                 arity: arguments.len(),
             });
 
-        let constructor = match self.infer_value_constructor(&module, &name, &location, usage) {
-            Ok(constructor) => constructor,
-            Err(error) => {
-                self.problems.error(error);
-                return self.new_invalid_constant(location);
-            }
+        let constructor_location = SrcSpan {
+            start: location.start,
+            end: arguments_start_position,
         };
+        let constructor =
+            match self.infer_value_constructor(&module, &name, &constructor_location, usage) {
+                Ok(constructor) => constructor,
+                Err(error) => {
+                    self.problems.error(error);
+                    return self.new_invalid_constant(location);
+                }
+            };
 
         let field_map = match &constructor.variant {
             ValueConstructorVariant::Record { field_map, .. } => field_map.clone(),
@@ -4394,6 +4413,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
             return Constant::Record {
                 module,
                 location,
+                arguments_start_position,
                 name,
                 arguments: None,
                 type_: constructor.type_.clone(),
@@ -4552,6 +4572,7 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
         Constant::Record {
             module,
             location,
+            arguments_start_position,
             name,
             arguments: Some(typed_arguments),
             type_: expected_return,
@@ -5378,7 +5399,8 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
     ) -> CompiledCase {
         let mut case = exhaustiveness::CaseToCompile::new(subject_types);
         clauses.iter().for_each(|clause| case.add_clause(clause));
-        let result = case.compile(self.environment);
+        let mut result = case.compile(self.environment);
+        let mut unreachable = HashSet::new();
 
         // Error for missing clauses that would cause a crash
         if result.diagnostics.missing {
@@ -5408,10 +5430,14 @@ impl<'a, 'b> ExprTyper<'a, 'b> {
 
                         self.problems
                             .warning(Warning::UnreachableCasePattern { location, reason });
+
+                        let _ = unreachable.insert((clause_index, pattern_index));
                     }
                 }
             }
         }
+
+        result.compiled_case.unreachable = unreachable;
 
         result.compiled_case
     }
@@ -5746,6 +5772,7 @@ fn invalid_with_annotated_type(constant: TypedConstant, new_type: Arc<Type>) -> 
 
         Constant::Record {
             location,
+            arguments_start_position,
             module,
             name,
             arguments,
@@ -5754,6 +5781,7 @@ fn invalid_with_annotated_type(constant: TypedConstant, new_type: Arc<Type>) -> 
             record_constructor,
         } => Constant::Record {
             location,
+            arguments_start_position,
             module,
             name,
             arguments,

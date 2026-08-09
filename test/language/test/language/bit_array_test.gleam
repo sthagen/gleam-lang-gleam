@@ -198,3 +198,25 @@ pub fn negative_zero_16_bits_test() {
   let data = <<-0.0:16>>
   assert data == <<0x8000:16>>
 }
+
+pub fn float_16_rounds_ties_to_even_test() {
+  assert <<2047.5:float-16>> == <<0x68, 0x00>>
+  assert <<2049.0:float-16>> == <<0x68, 0x00>>
+  assert <<1.00048828125:float-16>> == <<0x3c, 0x00>>
+  assert <<1.0009765625:float-16>> == <<0x3c, 0x01>>
+}
+
+pub fn float_16_rounding_carries_into_exponent_test() {
+  assert <<3945.0:float-16>> == <<0x6b, 0xb4>>
+  assert <<65_520.0:float-16>> == <<0x7c, 0x00>>
+}
+
+pub fn float_16_subnormal_rounds_ties_to_even_test() {
+  assert <<2.9802322387695312e-8:float-16>> == <<0x00, 0x00>>
+  assert <<8.940696716308594e-8:float-16>> == <<0x00, 0x02>>
+}
+
+pub fn zero_size_int_segment_test() {
+  assert <<0:size(0), 1:size(8)>> == <<1>>
+  assert bit_array.bit_size(<<0:size(0)>>) == 0
+}

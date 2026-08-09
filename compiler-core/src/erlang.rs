@@ -7,6 +7,7 @@ mod tests;
 
 use crate::build::Target;
 use crate::erlang::pattern::{AliasedLiteral, PatternGenerator};
+use crate::exhaustiveness::CompiledCase;
 use crate::strings::to_snake_case;
 use crate::type_::{self, is_prelude_module};
 use crate::{
@@ -1022,8 +1023,11 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
             // Control flow.
             //
             TypedExpr::Case {
-                subjects, clauses, ..
-            } => self.case(builder, subjects, clauses),
+                subjects,
+                clauses,
+                compiled_case,
+                ..
+            } => self.case(builder, subjects, clauses, compiled_case),
 
             //
             // Something went wrong!
@@ -2113,6 +2117,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         builder: &mut impl ErlangBuilder<Output>,
         subjects: &'a [TypedExpr],
         clauses: &'a [TypedClause],
+        compiled_case: &'a CompiledCase,
     ) {
         let case = builder.start_case();
 
@@ -2131,10 +2136,13 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         }
         let case = builder.end_case_subject(case);
 
-        for clause in clauses {
+        for (clause_index, clause) in clauses.iter().enumerate() {
             let taken_names_before_clause = self.taken_names.clone();
 
-            self.clause_branch(builder, &clause.pattern, clause);
+            // If the main pattern is not unreachable, emit an Erlang case arm for it.
+            if !compiled_case.unreachable.contains(&(clause_index, 0)) {
+                self.clause_branch(builder, &clause.pattern, clause);
+            }
 
             // Erlang doesn't support alternative patterns so we're gonna have
             // to turn those into separate branches!
@@ -2162,7 +2170,23 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
             // end
             // ```
             //
-            for pattern in &clause.alternative_patterns {
+            for (alt_offset, pattern) in clause.alternative_patterns.iter().enumerate() {
+                // This specific for loop iterates over alternative patterns.
+                // Since we have already looked over the main pattern, we
+                // must add 1 to the `alt_offset` as we shift by one to line up
+                // with the real indexes for the unreachable. (Alternatives start at `1+`.)
+                let pattern_index = alt_offset + 1;
+
+                // If this alternative is unreachable based on
+                // the `compiled_case`, then the Erlang generated code
+                // will not contain this alternative's Erlang arm.
+                if compiled_case
+                    .unreachable
+                    .contains(&(clause_index, pattern_index))
+                {
+                    continue;
+                }
+
                 self.taken_names = taken_names_before_clause.clone();
                 self.clause_branch(builder, pattern, clause);
             }
@@ -2741,7 +2765,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         //   ```
         //
         if segment.type_.is_string()
-            && !segment.value.is_literal_string()
+            && !produces_literal_string(&segment.value)
             && let Some(encoding) = expression_segment_string_encoding(segment)
         {
             let (size, endiannes) = match encoding {
@@ -3338,33 +3362,25 @@ fn type_export(custom_type: &TypedCustomType) -> (EcoString, usize) {
 
 /// This returns true if the given expression is going to be compiled to a
 /// single literal Erlang string.
-/// This is not true just for literal Gleam strings like `"abc"`, but also
+/// This is not only true for literal Gleam strings like `"abc"`, but also for
 /// variables referencing string constants (as those are inlined)
 fn produces_literal_string(value: &TypedExpr) -> bool {
     match value {
-        TypedExpr::String { .. }
+        TypedExpr::String { .. } => true,
         // Constants are inlined on the Erlang target, so we need to check if
-        // those are literal strings too!
-        | TypedExpr::ModuleSelect {
-            constructor:
-                ModuleValueConstructor::Constant {
-                    literal: Constant::String { .. },
-                    ..
-                },
+        // those produce literal strings too!
+        TypedExpr::ModuleSelect {
+            constructor: ModuleValueConstructor::Constant { literal, .. },
             ..
         }
         | TypedExpr::Var {
             constructor:
                 ValueConstructor {
-                    variant:
-                        ValueConstructorVariant::ModuleConstant {
-                            literal: Constant::String { .. },
-                            ..
-                        },
+                    variant: ValueConstructorVariant::ModuleConstant { literal, .. },
                     ..
                 },
             ..
-        } => true,
+        } => constant_produces_literal_string(literal),
 
         TypedExpr::Int { .. }
         | TypedExpr::Var { .. }
@@ -3392,23 +3408,51 @@ fn produces_literal_string(value: &TypedExpr) -> bool {
     }
 }
 
-/// This returns true if the given expression is going to be compiled to a
+/// This returns true if the given constant is going to be compiled to a
 /// single literal Erlang string.
-/// This is not true just for literal Gleam strings like `"abc"`, but also
+/// This is not only true for literal Gleam strings like `"abc"`, but also for
+/// variables referencing string constants (as those are inlined)
+fn constant_produces_literal_string(constant: &Constant<Arc<Type>>) -> bool {
+    match constant {
+        Constant::String { .. } => true,
+        Constant::Var {
+            constructor: Some(constructor),
+            ..
+        } if let ValueConstructor {
+            variant: ValueConstructorVariant::ModuleConstant { ref literal, .. },
+            ..
+        } = **constructor =>
+        {
+            constant_produces_literal_string(literal)
+        }
+        Constant::Int { .. }
+        | Constant::Float { .. }
+        | Constant::Tuple { .. }
+        | Constant::List { .. }
+        | Constant::Record { .. }
+        | Constant::RecordUpdate { .. }
+        | Constant::BitArray { .. }
+        | Constant::StringConcatenation { .. }
+        | Constant::Invalid { .. }
+        | Constant::Todo { .. }
+        | Constant::Var { .. } => false,
+    }
+}
+
+/// This returns true if the given guard is going to be compiled to a
+/// single literal Erlang string.
+/// This is not only true for literal Gleam strings like `"abc"`, but also for
 /// variables referencing string constants (as those are inlined)
 fn guard_produces_literal_string(guard: &ClauseGuard<Arc<Type>>) -> bool {
     match guard {
         ClauseGuard::Block { value, .. } => guard_produces_literal_string(value),
 
         ClauseGuard::ModuleSelect {
-            literal: Constant::String { .. },
-            ..
+            literal: constant, ..
         }
-        | ClauseGuard::Constant(Constant::String { .. }) => true,
+        | ClauseGuard::Constant(constant) => constant_produces_literal_string(constant),
 
         ClauseGuard::BinaryOperator { .. }
-        | ClauseGuard::Constant(..)
-        | ClauseGuard::ModuleSelect { .. }
         | ClauseGuard::Not { .. }
         | ClauseGuard::Var { .. }
         | ClauseGuard::TupleIndex { .. }
