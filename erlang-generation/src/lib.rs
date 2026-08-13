@@ -6,13 +6,27 @@ use itertools::Itertools;
 use num_bigint::BigInt;
 use num_traits::Zero;
 use regex::Regex;
+use src_span::SrcSpan;
 use std::sync::OnceLock;
 
 /// This is to raise an `unreachable` pretty printed error when we try producing
 /// some piece of code that is not allowed in the current position.
 macro_rules! invalid_code_for_position {
+    // If this is given no position it will automatically use the current
+    // position.
     ($this:expr, $expected:literal) => {
-        unreachable!("{}", $this.error_with_position($expected))
+        unreachable!(
+            "{}",
+            $this.error_with_position($expected, $this.position.last())
+        )
+    };
+
+    // But we can also feed the current position ourselves to the macro.
+    ($this:expr, $expected:literal, $position:expr) => {
+        unreachable!(
+            "{}",
+            $this.error_with_position($expected, $position.as_ref())
+        )
     };
 }
 
@@ -39,6 +53,36 @@ impl ErlangModuleName {
     /// The Erlang/OTP `erlang` module.
     pub fn erlang() -> Self {
         Self("erlang".into())
+    }
+
+    /// The Erlang/OTP `binary` module.
+    pub fn binary() -> Self {
+        Self("binary".into())
+    }
+
+    /// The Erlang/OTP `maps` module.
+    pub fn maps() -> Self {
+        Self("maps".into())
+    }
+
+    /// The Erlang/OTP `io` module.
+    pub fn io() -> Self {
+        Self("io".into())
+    }
+
+    /// The Erlang/OTP `io_lib_format` module.
+    pub fn io_lib_format() -> Self {
+        Self("io_lib_format".into())
+    }
+
+    /// The Erlang/OTP `io_lib` module.
+    pub fn io_lib() -> Self {
+        Self("io_lib".into())
+    }
+
+    /// The Erlang/OTP `lists` module.
+    pub fn lists() -> Self {
+        Self("lists".into())
     }
 
     /// The Erlang/OTP `unicode` module.
@@ -599,9 +643,10 @@ pub trait ErlangBuilder<Output> {
     ///
     fn start_function<Name: AsRef<str>>(
         &mut self,
+        location: SrcSpan,
         name: &str,
         arity: usize,
-        arguments_names: impl IntoIterator<Item = Name>,
+        arguments_names: impl IntoIterator<Item = (SrcSpan, Name)>,
     ) -> Self::Function;
 
     /// This starts an expression defining an anonymous function.
@@ -624,7 +669,8 @@ pub trait ErlangBuilder<Output> {
     ///
     fn start_anonymous_function<Name: AsRef<str>>(
         &mut self,
-        arguments_names: impl IntoIterator<Item = Name>,
+        location: SrcSpan,
+        arguments_names: impl IntoIterator<Item = (SrcSpan, Name)>,
     ) -> Self::Function;
 
     /// This takes a function and closes it.
@@ -654,7 +700,7 @@ pub trait ErlangBuilder<Output> {
     /// end.
     /// ```
     ///
-    fn start_block(&mut self) -> Self::Block;
+    fn start_block(&mut self, location: SrcSpan) -> Self::Block;
 
     /// This takes a block and closes it.
     /// Code generated after this is not gonna be part of this block.
@@ -679,7 +725,12 @@ pub trait ErlangBuilder<Output> {
     /// io:format(~"Giacomo").
     /// ```
     ///
-    fn start_remote_call(&mut self, module: ErlangModuleName, function: &str) -> Self::Call;
+    fn start_remote_call(
+        &mut self,
+        location: SrcSpan,
+        module: ErlangModuleName,
+        function: &str,
+    ) -> Self::Call;
 
     /// This starts a function call.
     /// The expression generated immediately after this is going to be the thing
@@ -703,7 +754,7 @@ pub trait ErlangBuilder<Output> {
     /// wibble(~"Hello", ~"Giacomo").
     /// ```
     ///
-    fn start_call(&mut self) -> Self::CalledExpression;
+    fn start_call(&mut self, location: SrcSpan) -> Self::CalledExpression;
 
     /// This must be called after generating the expression that is called in a
     /// function call. After that you can generate the arguments of the function
@@ -733,7 +784,7 @@ pub trait ErlangBuilder<Output> {
     /// {~"Hello", 1}.
     /// ```
     ///
-    fn start_tuple(&mut self) -> Self::Tuple;
+    fn start_tuple(&mut self, location: SrcSpan) -> Self::Tuple;
 
     /// This takes an open tuple and closes it.
     /// Code generated after this is not gonna be an item of the tuple.
@@ -767,7 +818,7 @@ pub trait ErlangBuilder<Output> {
     /// }.
     /// ```
     ///
-    fn start_map(&mut self) -> Self::Map;
+    fn start_map(&mut self, location: SrcSpan) -> Self::Map;
 
     /// This takes an open map and closes it.
     /// Code generated after this is not gonna be a map field.
@@ -778,7 +829,7 @@ pub trait ErlangBuilder<Output> {
     /// After calling this you must generate exactly two values: the first one
     /// is going to be the key, while the second one is going to be the
     /// associated value.
-    fn map_field(&mut self);
+    fn map_field(&mut self, location: SrcSpan);
 
     /// This starts an Erlang bitstring (that's a Gleam's BitArray).
     /// Any code generated after this is gonna be a segment of the bitstring.
@@ -807,7 +858,7 @@ pub trait ErlangBuilder<Output> {
     /// <<1, ~"hello">>.
     /// ```
     ///
-    fn start_bit_array(&mut self) -> Self::BitArray;
+    fn start_bit_array(&mut self, location: SrcSpan) -> Self::BitArray;
 
     /// This takes an open bit array and closes it.
     /// Code generated after this is not gonna be a segment of the bit array.
@@ -820,8 +871,8 @@ pub trait ErlangBuilder<Output> {
     /// to generate three distinct bits in the following order:
     ///
     /// 1. The expression representing the bit array segment
-    /// 2. The expression representing the segment size (or the atom `default`
-    ///    if you want to use... you guessed it, the default)
+    /// 2. The expression representing the segment size (or call
+    ///    `bit_array_default_segment_size` if you want to use the erlang default)
     /// 3. A list of type specifiers (those are atoms like `utf8`, `binary`,
     ///    ...) or the atom `default` if you're ok with Erlang's default value,
     ///    those are generated using the `bit_array_segment_specifiers` function.
@@ -835,7 +886,7 @@ pub trait ErlangBuilder<Output> {
     ///
     /// If you wanna check an example of how this is used you can have a read at
     /// the ones in `start_bit_array`.
-    fn bit_array_segment(&mut self);
+    fn bit_array_segment(&mut self, location: SrcSpan);
 
     /// You can call this when a bit array segment has no explicit size, and the
     /// default Erlang behaviour is fine.
@@ -880,11 +931,11 @@ pub trait ErlangBuilder<Output> {
     /// [Hello, ~"Giacomo"]
     /// ```
     ///
-    fn cons_list(&mut self);
+    fn cons_list(&mut self, location: SrcSpan);
 
     /// This creates an empty list.
     ///
-    fn empty_list(&mut self);
+    fn empty_list(&mut self, location: SrcSpan);
 
     /// This starts a new case expression.
     /// After this function is called you're supposed to first generate a single
@@ -919,7 +970,7 @@ pub trait ErlangBuilder<Output> {
     /// end.
     /// ```
     ///
-    fn start_case(&mut self) -> Self::CaseSubject;
+    fn start_case(&mut self, location: SrcSpan) -> Self::CaseSubject;
 
     /// This ends the open case subject, after this you can start generating the
     /// case clauses.
@@ -936,7 +987,7 @@ pub trait ErlangBuilder<Output> {
     ///
     /// For an example on how to generate a full case clause check the
     /// `start_case` documentation.
-    fn start_case_clause(&mut self) -> Self::ClausePattern;
+    fn start_case_clause(&mut self, location: SrcSpan) -> Self::ClausePattern;
 
     /// This ends the case clause's pattern. After this you must generate the
     /// clause guards and then call `end_clause_guards`.
@@ -993,7 +1044,7 @@ pub trait ErlangBuilder<Output> {
     /// %            ^ This here!
     /// ```
     ///
-    fn variable(&mut self, name: &str);
+    fn variable(&mut self, location: SrcSpan, name: &str);
 
     /// This generated the code that is going to apply the given unary operator
     /// to the expression that is going to be generated next.
@@ -1010,7 +1061,7 @@ pub trait ErlangBuilder<Output> {
     /// -X.
     /// ```
     ///
-    fn unary_operator(&mut self, operator: &str);
+    fn unary_operator(&mut self, location: SrcSpan, operator: &str);
 
     /// This generated the code that is going to apply the given binary operator
     /// to the two expressions generated after it.
@@ -1028,7 +1079,7 @@ pub trait ErlangBuilder<Output> {
     /// X + 1.
     /// ```
     ///
-    fn binary_operator(&mut self, operator: &'static str);
+    fn binary_operator(&mut self, location: SrcSpan, operator: &'static str);
 
     /// This generates the code for a function reference.
     /// For example:
@@ -1045,7 +1096,13 @@ pub trait ErlangBuilder<Output> {
     /// fun io:format/2.
     /// ```
     ///
-    fn function_reference(&mut self, module: Option<ErlangModuleName>, name: &str, arity: usize);
+    fn function_reference(
+        &mut self,
+        location: SrcSpan,
+        module: Option<ErlangModuleName>,
+        name: &str,
+        arity: usize,
+    );
 
     /// This is used to create the code that corresponds to an assignment.
     /// A call to this function must always be followed by the generation of
@@ -1066,7 +1123,7 @@ pub trait ErlangBuilder<Output> {
     /// X = 1.
     /// ```
     ///
-    fn match_operator(&mut self);
+    fn match_operator(&mut self, location: SrcSpan);
 
     /// This is used to create the code that corresponds to a match pattern.
     /// A call to this function must always be followed by the generation of
@@ -1092,7 +1149,7 @@ pub trait ErlangBuilder<Output> {
     /// this only when generating code for Gleam's "as" patterns where the right
     /// hand side is just a variable pattern.
     ///
-    fn match_pattern(&mut self);
+    fn match_pattern(&mut self, location: SrcSpan);
 
     /// This creates a variable pattern with the given name.
     /// For example:
@@ -1103,7 +1160,7 @@ pub trait ErlangBuilder<Output> {
     /// % ^ This here!
     /// ```
     ///
-    fn variable_pattern(&mut self, name: &str);
+    fn variable_pattern(&mut self, location: SrcSpan, name: &str);
 
     /// This creates a discard pattern.
     /// For example:
@@ -1114,7 +1171,7 @@ pub trait ErlangBuilder<Output> {
     /// % ^ This here!
     /// ```
     ///
-    fn discard_pattern(&mut self);
+    fn discard_pattern(&mut self, location: SrcSpan);
 
     /// This creates an integer pattern.
     /// For example:
@@ -1125,7 +1182,7 @@ pub trait ErlangBuilder<Output> {
     /// % ^ This here!
     /// ```
     ///
-    fn int_pattern(&mut self, number: BigInt);
+    fn int_pattern(&mut self, location: SrcSpan, number: BigInt);
 
     /// This creates an integer pattern.
     /// For example:
@@ -1136,7 +1193,7 @@ pub trait ErlangBuilder<Output> {
     /// % ^ This here!
     /// ```
     ///
-    fn float_pattern(&mut self, number: f64);
+    fn float_pattern(&mut self, location: SrcSpan, number: f64);
 
     /// This creates a string pattern.
     /// For example:
@@ -1147,7 +1204,7 @@ pub trait ErlangBuilder<Output> {
     /// % ^^^^^^^^^^^^^^^^ This here!
     /// ```
     ///
-    fn string_pattern(&mut self, content: &str);
+    fn string_pattern(&mut self, location: SrcSpan, content: &str);
 
     /// This creates an atom pattern.
     /// For example:
@@ -1158,7 +1215,7 @@ pub trait ErlangBuilder<Output> {
     /// % ^^ This here!
     /// ```
     ///
-    fn atom_pattern(&mut self, name: &str);
+    fn atom_pattern(&mut self, location: SrcSpan, name: &str);
 
     /// This starts a tuple pattern.
     /// Any code generated after this is gonna be an item of the tuple pattern.
@@ -1178,7 +1235,7 @@ pub trait ErlangBuilder<Output> {
     /// {~"Hello", _}.
     /// ```
     ///
-    fn start_tuple_pattern(&mut self) -> Self::TuplePattern;
+    fn start_tuple_pattern(&mut self, location: SrcSpan) -> Self::TuplePattern;
 
     /// This takes an open tuple pattern and closes it.
     /// Any code generated after this is not gonna be part of that pattern.
@@ -1211,7 +1268,7 @@ pub trait ErlangBuilder<Output> {
     /// <<1, _>>.
     /// ```
     ///
-    fn start_bit_array_pattern(&mut self) -> Self::BitArrayPattern;
+    fn start_bit_array_pattern(&mut self, location: SrcSpan) -> Self::BitArrayPattern;
 
     /// This takes an open bit array pattern and closes it.
     /// Code generated after this is not gonna be a segment of the bit array.
@@ -1246,15 +1303,16 @@ pub trait ErlangBuilder<Output> {
     /// [_, ~"Louis"]
     /// ```
     ///
-    fn cons_list_pattern(&mut self);
+    fn cons_list_pattern(&mut self, location: SrcSpan);
 
     /// This creates a pattern matching on the empty list.
     ///
-    fn empty_list_pattern(&mut self);
+    fn empty_list_pattern(&mut self, location: SrcSpan);
 
     /// This creates a string literal, where the string is represented as a
     /// bit array with the utf8 bytes making up the string.
     /// This is how Gleam string literals are represented in Erlang.
+    /// This is expected to be passed a valid Gleam string!
     ///
     /// For example:
     ///
@@ -1275,7 +1333,7 @@ pub trait ErlangBuilder<Output> {
     /// <<107, 115, 105, 196, 133, 115, 107, 196, 153>>
     /// ```
     ///
-    fn string(&mut self, string: &str);
+    fn string(&mut self, location: SrcSpan, string: &str);
 
     /// This creates an integer literal from the given value.
     ///
@@ -1291,7 +1349,7 @@ pub trait ErlangBuilder<Output> {
     /// 2.
     /// ```
     ///
-    fn int(&mut self, value: BigInt);
+    fn int(&mut self, location: SrcSpan, value: BigInt);
 
     /// This creates a float literal from the given value.
     ///
@@ -1307,7 +1365,7 @@ pub trait ErlangBuilder<Output> {
     /// 1.2.
     /// ```
     ///
-    fn float(&mut self, value: f64);
+    fn float(&mut self, location: SrcSpan, value: f64);
 
     /// This creates a literal atom with the given name.
     ///
@@ -1323,7 +1381,7 @@ pub trait ErlangBuilder<Output> {
     /// wibble.
     /// ```
     ///
-    fn atom(&mut self, name: &str);
+    fn atom(&mut self, location: SrcSpan, name: &str);
 }
 
 /// A structure that implements the `ErlangBuilder` trait and produces a nice
@@ -1458,7 +1516,7 @@ enum ErlangSourceBuilderPosition {
 
     /// We're generating code for a segment of a bit array, like `10:1/signed`.
     BitArraySegment {
-        expected: BitArraySegmentExpectedItem,
+        expected: ExpectedBitArraySegmentItem,
         /// This is `true` if the value of the bit array segment needs to be wrapped
         /// in parentheses. For example function calls need to be wrapped, or they
         /// would result in invalid Erlang being produced.
@@ -1520,7 +1578,7 @@ enum ErlangSourceBuilderPosition {
         first: bool,
     },
     /// We're generating a key-value pair inside a map.
-    MapField { expected: MapFieldExpectedItem },
+    MapField { expected: ExpectedMapFieldItem },
     /// We're generating the fields of a record attribute.
     RecordAttribute {
         /// This is `true` if no field has been generated yet.
@@ -1555,7 +1613,7 @@ enum BitArrayKind {
 /// after two expressions are generated. So we need to keep track of what we're
 /// expecting to be generated next.
 #[derive(Debug)]
-enum MapFieldExpectedItem {
+enum ExpectedMapFieldItem {
     Key,
     Value,
 }
@@ -1622,7 +1680,7 @@ enum ExpectedBinaryOperatorSide {
 /// This keeps track of which one we're expecting to be generated next.
 ///
 #[derive(Debug)]
-enum BitArraySegmentExpectedItem {
+enum ExpectedBitArraySegmentItem {
     Value {
         /// This is telling us if the value of the segment has to be a pattern
         /// or an expression.
@@ -1701,8 +1759,6 @@ enum ExpectedListItem {
     ListIsOver,
 }
 
-static UNICODE_ESCAPE_SEQUENCE_PATTERN: OnceLock<Regex> = OnceLock::new();
-
 /// How does pretty printing work? Here's a high level overview of how it works:
 ///
 /// - When a new element is generated we call the `new_x` method.
@@ -1774,10 +1830,10 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
     type UnionType = ();
     type TypeSpec = ();
 
-    fn new(module: Option<ErlangModuleName>) -> Self {
+    fn new(module_name: Option<ErlangModuleName>) -> Self {
         Self {
-            code: if let Some(module) = module {
-                format!("-module({}).\n", quote_atom_name(&module.0))
+            code: if let Some(module_name) = module_name {
+                format!("-module({}).\n", quote_atom_name(&module_name.0))
             } else {
                 String::new()
             },
@@ -1850,9 +1906,9 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
 
     fn doc_attribute(&mut self, content: DocContent<'_>) {
         self.new_top_level_form();
-        self.code.push_str("-doc(");
+        self.code.push_str("\n-doc(");
         self.doc_content(content);
-        self.code.push_str(").\n")
+        self.code.push_str(").")
     }
 
     fn moduledoc_attribute(&mut self, content: DocContent<'_>) {
@@ -2046,16 +2102,18 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
 
     fn start_function<Name: AsRef<str>>(
         &mut self,
+        _location: SrcSpan,
         name: &str,
         _arity: usize,
-        arguments_names: impl IntoIterator<Item = Name>,
+        arguments_names: impl IntoIterator<Item = (SrcSpan, Name)>,
     ) -> Self::Function {
         self.new_top_level_form();
+        self.code.push('\n');
         self.code.push_str(&quote_atom_name(name));
         self.code.push('(');
 
         let mut first = true;
-        for argument in arguments_names {
+        for (_argument_location, argument) in arguments_names {
             if !first {
                 self.code.push_str(", ")
             } else {
@@ -2072,13 +2130,14 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
 
     fn start_anonymous_function<Name: AsRef<str>>(
         &mut self,
-        arguments_names: impl IntoIterator<Item = Name>,
+        _location: SrcSpan,
+        arguments_names: impl IntoIterator<Item = (SrcSpan, Name)>,
     ) -> Self::Function {
         self.new_expression();
         self.code.push_str("fun(");
 
         let mut first = true;
-        for argument in arguments_names {
+        for (_argument_location, argument) in arguments_names {
             if !first {
                 self.code.push_str(", ")
             } else {
@@ -2097,7 +2156,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn start_block(&mut self) -> Self::Block {
+    fn start_block(&mut self, _location: SrcSpan) -> Self::Block {
         self.new_expression();
         self.code.push_str("begin");
         self.indentation += INDENT;
@@ -2109,7 +2168,12 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn start_remote_call(&mut self, module: ErlangModuleName, function: &str) -> Self::Call {
+    fn start_remote_call(
+        &mut self,
+        _location: SrcSpan,
+        module: ErlangModuleName,
+        function: &str,
+    ) -> Self::Call {
         self.pop_leftover_items();
 
         // If this function call we're generating is itself being called then
@@ -2135,7 +2199,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
             });
     }
 
-    fn start_call(&mut self) -> Self::Call {
+    fn start_call(&mut self, _location: SrcSpan) -> Self::Call {
         self.pop_leftover_items();
 
         // If this function call we're generating is itself being called then
@@ -2177,7 +2241,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn start_tuple(&mut self) -> Self::Tuple {
+    fn start_tuple(&mut self, _location: SrcSpan) -> Self::Tuple {
         self.new_expression();
         self.code.push('{');
         self.position
@@ -2188,7 +2252,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn start_map(&mut self) -> Self::Map {
+    fn start_map(&mut self, _location: SrcSpan) -> Self::Map {
         self.new_expression();
         self.code.push_str("#{");
         self.indentation += INDENT;
@@ -2200,14 +2264,14 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn map_field(&mut self) {
+    fn map_field(&mut self, _location: SrcSpan) {
         self.new_map_field();
         self.position.push(ErlangSourceBuilderPosition::MapField {
-            expected: MapFieldExpectedItem::Key,
+            expected: ExpectedMapFieldItem::Key,
         });
     }
 
-    fn start_bit_array(&mut self) -> Self::BitArray {
+    fn start_bit_array(&mut self, _location: SrcSpan) -> Self::BitArray {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_expression();
         self.code.push_str("<<");
@@ -2221,11 +2285,11 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn bit_array_segment(&mut self) {
+    fn bit_array_segment(&mut self, _location: SrcSpan) {
         let kind = self.new_bit_array_segment();
         self.position
             .push(ErlangSourceBuilderPosition::BitArraySegment {
-                expected: BitArraySegmentExpectedItem::Value { kind },
+                expected: ExpectedBitArraySegmentItem::Value { kind },
                 // We assume all values are going to have to be wrapped, better
                 // be safe than sorry!
                 // We will turn this off only for certain expressions we know
@@ -2239,13 +2303,13 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.pop_leftover_items();
 
         if let Some(ErlangSourceBuilderPosition::BitArraySegment {
-            expected: expected @ BitArraySegmentExpectedItem::Size,
+            expected: expected @ ExpectedBitArraySegmentItem::Size,
             segment_value_needs_wrapping,
             segment_size_needs_wrapping,
         }) = self.position.last_mut()
         {
             // We are now expecting to see the specifiers list
-            *expected = BitArraySegmentExpectedItem::Specifiers;
+            *expected = ExpectedBitArraySegmentItem::Specifiers;
             if *segment_value_needs_wrapping {
                 self.code.push(')');
                 *segment_value_needs_wrapping = false;
@@ -2265,7 +2329,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
     ) {
         self.pop_leftover_items();
         let Some(ErlangSourceBuilderPosition::BitArraySegment {
-            expected: BitArraySegmentExpectedItem::Specifiers,
+            expected: ExpectedBitArraySegmentItem::Specifiers,
             segment_value_needs_wrapping,
             segment_size_needs_wrapping,
         }) = self.position.last_mut()
@@ -2320,15 +2384,15 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.position.pop();
     }
 
-    fn cons_list(&mut self) {
+    fn cons_list(&mut self, _location: SrcSpan) {
         self.cons_list_of_kind(ListKind::Expression);
     }
 
-    fn empty_list(&mut self) {
+    fn empty_list(&mut self, _location: SrcSpan) {
         self.empty_list_of_kind(ListKind::Expression);
     }
 
-    fn start_case(&mut self) -> Self::Case {
+    fn start_case(&mut self, _location: SrcSpan) -> Self::Case {
         self.new_expression();
         self.code.push_str("case ");
         self.position.push(ErlangSourceBuilderPosition::Case {
@@ -2354,7 +2418,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn start_case_clause(&mut self) -> Self::ClausePattern {
+    fn start_case_clause(&mut self, _location: SrcSpan) -> Self::ClausePattern {
         self.new_case_clause();
         self.position.push(ErlangSourceBuilderPosition::CaseClause {
             expected: ExpectedCaseClauseItem::Pattern,
@@ -2389,13 +2453,13 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn variable(&mut self, name: &str) {
+    fn variable(&mut self, _location: SrcSpan, name: &str) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_expression();
         self.code.push_str(name);
     }
 
-    fn unary_operator(&mut self, operator: &str) {
+    fn unary_operator(&mut self, _location: SrcSpan, operator: &str) {
         self.new_expression();
         self.code.push_str(operator);
         self.code.push(' ');
@@ -2403,7 +2467,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
             .push(ErlangSourceBuilderPosition::UnaryOperator)
     }
 
-    fn binary_operator(&mut self, operator: &'static str) {
+    fn binary_operator(&mut self, _location: SrcSpan, operator: &'static str) {
         self.pop_leftover_items();
 
         // If this new binary operator we're generating is part of a bigger
@@ -2430,7 +2494,13 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
             })
     }
 
-    fn function_reference(&mut self, module: Option<ErlangModuleName>, name: &str, arity: usize) {
+    fn function_reference(
+        &mut self,
+        _location: SrcSpan,
+        module: Option<ErlangModuleName>,
+        name: &str,
+        arity: usize,
+    ) {
         self.new_expression();
         self.code.push_str("fun ");
         if let Some(module) = module {
@@ -2442,7 +2512,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.code.push_str(&arity.to_string());
     }
 
-    fn match_operator(&mut self) {
+    fn match_operator(&mut self, _location: SrcSpan) {
         self.new_expression();
         self.position
             .push(ErlangSourceBuilderPosition::MatchOperator {
@@ -2450,7 +2520,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
             });
     }
 
-    fn match_pattern(&mut self) {
+    fn match_pattern(&mut self, _location: SrcSpan) {
         self.new_pattern();
         self.position
             .push(ErlangSourceBuilderPosition::MatchPattern {
@@ -2458,43 +2528,43 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
             })
     }
 
-    fn variable_pattern(&mut self, name: &str) {
+    fn variable_pattern(&mut self, _location: SrcSpan, name: &str) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_pattern();
         self.code.push_str(name);
     }
 
-    fn discard_pattern(&mut self) {
+    fn discard_pattern(&mut self, _location: SrcSpan) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_pattern();
         self.code.push('_');
     }
 
-    fn int_pattern(&mut self, number: BigInt) {
+    fn int_pattern(&mut self, _location: SrcSpan, number: BigInt) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_pattern();
         self.code.push_str(&number.to_string());
     }
 
-    fn float_pattern(&mut self, number: f64) {
+    fn float_pattern(&mut self, _location: SrcSpan, number: f64) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_pattern();
 
         self.code.push_str(&format_float(number))
     }
 
-    fn string_pattern(&mut self, content: &str) {
+    fn string_pattern(&mut self, _location: SrcSpan, content: &str) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_pattern();
         self.do_print_string_content(content);
     }
 
-    fn atom_pattern(&mut self, name: &str) {
+    fn atom_pattern(&mut self, _location: SrcSpan, name: &str) {
         self.new_pattern();
         self.code.push_str(&quote_atom_name(name));
     }
 
-    fn start_tuple_pattern(&mut self) -> Self::TuplePattern {
+    fn start_tuple_pattern(&mut self, _location: SrcSpan) -> Self::TuplePattern {
         self.new_pattern();
         self.code.push('{');
         self.position
@@ -2505,7 +2575,7 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn start_bit_array_pattern(&mut self) -> Self::BitArrayPattern {
+    fn start_bit_array_pattern(&mut self, _location: SrcSpan) -> Self::BitArrayPattern {
         self.new_pattern();
         self.code.push_str("<<");
         self.position.push(ErlangSourceBuilderPosition::BitArray {
@@ -2518,33 +2588,33 @@ impl ErlangBuilder<String> for ErlangSourceBuilder {
         self.close_currently_open_item();
     }
 
-    fn cons_list_pattern(&mut self) {
+    fn cons_list_pattern(&mut self, _location: SrcSpan) {
         self.cons_list_of_kind(ListKind::Pattern);
     }
 
-    fn empty_list_pattern(&mut self) {
+    fn empty_list_pattern(&mut self, _location: SrcSpan) {
         self.empty_list_of_kind(ListKind::Pattern);
     }
 
-    fn string(&mut self, content: &str) {
+    fn string(&mut self, _location: SrcSpan, content: &str) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_expression();
         self.do_print_string_content(content);
     }
 
-    fn int(&mut self, number: BigInt) {
+    fn int(&mut self, _location: SrcSpan, number: BigInt) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_expression();
         self.code.push_str(&number.to_string());
     }
 
-    fn float(&mut self, number: f64) {
+    fn float(&mut self, _location: SrcSpan, number: f64) {
         self.do_not_wrap_if_segment_value_or_size();
         self.new_expression();
         self.code.push_str(&format_float(number));
     }
 
-    fn atom(&mut self, name: &str) {
+    fn atom(&mut self, _location: SrcSpan, name: &str) {
         self.new_expression();
         self.code.push_str(&quote_atom_name(name));
     }
@@ -2686,7 +2756,7 @@ impl ErlangSourceBuilder {
 
             ErlangSourceBuilderPosition::BitArraySegment {
                 expected:
-                    expected @ BitArraySegmentExpectedItem::Value {
+                    expected @ ExpectedBitArraySegmentItem::Value {
                         kind: BitArrayKind::Expression,
                     },
                 segment_value_needs_wrapping,
@@ -2695,11 +2765,11 @@ impl ErlangSourceBuilder {
                 if *segment_value_needs_wrapping {
                     self.code.push('(');
                 }
-                *expected = BitArraySegmentExpectedItem::Size
+                *expected = ExpectedBitArraySegmentItem::Size
             }
 
             ErlangSourceBuilderPosition::BitArraySegment {
-                expected: expected @ BitArraySegmentExpectedItem::Size,
+                expected: expected @ ExpectedBitArraySegmentItem::Size,
                 segment_value_needs_wrapping,
                 segment_size_needs_wrapping,
             } => {
@@ -2710,7 +2780,7 @@ impl ErlangSourceBuilder {
                     // to the specifiers list!
                     *segment_value_needs_wrapping = false;
                 }
-                *expected = BitArraySegmentExpectedItem::Specifiers;
+                *expected = ExpectedBitArraySegmentItem::Specifiers;
                 self.code.push(':');
                 if *segment_size_needs_wrapping {
                     self.code.push('(');
@@ -2722,11 +2792,11 @@ impl ErlangSourceBuilder {
             }
 
             ErlangSourceBuilderPosition::MapField { expected } => match expected {
-                MapFieldExpectedItem::Key => *expected = MapFieldExpectedItem::Value,
+                ExpectedMapFieldItem::Key => *expected = ExpectedMapFieldItem::Value,
                 // We've generated a key and now the value is being generated.
                 // So we need to add the `=>` separating key and value and we
                 // can pop this position that is now complete.
-                MapFieldExpectedItem::Value => {
+                ExpectedMapFieldItem::Value => {
                     self.code.push_str(" => ");
                     self.position.pop();
                 }
@@ -2779,12 +2849,12 @@ impl ErlangSourceBuilder {
                 expected: ExpectedCaseClauseItem::Guards { .. },
             }
             | ErlangSourceBuilderPosition::BitArraySegment {
-                expected: BitArraySegmentExpectedItem::Specifiers,
+                expected: ExpectedBitArraySegmentItem::Specifiers,
                 ..
             }
             | ErlangSourceBuilderPosition::BitArraySegment {
                 expected:
-                    BitArraySegmentExpectedItem::Value {
+                    ExpectedBitArraySegmentItem::Value {
                         kind: BitArrayKind::Pattern,
                     },
                 ..
@@ -2922,14 +2992,14 @@ impl ErlangSourceBuilder {
                 segment_value_needs_wrapping,
                 segment_size_needs_wrapping: _,
                 expected:
-                    expected @ BitArraySegmentExpectedItem::Value {
+                    expected @ ExpectedBitArraySegmentItem::Value {
                         kind: BitArrayKind::Pattern,
                     },
             } => {
                 if *segment_value_needs_wrapping {
                     self.code.push('(');
                 }
-                *expected = BitArraySegmentExpectedItem::Size
+                *expected = ExpectedBitArraySegmentItem::Size
             }
 
             // We were waiting for the pattern to be generated, now we're done
@@ -2977,9 +3047,9 @@ impl ErlangSourceBuilder {
             | ErlangSourceBuilderPosition::BitArray { .. }
             | ErlangSourceBuilderPosition::BitArraySegment {
                 expected:
-                    BitArraySegmentExpectedItem::Size
-                    | BitArraySegmentExpectedItem::Specifiers
-                    | BitArraySegmentExpectedItem::Value {
+                    ExpectedBitArraySegmentItem::Size
+                    | ExpectedBitArraySegmentItem::Specifiers
+                    | ExpectedBitArraySegmentItem::Value {
                         kind: BitArrayKind::Expression,
                     },
                 ..
@@ -3049,9 +3119,14 @@ impl ErlangSourceBuilder {
                 self.code.push_str("end");
             }
             // When we're done generating code for a function spec we want to
-            // add a `.` and go to a new line so we can start generating the
-            // function itself.
-            ErlangSourceBuilderPosition::FunctionSpec => self.code.push_str(".\n"),
+            // add a `.` so we can start generating the function itself.
+            // Notice one crucial detail: we don't add the newline here, because
+            // that will be added by the function that is generated right after
+            // this. We do it this way so that, even if we're generating
+            // functions that have no annotation (like the echo functions
+            // automatically added by the compiler), they will be spaced
+            // correctly!
+            ErlangSourceBuilderPosition::FunctionSpec => self.code.push('.'),
             // When we're done generating the arguments of a function we need
             // to add the closed parentheses for the function call!
             ErlangSourceBuilderPosition::FunctionCall {
@@ -3209,7 +3284,7 @@ impl ErlangSourceBuilder {
     /// If we were to just take that comment's content and put it in an Erlang
     /// string with no escaping that would produce invalid code!
     ///
-    fn escape_string_content(&self, content: &str) -> String {
+    fn escape_string_content(&self, content: &str) -> EcoString {
         let position = self
             .position
             .last()
@@ -3250,23 +3325,7 @@ impl ErlangSourceBuilder {
                 // If we're tasked with escaping the content of a literal string
                 // expression we need to turn Gleam's `\u` sequences into
                 // Erlang's `\x`.
-                UNICODE_ESCAPE_SEQUENCE_PATTERN
-                    .get_or_init(|| {
-                        Regex::new(r#"(\\+)(u)"#)
-                            .expect("Unicode escape sequence regex cannot be constructed")
-                    })
-                    // `\\u`-s should not be affected, so that "\\u..." is not converted to
-                    // "\\x...". That's why capturing groups is used to exclude cases that
-                    // shouldn't be replaced.
-                    .replace_all(content, |caps: &regex::Captures<'_>| {
-                        let slashes = caps.get(1).map_or("", |match_| match_.as_str());
-                        if slashes.len().is_multiple_of(2) {
-                            format!("{slashes}u")
-                        } else {
-                            format!("{slashes}x")
-                        }
-                    })
-                    .into()
+                escape_literal_string_content(content)
             }
         }
     }
@@ -3359,12 +3418,12 @@ impl ErlangSourceBuilder {
         match self.position.last_mut() {
             Some(ErlangSourceBuilderPosition::BitArraySegment {
                 segment_value_needs_wrapping,
-                expected: BitArraySegmentExpectedItem::Value { .. },
+                expected: ExpectedBitArraySegmentItem::Value { .. },
                 ..
             }) => *segment_value_needs_wrapping = false,
             Some(ErlangSourceBuilderPosition::BitArraySegment {
                 segment_size_needs_wrapping,
-                expected: BitArraySegmentExpectedItem::Size,
+                expected: ExpectedBitArraySegmentItem::Size,
                 ..
             }) => *segment_size_needs_wrapping = false,
             _ => (),
@@ -3387,7 +3446,7 @@ impl ErlangSourceBuilder {
             // We can't move the `new_expression` call down, that _must_ be the
             // first thing we do, so we check to see if the size if the next
             // thing we're expecting to see.
-            expected: BitArraySegmentExpectedItem::Size,
+            expected: ExpectedBitArraySegmentItem::Size,
             segment_value_needs_wrapping: _,
             segment_size_needs_wrapping: _,
         }) = self.position.last()
@@ -3539,7 +3598,7 @@ impl ErlangSourceBuilder {
                 expected: TypeSpecExpectedItem::TypeDefinition,
             }
             | ErlangSourceBuilderPosition::MapField {
-                expected: MapFieldExpectedItem::Key | MapFieldExpectedItem::Value,
+                expected: ExpectedMapFieldItem::Key | ExpectedMapFieldItem::Value,
             }
             | ErlangSourceBuilderPosition::List {
                 expected: ExpectedListItem::First | ExpectedListItem::Rest,
@@ -3547,9 +3606,9 @@ impl ErlangSourceBuilder {
             }
             | ErlangSourceBuilderPosition::BitArraySegment {
                 expected:
-                    BitArraySegmentExpectedItem::Size
-                    | BitArraySegmentExpectedItem::Specifiers
-                    | BitArraySegmentExpectedItem::Value { .. },
+                    ExpectedBitArraySegmentItem::Size
+                    | ExpectedBitArraySegmentItem::Specifiers
+                    | ExpectedBitArraySegmentItem::Value { .. },
                 ..
             }
             | ErlangSourceBuilderPosition::FunctionCall {
@@ -3604,8 +3663,11 @@ impl ErlangSourceBuilder {
 
     /// This produces a pretty printed error message including the current
     /// position.
-    fn error_with_position(&self, expected: &str) -> String {
-        let position = self.position.last();
+    fn error_with_position(
+        &self,
+        expected: &str,
+        position: Option<&ErlangSourceBuilderPosition>,
+    ) -> String {
         format!("tried {expected}, position: {position:?}")
     }
 
@@ -3624,6 +3686,29 @@ impl ErlangSourceBuilder {
             }
         }
     }
+}
+
+static UNICODE_ESCAPE_SEQUENCE_PATTERN: OnceLock<Regex> = OnceLock::new();
+
+/// This takes the content of a literal string and escapes it to something
+/// suitable to be used in an Erlang literal string.
+fn escape_literal_string_content(content: &str) -> EcoString {
+    UNICODE_ESCAPE_SEQUENCE_PATTERN
+        .get_or_init(|| {
+            Regex::new(r#"(\\+)(u)"#).expect("Unicode escape sequence regex cannot be constructed")
+        })
+        // `\\u`-s should not be affected, so that "\\u..." is not converted to
+        // "\\x...". That's why capturing groups is used to exclude cases that
+        // shouldn't be replaced.
+        .replace_all(content, |caps: &regex::Captures<'_>| {
+            let slashes = caps.get(1).map_or("", |match_| match_.as_str());
+            if slashes.len().is_multiple_of(2) {
+                format!("{slashes}u")
+            } else {
+                format!("{slashes}x")
+            }
+        })
+        .into()
 }
 
 /// This wraps an atom name in between single quotes if needed.

@@ -20,6 +20,7 @@ use gleam_core::{
 };
 use itertools::Itertools;
 use pretty_arena::*;
+use src_span::SrcSpan;
 use std::cmp::Ordering;
 use vec1::Vec1;
 
@@ -517,16 +518,46 @@ impl<'a, 'doc> Formatter<'a> {
                         .append(arena, COLON_SPACE_DOCUMENT)
                         .append(arena, self.type_ast(arena, type_)),
                 };
-                head.append(arena, SPACE_EQUAL_SPACE_DOCUMENT)
-                    .append(arena, self.const_expr(arena, value).group(arena))
+
+                let value = match value.as_ref() {
+                    UntypedConstant::List { .. }
+                    | UntypedConstant::Tuple { .. }
+                    | UntypedConstant::BitArray { .. } => {
+                        let expression_comments = self.pop_comments(value.location().start);
+                        let expression_doc = self.const_expr(arena, value);
+                        match printed_comments(arena, expression_comments, true) {
+                            Some(comments) => LINE_DOCUMENT
+                                .append(arena, comments)
+                                .append(arena, expression_doc)
+                                .nest(arena, INDENT),
+                            None => SPACE_DOCUMENT.append(arena, expression_doc),
+                        }
+                    }
+
+                    Constant::Int { .. }
+                    | Constant::Float { .. }
+                    | Constant::String { .. }
+                    | Constant::Record { .. }
+                    | Constant::RecordUpdate { .. }
+                    | Constant::Var { .. }
+                    | Constant::BinaryOperator { .. }
+                    | Constant::Invalid { .. }
+                    | Constant::Todo { .. } => BREAKABLE_SPACE_DOCUMENT
+                        .append(arena, self.const_expr(arena, value).group(arena))
+                        .nest(arena, INDENT),
+                }
+                .next_break_fits(arena, NextBreakFitsMode::Disabled)
+                .group(arena);
+
+                docvec![arena, head, SPACE_EQUAL_DOCUMENT, value]
             }
         }
     }
 
-    fn const_expr<A>(
+    fn const_expr(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
-        value: &'a Constant<A>,
+        value: &'a UntypedConstant,
     ) -> Document<'a, 'doc> {
         let comments = self.pop_comments(value.location().start);
         let document = match value {
@@ -635,15 +666,14 @@ impl<'a, 'doc> Formatter<'a> {
                 ..
             } => docvec![arena, module, DOT_DOCUMENT, name],
 
-            Constant::StringConcatenation { left, right, .. } => self
-                .const_expr(arena, left)
-                .append(
-                    arena,
-                    BREAKABLE_SPACE_DOCUMENT.append(arena, CONCAT_DOCUMENT),
-                )
-                .nest(arena, INDENT)
-                .append(arena, SPACE_DOCUMENT)
-                .append(arena, self.const_expr(arena, right)),
+            Constant::BinaryOperator {
+                left,
+                right,
+                operator,
+                ..
+            } => {
+                self.constant_binary_operator(arena, operator, left.as_ref(), right.as_ref(), false)
+            }
 
             Constant::RecordUpdate {
                 module,
@@ -659,12 +689,12 @@ impl<'a, 'doc> Formatter<'a> {
         commented(arena, document, comments)
     }
 
-    fn const_list<A>(
+    fn const_list(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
-        elements: &'a [Constant<A>],
+        elements: &'a [UntypedConstant],
         location: &SrcSpan,
-        tail: &'a Option<Box<Constant<A>>>,
+        tail: &'a Option<Box<UntypedConstant>>,
     ) -> Document<'a, 'doc> {
         if elements.is_empty() {
             // We take all comments that come _before_ the end of the list,
@@ -696,11 +726,16 @@ impl<'a, 'doc> Formatter<'a> {
             ItemsPacking::FitOnePerLine | ItemsPacking::BreakOnePerLine => COMMA_BREAK_DOCUMENT,
         };
 
+        let list_size = elements.len()
+            + match tail {
+                Some(_) => 1,
+                None => 0,
+            };
         let mut is_empty = true;
         let mut elements_doc = EMPTY_DOCUMENT;
         for element in elements.iter() {
             let empty_lines = self.pop_empty_lines(element.location().start);
-            let element_doc = self.const_expr(arena, element);
+            let element_doc = self.comma_separated_constant_item(arena, element, list_size);
 
             elements_doc = if is_empty {
                 is_empty = false;
@@ -770,10 +805,10 @@ impl<'a, 'doc> Formatter<'a> {
         }
     }
 
-    pub fn const_tuple<A>(
+    pub fn const_tuple(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
-        elements: &'a [Constant<A>],
+        elements: &'a [UntypedConstant],
         location: &SrcSpan,
     ) -> Document<'a, 'doc> {
         if elements.is_empty() {
@@ -795,31 +830,14 @@ impl<'a, 'doc> Formatter<'a> {
             };
         }
 
-        let arguments_docs = elements
-            .iter()
-            .map(|element| self.const_expr(arena, element));
-        let tuple_doc = OPEN_TUPLE_BREAK_DOCUMENT
-            .append(
-                arena,
-                arena
-                    .join(arguments_docs, COMMA_BREAK_DOCUMENT)
-                    .next_break_fits(arena, NextBreakFitsMode::Disabled),
-            )
-            .nest(arena, INDENT);
-
-        let comments = self.pop_comments(location.end);
-        match printed_comments(arena, comments, false) {
-            None => tuple_doc
-                .append(arena, TRAILING_COMMA_BREAK_DOCUMENT)
-                .append(arena, CLOSE_PAREN_DOCUMENT)
-                .group(arena),
-            Some(comments) => tuple_doc
-                .append(arena, TRAILING_COMMA_BREAK_DOCUMENT.nest(arena, INDENT))
-                .append(arena, comments.nest(arena, INDENT))
-                .append(arena, LINE_DOCUMENT)
-                .append(arena, CLOSE_PAREN_DOCUMENT)
-                .force_break(arena),
-        }
+        self.append_inlinable_wrapped_arguments(
+            arena,
+            HASHTAG_DOCUMENT,
+            elements,
+            location,
+            |constant| !constant.is_tuple() && is_constant_breakable_argument(constant),
+            |self_, constant| self_.comma_separated_constant_item(arena, constant, elements.len()),
+        )
     }
 
     fn documented_definition(
@@ -1795,17 +1813,17 @@ impl<'a, 'doc> Formatter<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn const_record_update<A>(
+    pub fn const_record_update(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
         module: &Option<(EcoString, SrcSpan)>,
         name: &'a EcoString,
-        record: &'a RecordBeingUpdated<Constant<A>>,
-        arguments: &'a [RecordUpdateArg<Constant<A>>],
+        record: &'a RecordBeingUpdated<UntypedConstant>,
+        arguments: &'a [RecordUpdateArg<UntypedConstant>],
         location: &SrcSpan,
     ) -> Document<'a, 'doc> {
         let constructor_doc = match module {
-            Some((m, _)) => m
+            Some((module, _)) => module
                 .to_doc(arena)
                 .append(arena, DOT_DOCUMENT)
                 .append(arena, name.as_str()),
@@ -1816,41 +1834,32 @@ impl<'a, 'doc> Formatter<'a> {
             .chain(arguments.iter().map(RecordUpdatePiece::Argument))
             .collect_vec();
 
-        let docs = pieces
-            .iter()
-            .map(|piece| match piece {
+        self.append_inlinable_wrapped_arguments(
+            arena,
+            constructor_doc,
+            &pieces,
+            location,
+            |argument| {
+                let expression = match argument {
+                    RecordUpdatePiece::Argument(argument) => &argument.value,
+                    RecordUpdatePiece::Record(record) => &record.base,
+                };
+                is_constant_breakable_argument(expression)
+            },
+            |this, argument| match argument {
                 RecordUpdatePiece::Argument(argument) => {
-                    let comments = self.pop_comments(argument.location.start);
-                    let doc = match argument {
-                        _ if argument.uses_label_shorthand() => argument
-                            .label
-                            .as_str()
-                            .to_doc(arena)
-                            .append(arena, COLON_DOCUMENT),
-                        _ => argument
-                            .label
-                            .as_str()
-                            .to_doc(arena)
-                            .append(arena, COLON_SPACE_DOCUMENT)
-                            .append(arena, self.const_expr(arena, &argument.value))
-                            .group(arena),
-                    };
-                    commented(arena, doc, comments)
+                    this.constant_record_update_argument(arena, argument)
                 }
                 RecordUpdatePiece::Record(record) => {
-                    let comments = self.pop_comments(record.location.start);
+                    let comments = this.pop_comments(record.location.start);
                     commented(
                         arena,
-                        DOT_DOT_DOCUMENT.append(arena, self.const_expr(arena, &record.base)),
+                        DOT_DOT_DOCUMENT.append(arena, this.const_expr(arena, &record.base)),
                         comments,
                     )
                 }
-            })
-            .collect_vec();
-
-        constructor_doc
-            .append(arena, self.wrap_arguments(arena, docs, location.end))
-            .group(arena)
+            },
+        )
     }
 
     pub fn bin_op(
@@ -1880,6 +1889,81 @@ impl<'a, 'doc> Formatter<'a> {
             )
             .append(arena, SPACE_DOCUMENT)
             .append(arena, right_side)
+    }
+
+    pub fn constant_binary_operator(
+        &mut self,
+        arena: &'doc DocumentArena<'a, 'doc>,
+        name: &'a BinOp,
+        left: &'a UntypedConstant,
+        right: &'a UntypedConstant,
+        nest_steps: bool,
+    ) -> Document<'a, 'doc> {
+        let left_side = self.constant_binary_operator_side(arena, name, left, nest_steps);
+
+        let comments = self.pop_comments(right.location().start);
+        let name_doc =
+            BREAKABLE_SPACE_DOCUMENT.append(arena, commented(arena, binop(*name), comments));
+
+        let right_side = self.constant_binary_operator_side(arena, name, right, nest_steps);
+
+        docvec![
+            arena,
+            left_side,
+            if nest_steps {
+                name_doc.nest(arena, INDENT)
+            } else {
+                name_doc
+            },
+            SPACE_DOCUMENT,
+            right_side
+        ]
+    }
+
+    fn constant_binary_operator_side(
+        &mut self,
+        arena: &'doc DocumentArena<'a, 'doc>,
+        operator: &'a BinOp,
+        side: &'a UntypedConstant,
+        nest_steps: bool,
+    ) -> Document<'a, 'doc> {
+        let side_doc = match side {
+            UntypedConstant::String { value, .. } => self.bin_op_string(arena, value),
+            UntypedConstant::BinaryOperator {
+                operator,
+                left,
+                right,
+                ..
+            } => self.constant_binary_operator(arena, operator, left, right, nest_steps),
+            UntypedConstant::Int { .. }
+            | UntypedConstant::Float { .. }
+            | UntypedConstant::Var { .. }
+            | UntypedConstant::List { .. }
+            | UntypedConstant::Tuple { .. }
+            | UntypedConstant::Todo { .. }
+            | UntypedConstant::BitArray { .. }
+            | UntypedConstant::Invalid { .. }
+            | UntypedConstant::Record { .. }
+            | UntypedConstant::RecordUpdate { .. } => self.const_expr(arena, side),
+        };
+        match side.bin_op_name() {
+            // In case the other side is a binary operation as well and it can
+            // be grouped together with the current binary operation, the two
+            // docs are simply concatenated, so that they will end up in the
+            // same group and the formatter will try to keep those on a single
+            // line.
+            Some(side_name) if side_name.can_be_grouped_with(operator) => side_doc,
+            // In case the binary operations cannot be grouped together the
+            // other side is treated as a group on its own so that it can be
+            // broken independently of other pieces of the binary operations
+            // chain.
+            _ => self.operator_side(
+                arena,
+                side_doc.group(arena),
+                operator.precedence(),
+                side.bin_op_precedence(),
+            ),
+        }
     }
 
     fn bin_op_side(
@@ -2364,6 +2448,42 @@ impl<'a, 'doc> Formatter<'a> {
                     .group(arena);
 
                 if argument.value.is_binop() || argument.value.is_pipeline() {
+                    commented(arena, doc, comments).nest(arena, INDENT)
+                } else {
+                    commented(arena, doc, comments)
+                }
+            }
+        }
+    }
+
+    fn constant_record_update_argument(
+        &mut self,
+        arena: &'doc DocumentArena<'a, 'doc>,
+        argument: &'a RecordUpdateArg<UntypedConstant>,
+    ) -> Document<'a, 'doc> {
+        let comments = self.pop_comments(argument.location.start);
+        match argument {
+            // Argument supplied with a label shorthand.
+            _ if argument.uses_label_shorthand() => commented(
+                arena,
+                argument
+                    .label
+                    .as_str()
+                    .to_doc(arena)
+                    .append(arena, COLON_DOCUMENT),
+                comments,
+            ),
+            // Labelled argument.
+            _ => {
+                let doc = argument
+                    .label
+                    .as_str()
+                    .to_doc(arena)
+                    .append(arena, COLON_SPACE_DOCUMENT)
+                    .append(arena, self.const_expr(arena, &argument.value))
+                    .group(arena);
+
+                if argument.value.is_binop() {
                     commented(arena, doc, comments).nest(arena, INDENT)
                 } else {
                     commented(arena, doc, comments)
@@ -2900,6 +3020,47 @@ impl<'a, 'doc> Formatter<'a> {
         }
     }
 
+    /// Pretty prints an expression to be used in a comma separated list; for
+    /// example as a list item, a tuple item or as an argument of a function call.
+    fn comma_separated_constant_item(
+        &mut self,
+        arena: &'doc DocumentArena<'a, 'doc>,
+        constant: &'a UntypedConstant,
+        siblings: usize,
+    ) -> Document<'a, 'doc> {
+        // If there's more than one item in the comma separated list and there's a
+        // pipeline or long binary chain, we want to indent those to make it
+        // easier to tell where one item ends and the other starts.
+        // Othewise we just print the expression as a normal expr.
+        match constant {
+            UntypedConstant::BinaryOperator {
+                operator,
+                left,
+                right,
+                ..
+            } if siblings > 1 => {
+                let comments = self.pop_comments(constant.location().start);
+                let doc = self
+                    .constant_binary_operator(arena, operator, left, right, true)
+                    .group(arena);
+                commented(arena, doc, comments)
+            }
+
+            UntypedConstant::Int { .. }
+            | UntypedConstant::Float { .. }
+            | UntypedConstant::String { .. }
+            | UntypedConstant::Tuple { .. }
+            | UntypedConstant::List { .. }
+            | UntypedConstant::Record { .. }
+            | UntypedConstant::RecordUpdate { .. }
+            | UntypedConstant::BitArray { .. }
+            | UntypedConstant::Var { .. }
+            | UntypedConstant::BinaryOperator { .. }
+            | UntypedConstant::Invalid { .. }
+            | UntypedConstant::Todo { .. } => self.const_expr(arena, constant).group(arena),
+        }
+    }
+
     fn pattern(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
@@ -3196,10 +3357,10 @@ impl<'a, 'doc> Formatter<'a> {
         }
     }
 
-    fn constant_call_arg<A>(
+    fn constant_call_arg(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
-        argument: &'a CallArg<Constant<A>>,
+        argument: &'a CallArg<UntypedConstant>,
     ) -> Document<'a, 'doc> {
         self.format_call_arg(
             arena,
@@ -3537,7 +3698,7 @@ impl<'a, 'doc> Formatter<'a> {
             Some(comment) => docvec![
                 arena,
                 TRAILING_COMMA_BREAK_DOCUMENT.nest(arena, INDENT),
-                comment,
+                comment.nest(arena, INDENT),
                 LINE_DOCUMENT,
                 CLOSE_PAREN_DOCUMENT
             ]
@@ -3759,11 +3920,11 @@ impl<'a, 'doc> Formatter<'a> {
         doc.group(arena)
     }
 
-    fn append_as_message_constant<A>(
+    fn append_as_message_constant(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
         doc: Document<'a, 'doc>,
-        message: Option<&'a Constant<A>>,
+        message: Option<&'a UntypedConstant>,
     ) -> Document<'a, 'doc> {
         let Some(message) = message else { return doc };
 
@@ -4055,6 +4216,22 @@ fn is_breakable_argument(expression: &UntypedExpr, arity: usize) -> bool {
     }
 }
 
+fn is_constant_breakable_argument(expression: &UntypedConstant) -> bool {
+    match expression {
+        Constant::Tuple { .. } | Constant::List { .. } | Constant::BitArray { .. } => true,
+
+        Constant::Int { .. }
+        | Constant::Float { .. }
+        | Constant::String { .. }
+        | Constant::Record { .. }
+        | Constant::RecordUpdate { .. }
+        | Constant::Var { .. }
+        | Constant::BinaryOperator { .. }
+        | Constant::Invalid { .. }
+        | Constant::Todo { .. } => false,
+    }
+}
+
 enum CallArgFormatting<'a, A> {
     ShorthandLabelled(&'a EcoString),
     Unlabelled(&'a A),
@@ -4103,9 +4280,9 @@ fn pattern_call_arg_formatting(
     }
 }
 
-fn constant_call_arg_formatting<A>(
-    argument: &CallArg<Constant<A>>,
-) -> CallArgFormatting<'_, Constant<A>> {
+fn constant_call_arg_formatting(
+    argument: &CallArg<UntypedConstant>,
+) -> CallArgFormatting<'_, UntypedConstant> {
     match argument {
         // An argument supplied using label shorthand syntax.
         _ if argument.uses_label_shorthand() => CallArgFormatting::ShorthandLabelled(

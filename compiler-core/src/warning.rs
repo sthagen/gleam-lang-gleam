@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2020 The Gleam contributors
 
 use crate::{
-    ast::{BitArraySegmentTruncation, SrcSpan, TodoKind},
+    ast::{BitArraySegmentTruncation, TodoKind},
     build::Target,
     diagnostic::{self, Diagnostic, ExtraLabel, Location},
     error::wrap,
@@ -21,6 +21,7 @@ use camino::Utf8PathBuf;
 use debug_ignore::DebugIgnore;
 use ecow::EcoString;
 use itertools::Itertools;
+use src_span::SrcSpan;
 use std::{
     io::Write,
     sync::{Arc, atomic::Ordering},
@@ -187,7 +188,7 @@ pub enum Warning {
     },
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum DeprecatedSyntaxWarning {
     /// If someone uses the deprecated syntax to append to a list:
     /// `["a"..rest]`, notice how there's no comma!
@@ -220,6 +221,21 @@ pub enum DeprecatedSyntaxWarning {
     ///
     DeprecatedListCatchAllPattern {
         location: SrcSpan,
+    },
+
+    /// If someone uses the deprecated syntax to bind an entire list to a
+    /// variable with a spread, instead of using the variable directly:
+    /// ```gleam
+    /// case list {
+    ///   [..x] -> todo
+    /// //^^^^^ this matches the whole list so `x` should be used instead!
+    ///   _ ->
+    /// }
+    /// ```
+    ///
+    DeprecatedListSpreadAsVariablePattern {
+        location: SrcSpan,
+        name: EcoString,
     },
 
     /// If a record pattern has a spread that is not preceded by a comma:
@@ -350,7 +366,32 @@ To match on all possible lists, use the `_` catch-all pattern instead.",
                 level: diagnostic::Level::Warning,
                 location: Some(Location {
                     label: diagnostic::Label {
-                        text: Some("This can be replaced with `_`".into()),
+                        text: Some("Replace this with `_`".into()),
+                        span: *location,
+                    },
+                    path: path.clone(),
+                    src: src.clone(),
+                    extra_labels: vec![],
+                }),
+            },
+
+            Warning::DeprecatedSyntax {
+                path,
+                src,
+                warning:
+                    DeprecatedSyntaxWarning::DeprecatedListSpreadAsVariablePattern { location, name },
+            } => Diagnostic {
+                title: "Deprecated list pattern matching syntax".into(),
+                text: wrap_format!(
+                    "This syntax for pattern matching on lists is deprecated.
+This spread matches the entire list, so the variable {name} can be used as \
+the pattern directly instead.",
+                ),
+                hint: None,
+                level: diagnostic::Level::Warning,
+                location: Some(Location {
+                    label: diagnostic::Label {
+                        text: Some(format!("Replace this with `{name}`")),
                         span: *location,
                     },
                     path: path.clone(),

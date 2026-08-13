@@ -9,9 +9,38 @@
 
 ### Compiler
 
-- When compiling to JavaScript any case clauses found to be unreachable will no
+- When compiling to Erlang any case clauses found to be unreachable will no
   longer generate any code.
   ([Jack Programs](https://github.com/jackprogramsjp))
+
+- The compiler now emits a warning when trying to use the pattern of a spread
+  and a variable when pattern matching inside a 'case' clause.
+  This syntax may be removed in a future (major) release.
+
+  Considering the following Gleam code:
+
+  ```gleam
+  pub fn main() {
+    let letters = ["b", "c"]
+    case letters {
+      [] -> []
+      [..x] -> x
+    }
+  }
+  ```
+
+  The compiler will emit the following warning:
+
+  ```txt
+  warning: Deprecated list pattern matching syntax
+    ┌─ /main.gleam:6:9
+    │
+  6 │         [..x] -> x
+    │         ^^^^^ This can be replaced with the variable itself
+  ```
+
+  ([Khalid Belkassmi E.H.](https://github.com/khalidbelk))
+
 
 - The compiler now has a specific error message for when trying to use
   procedural operators that do not exist in Gleam, such as `+=` and `++`.
@@ -28,11 +57,65 @@
   to optimise.
   ([John Downey](https://github.com/jtdowney))
 
+- When producing TypeScript annotations, the compiler now produces overloads to
+  narrow the type of variants of a custom type. For example, given the following
+  type:
+
+  ```gleam
+  pub type Box(value) {
+    Full(value)
+    Empty
+  }
+  ```
+
+  Will now produce these two additional overloads:
+
+  ```ts
+  export function Box$isFull<I>(value: Box$<I>): value is Full<I>;
+  export function Box$isEmpty<I>(value: Box$<I>): value is Empty;
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The compiler is now fault tolerant when it runs into unsupported binary
+  operators used in constants. Instead than stopping to analyse the whole module
+  the compiler now produces an error message explaining the operator is not
+  supported. For example:
+
+  ```gleam
+  pub const wibble = 1.1 *. 11.0
+  ```
+
+  Results in the following error:
+
+  ```
+  error: Unsupported operator in constant expression
+    ┌─ /Users/giacomocavalieri/Desktop/prova/src/prova.gleam:1:24
+    │
+  1 │ pub const wibble = 1.1 *. 11.0
+    │                        ^^
+
+  This operator is currently not supported in constants.
+  ```
+
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- The compiler now provides a specific error message directing the user to the
+  correct syntax when trying to update a record after providing fields.
+  ([0xda157](https://github.com/0xda157))
+
 ### Build tool
 
 - The build tool now stores its build cache in a more compact binary format,
   making the cache files noticeably smaller.
-  ([Andrey Kozhev](httos://github.com/ankddev))
+  ([Andrey Kozhev](https://github.com/ankddev))
+
+- The `ext` protocol is now explicitly disabled when when fetching git
+  dependencies. This protocol is disabled by default since 2015, so this
+  has no impact unless the user is using a very old version of git or has
+  enabled this protocol in their configuration.
+  ([Amr Kadry](https://github.com/Amrkadry) and
+  ([Louis Pilfold](https://github.com/lpil))
 
 ### Language server
 
@@ -63,6 +146,10 @@
 - Fixed a bug where the language server would incorrectly rename values and
   types with a same-named import alias.
   ([Andrey Kozhev](https://github.com/ankddev))
+
+- Fixed a bug where comments after the last item in a tuple, or after the last
+  argument in a function call wouldn't be formatted properly.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 ## v1.18.1 - 2026-08-01
 

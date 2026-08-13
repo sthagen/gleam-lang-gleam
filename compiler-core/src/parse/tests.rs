@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2021 The Gleam contributors
 
-use crate::ast::SrcSpan;
 use crate::parse::error::{
     InvalidUnicodeEscapeError, LexicalError, LexicalErrorType, ParseError, ParseErrorType,
 };
@@ -9,6 +8,7 @@ use crate::parse::lexer::make_tokenizer;
 use crate::parse::token::Token;
 use crate::warning::WarningEmitter;
 use camino::Utf8PathBuf;
+use src_span::SrcSpan;
 
 use ecow::EcoString;
 use itertools::Itertools;
@@ -2594,5 +2594,99 @@ pub type Wibble {
   wibble(Int, String)
 }
 "#
+    );
+}
+
+#[test]
+fn record_trailing_update_const() {
+    assert_module_error!(
+        "
+pub type Wibble {
+    Wibble(field1: Int, field2: Int)
+}
+
+const wibble = Wibble(1, 2)
+const wobble = Wibble(field1: 0, ..wibble)
+        "
+    );
+}
+
+#[test]
+fn record_trailing_update_no_close_paran_const() {
+    assert_module_error!(
+        "
+pub type Wibble {
+    Wibble(field1: Int, field2: Int)
+}
+
+const wibble = Wibble(1, 2)
+const wobble = Wibble(field1: 0, ..wibble
+
+pub fn main() {
+  todo
+}
+        "
+    );
+}
+
+#[test]
+fn record_trailing_dot_dot_const() {
+    assert_module_error!(
+        "
+pub type Wibble {
+    Wibble(field1: Int, field2: Int)
+}
+
+const wibble = Wibble(1, 2)
+const wobble = Wibble(field1: 0, ..)
+        "
+    );
+}
+
+#[test]
+fn record_trailing_update_variable() {
+    assert_module_error!(
+        "
+pub type Wibble {
+    Wibble(field1: Int, field2: Int)
+}
+
+pub fn main() {
+  let wibble = Wibble(1, 2)
+  let wobble = Wibble(field1: 0, ..wibble)
+}
+        "
+    );
+}
+
+#[test]
+fn record_trailing_dot_dot_variable() {
+    assert_module_error!(
+        "
+pub type Wibble {
+    Wibble(field1: Int, field2: Int)
+}
+
+pub fn main() {
+  let wibble = Wibble(1, 2)
+  let wobble = Wibble(field1: 0, ..)
+}
+        "
+    );
+}
+
+#[test]
+fn record_trailing_update_no_close_paran_variable() {
+    assert_module_error!(
+        "
+pub type Wibble {
+    Wibble(field1: Int, field2: Int)
+}
+
+pub fn main() {
+  let wibble = Wibble(1, 2)
+  let wobble = Wibble(field1: 0, ..wibble
+}
+        "
     );
 }

@@ -2328,6 +2328,22 @@ fn deprecated_list_pattern_syntax_1() {
     );
 }
 
+// https://github.com/gleam-lang/gleam/issues/6088
+#[test]
+fn deprecated_list_spread_variable_pattern_syntax() {
+    assert_warning!(
+        r#"
+pub fn main() {
+  let letters = ["b", "c"]
+  case letters {
+    [] -> []
+    [..x] -> x
+  }
+}
+"#
+    );
+}
+
 // https://github.com/gleam-lang/gleam/issues/3473
 #[test]
 fn deprecated_record_pattern_syntax() {

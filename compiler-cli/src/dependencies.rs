@@ -914,12 +914,14 @@ impl ProvidedPackage {
             requirements,
             retirement_status: None,
             outer_checksum: vec![],
+            security_advisories: vec![],
             meta: (),
         };
         hexpm::Package {
             name: name.as_str().into(),
             repository: "local".into(),
             releases: vec![release],
+            advisories: vec![],
         }
     }
 
@@ -1349,7 +1351,19 @@ fn prepare_git_clone(clone_path: &Utf8Path, repo: &str, format: CloneFormat) -> 
             .arg(repo),
     )?;
 
-    let _ = execute_command(git_command(clone_path).arg("fetch").arg("origin"))?;
+    let _ = execute_command(
+        git_command(clone_path)
+            // Disable the `ext` protocol, which could be used to maliciously
+            // run shell commands by inserting them into the git remote value,
+            // e.g. `"ext::sh -c 'touch /tmp/pwned'"`.
+            // This protocol has been disabled by default in git since 2015,
+            // but it's good to be extra careful.
+            .arg("-c")
+            .arg("protocol.ext.allow=never")
+            // Fetch the remote named "origin"
+            .arg("fetch")
+            .arg("origin"),
+    )?;
 
     Ok(())
 }

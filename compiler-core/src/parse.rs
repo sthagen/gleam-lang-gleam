@@ -64,12 +64,11 @@ use crate::ast::{
     BitArraySegment, BitArraySize, CAPTURE_VARIABLE, CallArg, Clause, ClauseGuard, Constant,
     CustomType, Definition, Function, FunctionLiteralKind, HasLocation, Import, IntOperator,
     Module, ModuleConstant, Pattern, Publicity, RecordBeingUpdated, RecordConstructor,
-    RecordConstructorArg, RecordUpdateArg, SrcSpan, Statement, TailPattern, TargetedDefinition,
-    TodoKind, TypeAlias, TypeAst, TypeAstConstructor, TypeAstConstructorName, TypeAstFn,
-    TypeAstHole, TypeAstTuple, TypeAstVar, UnqualifiedImport, UntypedArg, UntypedClause,
-    UntypedClauseGuard, UntypedConstant, UntypedDefinition, UntypedExpr, UntypedModule,
-    UntypedPattern, UntypedRecordUpdateArg, UntypedStatement, UntypedUseAssignment, Use,
-    UseAssignment,
+    RecordConstructorArg, RecordUpdateArg, Statement, TailPattern, TargetedDefinition, TodoKind,
+    TypeAlias, TypeAst, TypeAstConstructor, TypeAstConstructorName, TypeAstFn, TypeAstHole,
+    TypeAstTuple, TypeAstVar, UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard,
+    UntypedConstant, UntypedDefinition, UntypedExpr, UntypedModule, UntypedPattern,
+    UntypedRecordUpdateArg, UntypedStatement, UntypedUseAssignment, Use, UseAssignment,
 };
 use crate::build::Target;
 use crate::error::wrap;
@@ -87,6 +86,7 @@ use error::{LexicalError, ParseError, ParseErrorType};
 use lexer::{LexResult, Spanned};
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
+use src_span::SrcSpan;
 use std::cmp::Ordering;
 use std::collections::{HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -993,6 +993,40 @@ where
                             _ => {
                                 // Call
                                 let arguments = self.parse_fn_arguments()?;
+
+                                if let Some((dot_dot_start, dot_dot_end)) =
+                                    self.maybe_one(&Token::DotDot)
+                                {
+                                    return match self.parse_const_value() {
+                                        Ok(None) | Err(_) => Err(ParseError {
+                                            error: ParseErrorType::UnexpectedToken {
+                                                token: Token::DotDot,
+                                                expected: vec![
+                                                    Token::RightParen.to_string().into(),
+                                                ],
+                                                hint: None,
+                                            },
+                                            location: SrcSpan {
+                                                start: dot_dot_start,
+                                                end: dot_dot_end,
+                                            },
+                                        }),
+                                        Ok(Some(value)) => {
+                                            let update_location = SrcSpan {
+                                                start: dot_dot_start,
+                                                end: value.location().end,
+                                            };
+
+                                            let (_, _) = self.expect_one(&Token::RightParen)?;
+
+                                            Err(ParseError {
+                                                location: update_location,
+                                                error: ParseErrorType::RecordUpdateAfterFields,
+                                            })
+                                        }
+                                    };
+                                }
+
                                 let (_, end) = self.expect_one(&Token::RightParen)?;
                                 expr = make_call(expr, arguments, start, end, left_paren)?;
                             }
@@ -1600,15 +1634,28 @@ where
                     None => None,
                 };
 
-                if elements.is_empty() && tail.as_ref().is_some_and(|pattern| pattern.is_discard())
-                {
-                    self.warnings
-                        .push(DeprecatedSyntaxWarning::DeprecatedListCatchAllPattern {
-                            location: SrcSpan {
-                                start,
-                                end: closing_square_bracket_end,
-                            },
-                        });
+                if elements.is_empty() {
+                    let location = SrcSpan {
+                        start,
+                        end: closing_square_bracket_end,
+                    };
+
+                    match tail.as_ref() {
+                        Some(Pattern::Discard { .. }) => {
+                            self.warnings.push(
+                                DeprecatedSyntaxWarning::DeprecatedListCatchAllPattern { location },
+                            );
+                        }
+                        Some(Pattern::Variable { name, .. }) => {
+                            self.warnings.push(
+                                DeprecatedSyntaxWarning::DeprecatedListSpreadAsVariablePattern {
+                                    location,
+                                    name: name.clone(),
+                                },
+                            );
+                        }
+                        _ => {}
+                    }
                 }
 
                 Pattern::List {
@@ -1945,7 +1992,7 @@ where
 
             t0 => {
                 self.token0 = t0;
-                match self.parse_const_value()? {
+                match self.parse_const_value_unit()? {
                     Some(const_val) => {
                         // Constant
                         Ok(Some(ClauseGuard::Constant(const_val)))
@@ -3328,11 +3375,54 @@ where
     //   [1,2,3]
     //   wibble <> "wobble"
     fn parse_const_value(&mut self) -> Result<Option<UntypedConstant>, ParseError> {
-        let constant_result = self.parse_const_value_unit();
-        match constant_result {
-            Ok(Some(constant)) => self.parse_const_maybe_concatenation(constant),
-            _ => constant_result,
+        // uses the simple operator parser algorithm
+        let mut opstack = vec![];
+        let mut estack = vec![];
+        let mut last_op_start = 0;
+        let mut last_op_end = 0;
+
+        loop {
+            match self.parse_const_value_unit()? {
+                Some(unit) => estack.push(unit),
+                _ if estack.is_empty() => return Ok(None),
+                _ => {
+                    return parse_error(
+                        ParseErrorType::OpNakedRight,
+                        SrcSpan {
+                            start: last_op_start,
+                            end: last_op_end,
+                        },
+                    );
+                }
+            }
+
+            let Some((operator_start, operator, operator_end)) = self.token0.take() else {
+                break;
+            };
+
+            let Some(precedence) = precedence(&operator) else {
+                self.token0 = Some((operator_start, operator, operator_end));
+                break;
+            };
+
+            // Is Op
+            self.advance();
+            last_op_start = operator_start;
+            last_op_end = operator_end;
+            let _ = handle_operator(
+                Some(((operator_start, operator, operator_end), precedence)),
+                &mut opstack,
+                &mut estack,
+                &do_reduce_constant,
+            );
         }
+
+        Ok(handle_operator(
+            None,
+            &mut opstack,
+            &mut estack,
+            &do_reduce_constant,
+        ))
     }
 
     fn parse_const_value_unit(&mut self) -> Result<Option<UntypedConstant>, ParseError> {
@@ -3595,39 +3685,6 @@ where
         }
     }
 
-    fn parse_const_maybe_concatenation(
-        &mut self,
-        left: UntypedConstant,
-    ) -> Result<Option<UntypedConstant>, ParseError> {
-        match self.token0.take() {
-            Some((op_start, Token::Concatenate, op_end)) => {
-                self.advance();
-
-                match self.parse_const_value() {
-                    Ok(Some(right_constant_value)) => Ok(Some(Constant::StringConcatenation {
-                        location: SrcSpan {
-                            start: left.location().start,
-                            end: right_constant_value.location().end,
-                        },
-                        left: Box::new(left),
-                        right: Box::new(right_constant_value),
-                    })),
-                    _ => parse_error(
-                        ParseErrorType::OpNakedRight,
-                        SrcSpan {
-                            start: op_start,
-                            end: op_end,
-                        },
-                    ),
-                }
-            }
-            t0 => {
-                self.token0 = t0;
-                Ok(Some(left))
-            }
-        }
-    }
-
     // Parse the '( .. )' of a const type constructor
     fn parse_const_record_finish(
         &mut self,
@@ -3680,6 +3737,38 @@ where
                 } else {
                     let arguments =
                         self.series_of(&Parser::parse_const_record_argument, Some(&Token::Comma))?;
+
+                    if let Some((dot_dot_start, dot_dot_end)) = self.maybe_one(&Token::DotDot) {
+                        return match self.parse_const_value() {
+                            Ok(None) | Err(_) => Err(ParseError {
+                                error: ParseErrorType::UnexpectedToken {
+                                    token: Token::DotDot,
+                                    expected: vec![Token::RightParen.to_string().into()],
+                                    hint: None,
+                                },
+                                location: SrcSpan {
+                                    start: dot_dot_start,
+                                    end: dot_dot_end,
+                                },
+                            }),
+                            Ok(Some(value)) => {
+                                let update_location = SrcSpan {
+                                    start: dot_dot_start,
+                                    end: value.location().end,
+                                };
+
+                                let (_, _) = self.expect_one_following_series(
+                                    &Token::RightParen,
+                                    "a constant record argument",
+                                )?;
+
+                                Err(ParseError {
+                                    location: update_location,
+                                    error: ParseErrorType::RecordUpdateAfterFields,
+                                })
+                            }
+                        };
+                    }
 
                     let (_, par_e) = self.expect_one_following_series(
                         &Token::RightParen,
@@ -5032,6 +5121,17 @@ fn do_reduce_clause_guard(operator: Spanned, estack: &mut Vec<UntypedClauseGuard
     }
 }
 
+/// Simple-Precedence-Parser, perform reduction for clause guard
+fn do_reduce_constant(op: Spanned, estack: &mut Vec<UntypedConstant>) {
+    match (estack.pop(), estack.pop()) {
+        (Some(er), Some(el)) => {
+            let new_e = constant_binop_reduction(op, el, er);
+            estack.push(new_e);
+        }
+        _ => panic!("Tried to reduce without 2 guards"),
+    }
+}
+
 /// Simple-Precedence-Parser, perform reduction for bit array size expressions
 fn reduce_bit_array_size((_, token, _): Spanned, experession_stack: &mut Vec<BitArraySize<()>>) {
     let operator = token_to_bit_array_size_operator(&token)
@@ -5103,6 +5203,28 @@ fn clause_guard_reduction(
         operator_start: start,
         left,
         right,
+    }
+}
+
+fn constant_binop_reduction(
+    (operator_start, operator_token, _end): Spanned,
+    left: UntypedConstant,
+    right: UntypedConstant,
+) -> UntypedConstant {
+    let location = SrcSpan {
+        start: left.location().start,
+        end: right.location().end,
+    };
+    let left = Box::new(left);
+    let right = Box::new(right);
+    let operator = token_to_binop(&operator_token).expect("Token could not be converted to binop.");
+    UntypedConstant::BinaryOperator {
+        location,
+        operator,
+        operator_start,
+        left,
+        right,
+        type_: (),
     }
 }
 

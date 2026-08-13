@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2023 The Gleam contributors
 
-use ecow::EcoString;
-use itertools::Itertools;
-use num_bigint::BigInt;
-use vec1::Vec1;
-
 use crate::{
     analyse::Inferred,
     ast::{
         Assert, AssignName, Assignment, BinOp, BitArraySize, CallArg, Constant, Definition,
         FunctionLiteralKind, InvalidExpression, Pattern, RecordBeingUpdated, RecordUpdateArg,
-        SrcSpan, Statement, TailPattern, TargetedDefinition, TodoKind, TypeAst, TypeAstConstructor,
+        Statement, TailPattern, TargetedDefinition, TodoKind, TypeAst, TypeAstConstructor,
         TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, UntypedArg, UntypedAssert,
         UntypedAssignment, UntypedClause, UntypedConstant, UntypedConstantBitArraySegment,
         UntypedCustomType, UntypedDefinition, UntypedExpr, UntypedExprBitArraySegment,
@@ -23,6 +18,11 @@ use crate::{
     parse::LiteralFloatValue,
     type_::error::VariableOrigin,
 };
+use ecow::EcoString;
+use itertools::Itertools;
+use num_bigint::BigInt;
+use src_span::SrcSpan;
+use vec1::Vec1;
 
 #[allow(dead_code)]
 pub trait UntypedModuleFolder: TypeAstFolder + UntypedExprFolder {
@@ -1038,11 +1038,16 @@ pub trait UntypedConstantFolder {
                 type_: (),
             } => self.fold_constant_var(location, module, name),
 
-            Constant::StringConcatenation {
+            Constant::BinaryOperator {
                 location,
+                operator_start,
                 left,
                 right,
-            } => self.fold_constant_string_concatenation(location, left, right),
+                operator,
+                type_: (),
+            } => {
+                self.fold_constant_binary_operator(location, operator_start, operator, left, right)
+            }
 
             Constant::Invalid {
                 location,
@@ -1184,16 +1189,21 @@ pub trait UntypedConstantFolder {
         }
     }
 
-    fn fold_constant_string_concatenation(
+    fn fold_constant_binary_operator(
         &mut self,
         location: SrcSpan,
+        operator_start: u32,
+        operator: BinOp,
         left: Box<UntypedConstant>,
         right: Box<UntypedConstant>,
     ) -> UntypedConstant {
-        Constant::StringConcatenation {
+        Constant::BinaryOperator {
             location,
+            operator_start,
+            operator,
             left,
             right,
+            type_: (),
         }
     }
 
@@ -1315,17 +1325,23 @@ pub trait UntypedConstantFolder {
                 Constant::BitArray { location, segments }
             }
 
-            Constant::StringConcatenation {
+            Constant::BinaryOperator {
                 location,
+                operator_start,
                 left,
                 right,
+                operator,
+                type_: (),
             } => {
                 let left = Box::new(self.fold_constant(*left));
                 let right = Box::new(self.fold_constant(*right));
-                Constant::StringConcatenation {
+                Constant::BinaryOperator {
                     location,
+                    operator_start,
+                    operator,
                     left,
                     right,
+                    type_: (),
                 }
             }
         }

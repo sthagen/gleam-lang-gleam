@@ -644,10 +644,12 @@ fn provided_local_to_hex() {
     let hex_package = hexpm::Package {
         name: "package".into(),
         repository: "local".into(),
+        advisories: vec![],
         releases: vec![hexpm::Release {
             version: Version::new(1, 0, 0),
             retirement_status: None,
             outer_checksum: vec![],
+            security_advisories: vec![],
             meta: (),
             requirements: [
                 (
@@ -704,11 +706,13 @@ fn provided_git_to_hex() {
     let hex_package = hexpm::Package {
         name: "package".into(),
         repository: "local".into(),
+        advisories: vec![],
         releases: vec![hexpm::Release {
             version: Version::new(1, 0, 0),
             retirement_status: None,
             outer_checksum: vec![],
             meta: (),
+            security_advisories: vec![],
             requirements: [
                 (
                     "req_1".into(),
@@ -1951,7 +1955,9 @@ fn signed_package(
             retirement_status: None,
             outer_checksum,
             meta: (),
+            security_advisories: vec![],
         }],
+        advisories: vec![],
     })
 }
 
@@ -1992,6 +1998,7 @@ fn verified_releases_errors_when_version_absent() {
         name: "wibble".into(),
         repository: "hexpm".into(),
         releases: vec![],
+        advisories: vec![],
     });
     let fetcher = FakeFetcher {
         packages: [("wibble".to_string(), empty)].into_iter().collect(),
