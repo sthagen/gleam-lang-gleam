@@ -5,12 +5,13 @@
 mod tests;
 mod wasm_filesystem;
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use gleam_core::{
     Error,
     analyse::TargetSupport,
     build::{
-        Mode, NullTelemetry, PackageCompiler, StaleTracker, Target, TargetCodegenConfiguration,
+        ErlangOutput, Mode, NullTelemetry, PackageCompiler, StaleTracker, Target,
+        TargetCodegenConfiguration,
     },
     config::PackageConfig,
     io::{FileSystemReader, FileSystemWriter},
@@ -125,7 +126,7 @@ pub fn compile_package(project_id: usize, target: &str) -> Result<(), String> {
         }
     };
 
-    do_compile_package(get_project(project_id), target).map_err(|e| e.pretty_string())
+    do_compile_package(get_project(project_id), target).map_err(|error| error.pretty_string())
 }
 
 /// Get the compiled JavaScript output for a given module.
@@ -167,11 +168,20 @@ pub fn pop_warning(project_id: usize) -> Option<String> {
     get_warnings(project_id).pop().map(|w| w.to_pretty_string())
 }
 
+/// Format the given source code using the Gleam formatter.
+///
+#[wasm_bindgen]
+pub fn format_source(source: &str) -> Result<String, String> {
+    let mut output = String::new();
+    gleam_format::pretty(&mut output, &source.into(), Utf8Path::new("<stdin>"))
+        .map_err(|e| e.pretty_string())?;
+    Ok(output)
+}
+
 fn do_compile_package(project: Project, target: Target) -> Result<(), Error> {
     let ids = UniqueIdGenerator::new();
     let mut type_manifests = im::HashMap::new();
     let mut defined_modules = im::HashMap::new();
-    #[allow(clippy::arc_with_non_send_sync)]
     let warning_emitter = WarningEmitter::new(Rc::new(project.warnings));
     let config = PackageConfig {
         name: "library".into(),
@@ -181,7 +191,13 @@ fn do_compile_package(project: Project, target: Target) -> Result<(), Error> {
     };
 
     let target = match target {
-        Target::Erlang => TargetCodegenConfiguration::Erlang { app_file: None },
+        Target::Erlang => TargetCodegenConfiguration::Erlang {
+            app_file: None,
+            // The wasm compiler is used for the Gleam playground, so we want
+            // to produce textual Erlang files that can be displayed, rather
+            // than the binary format that is used to run the code.
+            output: ErlangOutput::Textual,
+        },
         Target::JavaScript => TargetCodegenConfiguration::JavaScript {
             emit_typescript_definitions: false,
             emit_source_maps: false,

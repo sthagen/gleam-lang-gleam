@@ -176,7 +176,18 @@ pub enum TargetCodegenConfiguration {
     },
     Erlang {
         app_file: Option<ErlangAppCodegenConfiguration>,
+        output: ErlangOutput,
     },
+}
+
+/// Which Erlang format is used when compiling Gleam code for the
+/// Erlang target.
+#[derive(Debug, Clone, PartialEq, Copy, serde::Deserialize, serde::Serialize)]
+pub enum ErlangOutput {
+    /// Erlang abstract forms, using the .absr extension.
+    Binary,
+    /// Erlang source code, using the .erl extension.
+    Textual,
 }
 
 impl TargetCodegenConfiguration {
@@ -323,7 +334,16 @@ impl Module {
         module_erlang_name(&self.name)
     }
 
+    /// This is where the compiled binary `.abstr` file can be found.
     pub fn compiled_erlang_path(&self) -> Utf8PathBuf {
+        let mut path = Utf8PathBuf::from(&module_erlang_name(&self.name));
+        assert!(path.set_extension("abstr"), "Couldn't set file extension");
+        path
+    }
+
+    /// If compiling to textual Erlang files, this is where the compiled `.erl`
+    /// file can be found.
+    pub fn compiled_textual_erlang_path(&self) -> Utf8PathBuf {
         let mut path = Utf8PathBuf::from(&module_erlang_name(&self.name));
         assert!(path.set_extension("erl"), "Couldn't set file extension");
         path
@@ -502,9 +522,39 @@ pub enum Located<'a> {
         spread_location: SrcSpan,
         pattern: &'a TypedPattern,
     },
-    // A prefix alias or a suffix variable defined in a string prefix pattern:
-    // "prefix" as alias <> suffix
-    StringPrefixPatternVariable {
+    /// A prefix alias defined in a string prefix pattern:
+    ///
+    /// ```gleam
+    /// "prefix" as alias <> suffix
+    /// //       ^^^^^^^^
+    /// ```
+    StringPrefixPatternPrefixAlias {
+        /// Start position of the name:
+        /// ```gleam
+        /// "prefix" as alias <> suffix
+        /// //          ^
+        /// ```
+        name_start_position: u32,
+        /// Full location of the binding:
+        /// ```gleam
+        /// "prefix" as alias <> suffix
+        /// //      ^^^^^^^^^
+        /// ```
+        location: SrcSpan,
+        name: &'a EcoString,
+    },
+    /// A suffix variable defined in a string prefix pattern:
+    ///
+    /// ```gleam
+    /// "prefix" as alias <> suffix
+    /// //                   ^^^^^^
+    /// ```
+    StringPrefixPatternSuffix {
+        /// Location of the name:
+        /// ```gleam
+        /// "prefix" as alias <> suffix
+        /// //                   ^^^^^^
+        /// ```
         location: SrcSpan,
         name: &'a EcoString,
     },
@@ -636,7 +686,18 @@ impl<'a> Located<'a> {
         match self {
             Self::PatternSpread { .. } => None,
             Self::Pattern(pattern) => pattern.definition_location(),
-            Self::StringPrefixPatternVariable { location, .. } => Some(DefinitionLocation {
+            Self::StringPrefixPatternPrefixAlias {
+                name_start_position,
+                location,
+                ..
+            } => {
+                let name_location = SrcSpan::new(*name_start_position, location.end);
+                Some(DefinitionLocation {
+                    module: None,
+                    span: name_location,
+                })
+            }
+            Self::StringPrefixPatternSuffix { location, .. } => Some(DefinitionLocation {
                 module: None,
                 span: *location,
             }),
@@ -719,7 +780,8 @@ impl<'a> Located<'a> {
     pub(crate) fn type_(&self) -> Option<Arc<Type>> {
         match self {
             Located::Pattern(pattern) => Some(pattern.type_()),
-            Located::StringPrefixPatternVariable { .. } => Some(type_::string()),
+            Located::StringPrefixPatternPrefixAlias { .. }
+            | Located::StringPrefixPatternSuffix { .. } => Some(type_::string()),
             Located::Statement(statement) => Some(statement.type_()),
             Located::Expression { expression, .. } => Some(expression.type_()),
             Located::Arg(arg) => Some(arg.type_.clone()),

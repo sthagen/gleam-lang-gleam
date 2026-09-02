@@ -1,0 +1,24 @@
+---
+source: test-output/src/tests/output.rs
+expression: output
+---
+--- main.gleam ----------------------
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2025 The Gleam contributors
+
+import thing
+
+pub fn main() {
+  echo #(1, singleton(), singleton())
+  Nil
+}
+
+@external(javascript, "./main_ffi.mjs", "singleton")
+fn singleton() -> thing.Thing {
+  thing.Thing
+}
+
+
+--- gleam run output ----------------
+[90msrc/main.gleam:7[39m
+#(1, Thing, Thing)

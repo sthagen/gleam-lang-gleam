@@ -58,7 +58,7 @@ fn echo<Output>(builder: &mut impl ErlangBuilder<Output>) {
     builder.match_operator(location);
     builder.variable_pattern(location, "StringValue");
     let call = builder.start_call(location);
-    builder.atom(location, "echo@inspect");
+    builder.atom_expression(location, "echo@inspect");
     let call = builder.end_called_expression(call);
     builder.variable(location, "Value");
     builder.end_call(call);
@@ -96,11 +96,11 @@ fn echo<Output>(builder: &mut impl ErlangBuilder<Output>) {
 
     builder.match_operator(location);
     builder.variable_pattern(location, "Grey");
-    builder.string(location, "\\e[90m");
+    builder.string(location, "\\u{1B}[90m");
 
     builder.match_operator(location);
     builder.variable_pattern(location, "ResetColour");
-    builder.string(location, "\\e[39m");
+    builder.string(location, "\\u{1B}[39m");
 
     // Finally, we piece everything together and print it.
     // io:put_chars(
@@ -112,7 +112,7 @@ fn echo<Output>(builder: &mut impl ErlangBuilder<Output>) {
     // )
     let call = builder.start_remote_call(location, ErlangModuleName::io(), "put_chars");
     {
-        builder.atom(location, "standard_error");
+        builder.atom_expression(location, "standard_error");
 
         builder.cons_list(location);
         builder.variable(location, "Grey");
@@ -243,16 +243,16 @@ fn echo_inspect<Output>(builder: &mut impl ErlangBuilder<Output>) {
             builder.binary_operator(location, "andalso");
             builder.binary_operator(location, "=/=");
             variable_tuple_element(builder, "Record", 1);
-            builder.atom(location, "false");
+            builder.atom_expression(location, "false");
 
             builder.binary_operator(location, "andalso");
             builder.binary_operator(location, "=/=");
             variable_tuple_element(builder, "Record", 1);
-            builder.atom(location, "true");
+            builder.atom_expression(location, "true");
 
             builder.binary_operator(location, "=/=");
             variable_tuple_element(builder, "Record", 1);
-            builder.atom(location, "nil");
+            builder.atom_expression(location, "nil");
         }
         builder.end_clause_guard(guard);
         let clause = builder.end_clause_guards(clause);
@@ -455,14 +455,32 @@ fn inspect_binary<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let location = SrcSpan::default();
     let function = builder.start_function(location, "inspect@binary", 1, [(location, "Binary")]);
 
-    // case inspect@maybe_utf8_string(Binary, <<>>) of ...
+    // case inspect@maybe_utf8_string(Binary, false, <<>>) of ...
     let case = builder.start_case(location);
     let call = call_function(builder, location, "inspect@maybe_utf8_string");
     builder.variable(location, "Binary");
+    builder.atom_expression(location, "false");
     let bit_array = builder.start_bit_array(location);
     builder.end_bit_array(bit_array);
     builder.end_call(call);
     let case = builder.end_case_subject(case);
+
+    // We always display <<>> as the empty string, that's a totally arbitrary
+    // decision, we could have also gone with <<>> instead.
+
+    // _ when Binary =:= <<>> -> ~"\"\"";
+    let clause = builder.start_case_clause(location);
+    builder.discard_pattern(location);
+    let clause = builder.end_clause_pattern(clause);
+    let guard = builder.start_clause_guard();
+    builder.binary_operator(location, "=:=");
+    builder.variable(location, "Binary");
+    let bit_array = builder.start_bit_array(location);
+    builder.end_bit_array(bit_array);
+    builder.end_clause_guard(guard);
+    let clause = builder.end_clause_guards(clause);
+    builder.string(location, r#"\"\""#);
+    builder.end_clause_body(clause);
 
     // {ok, InspectedUtf8String} -> InspectedUtf8String;
     let clause = builder.start_case_clause(location);
@@ -475,13 +493,13 @@ fn inspect_binary<Output>(builder: &mut impl ErlangBuilder<Output>) {
     builder.variable(location, "InspectedUtf8String");
     builder.end_clause_body(clause);
 
-    // {error, not_a_utf8_string} ->
+    // {error, not_a_printable_string} ->
     //   Segments = [erlang:integer_to_list(X) || <<X>> <= Binary],
     //   ["<<", lists:join(", ", Segments), ">>"];
     let clause = builder.start_case_clause(location);
     let tuple = builder.start_tuple_pattern(location);
     builder.atom_pattern(location, "error");
-    builder.atom_pattern(location, "not_a_utf8_string");
+    builder.atom_pattern(location, "not_a_printable_string");
     builder.end_tuple_pattern(tuple);
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
@@ -534,7 +552,7 @@ fn inspect_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let case = builder.start_case(location);
     let call = call_function(builder, location, "inspect@maybe_gleam_atom");
     builder.variable(location, "Binary");
-    builder.atom(location, "none");
+    builder.atom_expression(location, "none");
     let bit_array = builder.start_bit_array(location);
     builder.end_bit_array(bit_array);
     builder.end_call(call);
@@ -581,7 +599,7 @@ fn inspect_list<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let case = builder.start_case(location);
     let call = call_function(builder, location, "inspect@list_loop");
     builder.variable(location, "List");
-    builder.atom(location, "true");
+    builder.atom_expression(location, "true");
     builder.end_call(call);
     let case = builder.end_case_subject(case);
 
@@ -726,7 +744,7 @@ fn inspect_record<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let case = builder.start_case(location);
     let call = call_function(builder, location, "inspect@maybe_gleam_atom");
     builder.variable(location, "Atom");
-    builder.atom(location, "none");
+    builder.atom_expression(location, "none");
     let bit_array = builder.start_bit_array(location);
     builder.end_bit_array(bit_array);
     builder.end_call(call);
@@ -857,19 +875,19 @@ fn inspect_function<Output>(builder: &mut impl ErlangBuilder<Output>) {
     builder.end_tuple_pattern(tuple);
     let call = builder.start_remote_call(location, ErlangModuleName::erlang(), "fun_info");
     builder.variable(location, "Function");
-    builder.atom(location, "arity");
+    builder.atom_expression(location, "arity");
     builder.end_call(call);
 
     // ArgsAsciiCodes = lists:seq($a, $a + Arity - 1),
     builder.match_operator(location);
     builder.variable_pattern(location, "ArgsAsciiCodes");
     let call = builder.start_remote_call(location, ErlangModuleName::lists(), "seq");
-    builder.int(location, 97.into());
+    builder.int_expression(location, 97.into());
     builder.binary_operator(location, "+");
-    builder.int(location, 97.into());
+    builder.int_expression(location, 97.into());
     builder.binary_operator(location, "-");
     builder.variable(location, "Arity");
-    builder.int(location, 1.into());
+    builder.int_expression(location, 1.into());
     builder.end_call(call);
 
     // Args = lists:join(", ", lists:map(fun(Arg) -> <<Arg>> end, ArgsAsciiCodes)),
@@ -911,21 +929,28 @@ fn inspect_maybe_utf8_string<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let function = builder.start_function(
         location,
         "inspect@maybe_utf8_string",
-        2,
-        [(location, "Binary"), (location, "Acc")],
+        3,
+        [
+            (location, "Binary"),
+            (location, "HasPrintableChars"),
+            (location, "Acc"),
+        ],
     );
     let case = builder.start_case(location);
     builder.variable(location, "Binary");
     let case = builder.end_case_subject(case);
 
-    // <<>> -> {ok, [~"\"", Acc, ~"\""]};
+    // <<>> if HasPrintableChars -> {ok, [~"\"", Acc, ~"\""]};
     let clause = builder.start_case_clause(location);
     let bit_array = builder.start_bit_array_pattern(location);
     builder.end_bit_array_pattern(bit_array);
     let clause = builder.end_clause_pattern(clause);
+    let guard = builder.start_clause_guard();
+    builder.variable(location, "HasPrintableChars");
+    builder.end_clause_guard(guard);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "ok");
+    builder.atom_expression(location, "ok");
     builder.cons_list(location);
     builder.string(location, "\\\"");
     builder.cons_list(location);
@@ -936,9 +961,22 @@ fn inspect_maybe_utf8_string<Output>(builder: &mut impl ErlangBuilder<Output>) {
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
+    // <<>> -> {error, not_a_printable_string};
+    let clause = builder.start_case_clause(location);
+    let bit_array = builder.start_bit_array_pattern(location);
+    builder.end_bit_array_pattern(bit_array);
+    let clause = builder.end_clause_pattern(clause);
+    let clause = builder.end_clause_guards(clause);
+    let tuple = builder.start_tuple(location);
+    builder.atom_expression(location, "error");
+    builder.atom_expression(location, "not_a_printable_string");
+    builder.end_tuple(tuple);
+    builder.end_clause_body(clause);
+
     // <<First/utf8, Rest/binary>> ->
-    //   Escaped = inspect@escape_grapheme(First),
-    //   inspect@maybe_utf8_string(Rest, <<Acc/binary, Escaped/binary>>);
+    //   {Escaped, IsPrintableChar} = inspect@escape_grapheme(First),
+    //   HasPrintableChars1 = HasPrintableChars orelse IsPrintableChar,
+    //   inspect@maybe_utf8_string(Rest, HasPrintableChars1, <<Acc/binary, Escaped/binary>>);
     let clause = builder.start_case_clause(location);
     let bit_array = builder.start_bit_array_pattern(location);
 
@@ -957,13 +995,23 @@ fn inspect_maybe_utf8_string<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_guards(clause);
 
     builder.match_operator(location);
+    let tuple = builder.start_tuple_pattern(location);
     builder.variable_pattern(location, "Escaped");
+    builder.variable_pattern(location, "IsPrintableChar");
+    builder.end_tuple_pattern(tuple);
     let call = call_function(builder, location, "inspect@escape_grapheme");
     builder.variable(location, "First");
     builder.end_call(call);
 
+    builder.match_operator(location);
+    builder.variable_pattern(location, "HasPrintableChars1");
+    builder.binary_operator(location, "orelse");
+    builder.variable(location, "HasPrintableChars");
+    builder.variable(location, "IsPrintableChar");
+
     let call = call_function(builder, location, "inspect@maybe_utf8_string");
     builder.variable(location, "Rest");
+    builder.variable(location, "HasPrintableChars1");
     let bit_array = builder.start_bit_array(location);
 
     builder.bit_array_segment(location);
@@ -981,14 +1029,14 @@ fn inspect_maybe_utf8_string<Output>(builder: &mut impl ErlangBuilder<Output>) {
 
     builder.end_clause_body(clause);
 
-    //  _ -> {error, not_a_utf8_string}
+    //  _ -> {error, not_a_printable_string}
     let clause = builder.start_case_clause(location);
     builder.variable_pattern(location, "_");
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "error");
-    builder.atom(location, "not_a_utf8_string");
+    builder.atom_expression(location, "error");
+    builder.atom_expression(location, "not_a_printable_string");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
     builder.end_case(case);
@@ -1012,7 +1060,7 @@ fn inspect_escape_grapheme<Output>(builder: &mut impl ErlangBuilder<Output>) {
     escape_character_clause(builder, '\t', "t");
     escape_character_clause(builder, 12 as char, "f");
 
-    // X when X > 126, X < 160 -> inspect@convert_to_u(X);
+    // X when X > 126, X < 160 -> {inspect@convert_to_u(X), false};
     let clause = builder.start_case_clause(location);
     builder.variable_pattern(location, "X");
     let clause = builder.end_clause_pattern(clause);
@@ -1021,46 +1069,63 @@ fn inspect_escape_grapheme<Output>(builder: &mut impl ErlangBuilder<Output>) {
     {
         builder.binary_operator(location, ">");
         builder.variable(location, "X");
-        builder.int(location, 126.into())
+        builder.int_expression(location, 126.into())
     }
     {
         builder.binary_operator(location, "<");
         builder.variable(location, "X");
-        builder.int(location, 160.into())
+        builder.int_expression(location, 160.into())
     }
     builder.end_clause_guard(guard);
     let clause = builder.end_clause_guards(clause);
-    let call = call_function(builder, location, "inspect@convert_to_u");
-    builder.variable(location, "X");
-    builder.end_call(call);
+    let tuple = builder.start_tuple(location);
+    {
+        let call = call_function(builder, location, "inspect@convert_to_u");
+        builder.variable(location, "X");
+        builder.end_call(call);
+
+        builder.atom_expression(location, "false");
+    }
+    builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
-    // X when X < 32 -> inspect@convert_to_u(X);
+    // X when X < 32 -> {inspect@convert_to_u(X), false};
     let clause = builder.start_case_clause(location);
     builder.variable_pattern(location, "X");
     let clause = builder.end_clause_pattern(clause);
     let guard = builder.start_clause_guard();
     builder.binary_operator(location, "<");
     builder.variable(location, "X");
-    builder.int(location, 32.into());
+    builder.int_expression(location, 32.into());
     builder.end_clause_guard(guard);
     let clause = builder.end_clause_guards(clause);
-    let call = call_function(builder, location, "inspect@convert_to_u");
-    builder.variable(location, "X");
-    builder.end_call(call);
+    let tuple = builder.start_tuple(location);
+    {
+        let call = call_function(builder, location, "inspect@convert_to_u");
+        builder.variable(location, "X");
+        builder.end_call(call);
+
+        builder.atom_expression(location, "false");
+    }
+    builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
-    // Other -> <<Other/utf8>>
+    // Other -> {<<Other/utf8>>, true}
     let clause = builder.start_case_clause(location);
     builder.variable_pattern(location, "Other");
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
+
+    let tuple = builder.start_tuple(location);
     let bit_array = builder.start_bit_array(location);
     builder.bit_array_segment(location);
     builder.variable(location, "Other");
     builder.bit_array_segment_default_size();
     builder.bit_array_segment_specifiers([BitArraySegmentSpecifier::Utf8]);
     builder.end_bit_array(bit_array);
+
+    builder.atom_expression(location, "true");
+    builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
     builder.end_case(case);
@@ -1104,7 +1169,7 @@ fn inspect_list_loop<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "proper");
+    builder.atom_expression(location, "proper");
     builder.empty_list(location);
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
@@ -1123,8 +1188,8 @@ fn inspect_list_loop<Output>(builder: &mut impl ErlangBuilder<Output>) {
     builder.end_clause_guard(guard);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "charlist");
-    builder.atom(location, "nil");
+    builder.atom_expression(location, "charlist");
+    builder.atom_expression(location, "nil");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
@@ -1136,7 +1201,7 @@ fn inspect_list_loop<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "proper");
+    builder.atom_expression(location, "proper");
     builder.cons_list(location);
     let call = call_function(builder, location, "echo@inspect");
     builder.variable(location, "First");
@@ -1199,7 +1264,7 @@ fn inspect_list_loop<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "improper");
+    builder.atom_expression(location, "improper");
 
     builder.cons_list(location);
     let call = call_function(builder, location, "echo@inspect");
@@ -1276,8 +1341,8 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "error");
-    builder.atom(location, "nil");
+    builder.atom_expression(location, "error");
+    builder.atom_expression(location, "nil");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
@@ -1306,8 +1371,8 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     builder.end_clause_guard(guard);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "error");
-    builder.atom(location, "nil");
+    builder.atom_expression(location, "error");
+    builder.atom_expression(location, "nil");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
@@ -1333,8 +1398,8 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "error");
-    builder.atom(location, "nil");
+    builder.atom_expression(location, "error");
+    builder.atom_expression(location, "nil");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
@@ -1354,8 +1419,8 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "error");
-    builder.atom(location, "nil");
+    builder.atom_expression(location, "error");
+    builder.atom_expression(location, "nil");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
@@ -1380,8 +1445,8 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "error");
-    builder.atom(location, "nil");
+    builder.atom_expression(location, "error");
+    builder.atom_expression(location, "nil");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
@@ -1410,8 +1475,8 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     builder.end_clause_guard(guard);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "error");
-    builder.atom(location, "nil");
+    builder.atom_expression(location, "error");
+    builder.atom_expression(location, "nil");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 
@@ -1480,7 +1545,7 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_guards(clause);
     let call = call_function(builder, location, "inspect@maybe_gleam_atom");
     builder.variable(location, "Rest");
-    builder.int(location, BigInt::from('_' as usize));
+    builder.int_expression(location, BigInt::from('_' as usize));
     builder.variable(location, "Acc");
     builder.end_call(call);
     builder.end_clause_body(clause);
@@ -1578,7 +1643,7 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "ok");
+    builder.atom_expression(location, "ok");
     builder.variable(location, "Acc");
     builder.end_tuple(tuple);
     builder.end_clause_body(clause);
@@ -1591,8 +1656,8 @@ fn inspect_maybe_gleam_atom<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let clause = builder.end_clause_guards(clause);
     let call = builder.start_remote_call(location, ErlangModuleName::erlang(), "throw");
     let tuple = builder.start_tuple(location);
-    builder.atom(location, "gleam_error");
-    builder.atom(location, "echo");
+    builder.atom_expression(location, "gleam_error");
+    builder.atom_expression(location, "echo");
     builder.variable(location, "Atom");
     builder.variable(location, "PrevChar");
     builder.variable(location, "Acc");
@@ -1610,7 +1675,7 @@ fn inspect_uppercase<Output>(builder: &mut impl ErlangBuilder<Output>) {
     let function = builder.start_function(location, "inspect@uppercase", 1, [(location, "X")]);
     builder.binary_operator(location, "-");
     builder.variable(location, "X");
-    builder.int(location, 32.into());
+    builder.int_expression(location, 32.into());
     builder.end_function(function);
 }
 
@@ -1626,12 +1691,12 @@ fn is_atom_char<Output>(builder: &mut impl ErlangBuilder<Output>, argument: &'st
         {
             builder.binary_operator(location, ">");
             builder.variable(location, argument);
-            builder.int(location, 96.into());
+            builder.int_expression(location, 96.into());
         }
         {
             builder.binary_operator(location, "<");
             builder.variable(location, argument);
-            builder.int(location, 123.into());
+            builder.int_expression(location, 123.into());
         }
     }
     builder.binary_operator(location, "orelse");
@@ -1639,7 +1704,7 @@ fn is_atom_char<Output>(builder: &mut impl ErlangBuilder<Output>, argument: &'st
     {
         builder.binary_operator(location, "==");
         builder.variable(location, argument);
-        builder.int(location, 95.into());
+        builder.int_expression(location, 95.into());
     }
     // Or a digit char
     is_digit_character(builder, argument);
@@ -1652,12 +1717,12 @@ fn is_digit_character<Output>(builder: &mut impl ErlangBuilder<Output>, argument
     {
         builder.binary_operator(location, ">");
         builder.variable(location, argument);
-        builder.int(location, 47.into());
+        builder.int_expression(location, 47.into());
     }
     {
         builder.binary_operator(location, "<");
         builder.variable(location, argument);
-        builder.int(location, 58.into());
+        builder.int_expression(location, 58.into());
     }
 }
 
@@ -1674,16 +1739,18 @@ fn is_ascii_character<Output>(builder: &mut impl ErlangBuilder<Output>, variable
     {
         builder.binary_operator(location, ">=");
         builder.variable(location, variable);
-        builder.int(location, 32.into());
+        builder.int_expression(location, 32.into());
     }
     {
         builder.binary_operator(location, "=<");
         builder.variable(location, variable);
-        builder.int(location, 126.into());
+        builder.int_expression(location, 126.into());
     }
 }
 
-// This produces a case clause in the form: <char_value> -> ~"\\<char>"
+// This produces a case clause in the form: <char_value> -> {~"\\<char>", true}
+// Note how this returns a tuple with "true" as its second item, that's required
+// by `inspect@escape_grapheme` which uses this!
 fn escape_character_clause<Output>(
     builder: &mut impl ErlangBuilder<Output>,
     char: char,
@@ -1694,7 +1761,10 @@ fn escape_character_clause<Output>(
     builder.int_pattern(location, BigInt::from(char as usize));
     let clause = builder.end_clause_pattern(clause);
     let clause = builder.end_clause_guards(clause);
+    let tuple = builder.start_tuple(location);
     builder.string(location, &format!("\\\\{escaped}"));
+    builder.atom_expression(location, "true");
+    builder.end_tuple(tuple);
     builder.end_clause_body(clause);
 }
 
@@ -1737,7 +1807,7 @@ fn variable_tuple_element<Output>(
 ) {
     let location = SrcSpan::default();
     let call = builder.start_remote_call(location, ErlangModuleName::erlang(), "element");
-    builder.int(location, position.into());
+    builder.int_expression(location, position.into());
     builder.variable(location, variable_name);
     builder.end_call(call);
 }
@@ -1752,6 +1822,6 @@ fn call_function<Output, Builder: ErlangBuilder<Output>>(
     function: &'static str,
 ) -> Builder::Call {
     let call = builder.start_call(location);
-    builder.atom(location, function);
+    builder.atom_expression(location, function);
     builder.end_called_expression(call)
 }

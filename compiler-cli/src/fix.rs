@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gleam_core::{
     Error, Result, Warning,
     analyse::TargetSupport,
-    build::{Codegen, Compile, Mode, Options},
+    build::{Codegen, Compile, ErlangOutput, Mode, Options},
     error::{FileIoAction, FileKind},
     paths::ProjectPaths,
     type_,
@@ -31,6 +31,7 @@ pub fn run(paths: &ProjectPaths) -> Result<()> {
             mode: Mode::Dev,
             target: None,
             no_print_progress: false,
+            erlang_output: ErlangOutput::Binary,
         },
         build::download_dependencies(paths, cli::Reporter::new())?,
         warnings.clone(),
@@ -52,14 +53,14 @@ fn fix_minimum_required_version(paths: &ProjectPaths, warnings: Vec<Warning>) ->
     let root_config = paths.root_config();
     let mut toml = crate::fs::read(&root_config)?
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| Error::FileIo {
+        .map_err(|error| Error::FileIo {
             kind: FileKind::File,
             action: FileIoAction::Parse,
             path: root_config.to_path_buf(),
-            err: Some(e.to_string()),
+            err: Some(error.to_string()),
         })?;
 
-    #[allow(clippy::indexing_slicing)]
+    #[expect(clippy::indexing_slicing)]
     {
         toml["gleam"] = toml_edit::value(format!(">= {minimum_required_version}"));
     }

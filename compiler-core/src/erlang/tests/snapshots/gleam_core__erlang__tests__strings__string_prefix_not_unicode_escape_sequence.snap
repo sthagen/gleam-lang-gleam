@@ -26,7 +26,6 @@ pub fn go(x) {
 -compile([no_auto_import, nowarn_ignored, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -export([go/1]).
 
--file("project/test/my/mod.gleam", 2).
 -spec go(binary()) -> binary().
 go(X) ->
     _ = case X of
@@ -55,6 +54,9 @@ go(X) ->
             ~"test";
 
         <<"\\u{01f600}"/utf8, Rest@8/binary>> ->
+            ~"test";
+
+        <<"\\u{9} \\u{000009} \\u{21} \\u{100} \\u{1000} \\u{1F600} \\u{01F600}"/utf8, Rest@9/binary>> ->
             ~"test";
 
         _ ->

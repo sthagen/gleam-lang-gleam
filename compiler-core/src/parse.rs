@@ -64,11 +64,12 @@ use crate::ast::{
     BitArraySegment, BitArraySize, CAPTURE_VARIABLE, CallArg, Clause, ClauseGuard, Constant,
     CustomType, Definition, Function, FunctionLiteralKind, HasLocation, Import, IntOperator,
     Module, ModuleConstant, Pattern, Publicity, RecordBeingUpdated, RecordConstructor,
-    RecordConstructorArg, RecordUpdateArg, Statement, TailPattern, TargetedDefinition, TodoKind,
-    TypeAlias, TypeAst, TypeAstConstructor, TypeAstConstructorName, TypeAstFn, TypeAstHole,
-    TypeAstTuple, TypeAstVar, UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard,
-    UntypedConstant, UntypedDefinition, UntypedExpr, UntypedModule, UntypedPattern,
-    UntypedRecordUpdateArg, UntypedStatement, UntypedUseAssignment, Use, UseAssignment,
+    RecordConstructorArg, RecordUpdateArg, Statement, StringPrefixLeftSideAssignment, TailPattern,
+    TargetedDefinition, TodoKind, TypeAlias, TypeAst, TypeAstConstructor, TypeAstConstructorName,
+    TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, UnqualifiedImport, UntypedArg, UntypedClause,
+    UntypedClauseGuard, UntypedConstant, UntypedDefinition, UntypedExpr, UntypedModule,
+    UntypedPattern, UntypedRecordUpdateArg, UntypedStatement, UntypedUseAssignment, Use,
+    UseAssignment,
 };
 use crate::build::Target;
 use crate::error::wrap;
@@ -595,7 +596,9 @@ where
                     // stop analysis from happening everywhere and be fault
                     // tolerant like everything else.
                     let expression = self.parse_expression()?;
-                    let end = expression.as_ref().map_or(echo_end, |e| e.location().end);
+                    let end = expression
+                        .as_ref()
+                        .map_or(echo_end, |expression| expression.location().end);
 
                     let message = self.maybe_parse_as_message()?;
                     let end = message.as_ref().map_or(end, |m| m.location().end);
@@ -699,7 +702,9 @@ where
                 }
                 if tail.is_some()
                     && elements.is_empty()
-                    && elements_after_tail.as_ref().is_none_or(|e| e.is_empty())
+                    && elements_after_tail
+                        .as_ref()
+                        .is_none_or(|elements| elements.is_empty())
                 {
                     return parse_error(
                         ParseErrorType::ListSpreadWithoutElements,
@@ -1437,7 +1442,14 @@ where
                                         end: r_end,
                                     },
                                     left_side_string: value,
-                                    left_side_assignment: Some((name, name_span)),
+                                    left_side_assignment: Some(StringPrefixLeftSideAssignment {
+                                        name,
+                                        name_start_position: name_span.start,
+                                        location: SrcSpan {
+                                            start: end,
+                                            end: name_end,
+                                        },
+                                    }),
                                     right_side_assignment: right,
                                 }
                             }
@@ -2086,7 +2098,7 @@ where
 
     // examples:
     //   ( args )
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn parse_constructor_pattern_arguments(
         &mut self,
         upname_end: u32,
@@ -2267,7 +2279,7 @@ where
             return Err(ParseError {
                 error: ParseErrorType::UnexpectedToken {
                     token: Token::Colon,
-                    expected: vec!["`->`".into()],
+                    expected: vec![Token::RArrow.to_string().into()],
                     hint: Some("Return type annotations are written using `->`, not `:`".into()),
                 },
                 location: SrcSpan {
@@ -3405,6 +3417,17 @@ where
                 break;
             };
 
+            if operator == Token::Pipe {
+                return parse_error(
+                    ParseErrorType::UnexpectedToken {
+                        token: operator,
+                        expected: vec!["<>".into(), "A new definition".into()],
+                        hint: Some("Pipelines are not allowed in constants".into()),
+                    },
+                    SrcSpan::new(operator_start, operator_end),
+                );
+            }
+
             // Is Op
             self.advance();
             last_op_start = operator_start;
@@ -3553,7 +3576,9 @@ where
                 }
                 if tail.is_some()
                     && elements.is_empty()
-                    && elements_after_tail.as_ref().is_none_or(|e| e.is_empty())
+                    && elements_after_tail
+                        .as_ref()
+                        .is_none_or(|elements| elements.is_empty())
                 {
                     return parse_error(
                         ParseErrorType::ListSpreadWithoutElements,
@@ -3644,7 +3669,7 @@ where
                     Some((start, token, end)) => parse_error(
                         ParseErrorType::UnexpectedToken {
                             token,
-                            expected: vec!["UpName".into(), "Name".into()],
+                            expected: vec!["A lowercase name".into(), "An uppercase name".into()],
                             hint: None,
                         },
                         SrcSpan { start, end },
@@ -5100,11 +5125,11 @@ fn token_to_bit_array_size_operator(t: &Token) -> Option<IntOperator> {
 }
 
 /// Simple-Precedence-Parser, perform reduction for expression
-fn do_reduce_expression(op: Spanned, estack: &mut Vec<UntypedExpr>) {
+fn do_reduce_expression(operator: Spanned, estack: &mut Vec<UntypedExpr>) {
     match (estack.pop(), estack.pop()) {
-        (Some(er), Some(el)) => {
-            let new_e = expression_operator_reduction(op, el, er);
-            estack.push(new_e);
+        (Some(right), Some(left)) => {
+            let new_expression = expression_operator_reduction(operator, left, right);
+            estack.push(new_expression);
         }
         _ => panic!("Tried to reduce without 2 expressions"),
     }
@@ -5122,11 +5147,11 @@ fn do_reduce_clause_guard(operator: Spanned, estack: &mut Vec<UntypedClauseGuard
 }
 
 /// Simple-Precedence-Parser, perform reduction for clause guard
-fn do_reduce_constant(op: Spanned, estack: &mut Vec<UntypedConstant>) {
+fn do_reduce_constant(operator: Spanned, estack: &mut Vec<UntypedConstant>) {
     match (estack.pop(), estack.pop()) {
-        (Some(er), Some(el)) => {
-            let new_e = constant_binop_reduction(op, el, er);
-            estack.push(new_e);
+        (Some(left), Some(right)) => {
+            let new_expression = constant_binop_reduction(operator, right, left);
+            estack.push(new_expression);
         }
         _ => panic!("Tried to reduce without 2 guards"),
     }
@@ -5159,13 +5184,13 @@ fn expression_operator_reduction(
     right: UntypedExpr,
 ) -> UntypedExpr {
     if token == Token::Pipe {
-        let expressions = if let UntypedExpr::PipeLine { mut expressions } = left {
+        let expressions = if let UntypedExpr::Pipeline { mut expressions } = left {
             expressions.push(right);
             expressions
         } else {
             vec1![left, right]
         };
-        UntypedExpr::PipeLine { expressions }
+        UntypedExpr::Pipeline { expressions }
     } else {
         match token_to_binop(&token) {
             Some(operator) => UntypedExpr::BinOp {

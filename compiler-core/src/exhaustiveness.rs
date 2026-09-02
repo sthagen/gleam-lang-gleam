@@ -317,6 +317,14 @@ impl Branch {
                                 });
                             }
 
+                            // An empty string always matches so there is no test to perform.
+                            BitArrayTest::Match(MatchTest {
+                                value: BitArrayMatchedValue::LiteralString { value, .. },
+                                ..
+                            }) if value.is_empty() => {
+                                let _ = tests.pop_front();
+                            }
+
                             // Discards are removed directly without even binding them
                             // in the branch's body.
                             _ if test.is_discard() => {
@@ -2222,24 +2230,6 @@ impl CompileCaseResult {
 pub struct CompiledCase {
     pub tree: Decision,
     pub subject_variables: Vec<Variable>,
-
-    /// The patterns that are unreachable. If a pattern is in this list,
-    /// it will be omitted from the Erlang generated code.
-    /// Each entry is a pair of zero-based indices: The index of the clause
-    /// the pattern belongs to, followed by the index of the pattern itself
-    /// within the clause (`0` is the main pattern, `1+` are alternatives).
-    /// For example, in this case expression:
-    /// ```gleam
-    /// case x {
-    ///   1 -> todo
-    ///   2 | 3 -> todo
-    ///   _ -> todo
-    /// }
-    /// ```
-    ///
-    /// The `3` pattern would be `(1, 1)`: second clause, second pattern.
-    ///
-    pub unreachable: HashSet<(usize, usize)>,
 }
 
 impl CompiledCase {
@@ -2247,7 +2237,6 @@ impl CompiledCase {
         Self {
             tree: Decision::Fail,
             subject_variables: vec![],
-            unreachable: HashSet::new(),
         }
     }
 
@@ -2263,7 +2252,6 @@ impl CompiledCase {
         Self {
             tree: Decision::Run { body },
             subject_variables: vec![variable],
-            unreachable: HashSet::new(),
         }
     }
 }
@@ -3606,7 +3594,6 @@ impl CaseToCompile {
             compiled_case: CompiledCase {
                 tree: decision,
                 subject_variables: self.subject_variables,
-                unreachable: HashSet::new(),
             },
         }
     }
@@ -3702,7 +3689,7 @@ impl CaseToCompile {
                 let prefix = left_side_string.clone();
                 let prefix_name = left_side_assignment
                     .as_ref()
-                    .map(|(label, _)| label.clone());
+                    .map(|assignment| assignment.name.clone());
                 let rest_pattern = match right_side_assignment {
                     AssignName::Variable(name) => Pattern::Variable { name: name.clone() },
                     AssignName::Discard(_) => Pattern::Discard,

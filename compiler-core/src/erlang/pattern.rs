@@ -230,11 +230,18 @@ impl<'a, 'generator, 'module> PatternGenerator<'a, 'generator, 'module> {
                 // If the constant string prefix is being aliased we need to add
                 // that value to the variables that are going to be generated
                 // later:
-                if let Some((prefix_name, prefix_location)) = left_side_assignment {
+                if let Some(StringPrefixLeftSideAssignment {
+                    name: prefix_name,
+                    name_start_position: prefix_name_start_position,
+                    location: prefix_location,
+                }) = left_side_assignment
+                {
+                    let prefix_name_location =
+                        SrcSpan::new(*prefix_name_start_position, prefix_location.end);
                     let _ = self.variables_to_add_later.insert(
                         prefix_name.clone(),
                         AliasedLiteral::String {
-                            location: *prefix_location,
+                            location: prefix_name_location,
                             value: left_side_string.clone(),
                         },
                     );
@@ -295,14 +302,14 @@ impl<'a, 'generator, 'module> PatternGenerator<'a, 'generator, 'module> {
                 int_value,
                 location,
                 ..
-            } => builder.int(*location, int_value.clone()),
+            } => builder.int_expression(*location, int_value.clone()),
             BitArraySize::Block { inner, .. } => self.bit_array_size(builder, inner),
 
             BitArraySize::Variable {
                 constructor, name, ..
             } => match self.variables_to_add_later.get(name) {
                 Some(AliasedLiteral::Int { value, location }) => {
-                    builder.int(*location, value.clone())
+                    builder.int_expression(*location, value.clone())
                 }
                 Some(_) => panic!("segment size that is not int made it through type checking"),
                 None => {
@@ -453,7 +460,7 @@ impl<'a, 'generator, 'module> PatternGenerator<'a, 'generator, 'module> {
             builder.int_pattern(*location, BigInt::ZERO);
             let clause = builder.end_clause_pattern(clause);
             let clause = builder.end_clause_guards(clause);
-            builder.int(*location, BigInt::ZERO);
+            builder.int_expression(*location, BigInt::ZERO);
             builder.end_clause_body(clause);
 
             let clause = builder.start_case_clause(*location);

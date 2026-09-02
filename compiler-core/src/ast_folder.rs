@@ -6,13 +6,14 @@ use crate::{
     ast::{
         Assert, AssignName, Assignment, BinOp, BitArraySize, CallArg, Constant, Definition,
         FunctionLiteralKind, InvalidExpression, Pattern, RecordBeingUpdated, RecordUpdateArg,
-        Statement, TailPattern, TargetedDefinition, TodoKind, TypeAst, TypeAstConstructor,
-        TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, UntypedArg, UntypedAssert,
-        UntypedAssignment, UntypedClause, UntypedConstant, UntypedConstantBitArraySegment,
-        UntypedCustomType, UntypedDefinition, UntypedExpr, UntypedExprBitArraySegment,
-        UntypedFunction, UntypedImport, UntypedModule, UntypedModuleConstant, UntypedPattern,
-        UntypedPatternBitArraySegment, UntypedRecordUpdateArg, UntypedStatement,
-        UntypedTailPattern, UntypedTypeAlias, UntypedUse, UntypedUseAssignment, Use, UseAssignment,
+        Statement, StringPrefixLeftSideAssignment, TailPattern, TargetedDefinition, TodoKind,
+        TypeAst, TypeAstConstructor, TypeAstFn, TypeAstHole, TypeAstTuple, TypeAstVar, UntypedArg,
+        UntypedAssert, UntypedAssignment, UntypedClause, UntypedConstant,
+        UntypedConstantBitArraySegment, UntypedCustomType, UntypedDefinition, UntypedExpr,
+        UntypedExprBitArraySegment, UntypedFunction, UntypedImport, UntypedModule,
+        UntypedModuleConstant, UntypedPattern, UntypedPatternBitArraySegment,
+        UntypedRecordUpdateArg, UntypedStatement, UntypedTailPattern, UntypedTypeAlias, UntypedUse,
+        UntypedUseAssignment, Use, UseAssignment,
     },
     build::Target,
     parse::LiteralFloatValue,
@@ -24,7 +25,7 @@ use num_bigint::BigInt;
 use src_span::SrcSpan;
 use vec1::Vec1;
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub trait UntypedModuleFolder: TypeAstFolder + UntypedExprFolder {
     /// You probably don't want to override this method.
     fn fold_module(&mut self, mut module: UntypedModule) -> UntypedModule {
@@ -166,7 +167,7 @@ pub trait UntypedModuleFolder: TypeAstFolder + UntypedExprFolder {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub trait TypeAstFolder {
     /// Visit a node and potentially replace it with another node using the
     /// `fold_*` methods. Afterwards, the `walk` method is called on the new
@@ -241,7 +242,7 @@ pub trait TypeAstFolder {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFolder {
     /// Visit a node and potentially replace it with another node using the
     /// `fold_*` methods. Afterwards, the `walk` method is called on the new
@@ -311,7 +312,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
                 right,
             } => self.fold_bin_op(location, operator, operator_start, left, right),
 
-            UntypedExpr::PipeLine { expressions } => self.fold_pipe_line(expressions),
+            UntypedExpr::Pipeline { expressions } => self.fold_pipe_line(expressions),
 
             UntypedExpr::Case {
                 location,
@@ -443,7 +444,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
                     .into_iter()
                     .map(|element| self.fold_expr(element))
                     .collect();
-                let tail = tail.map(|e| Box::new(self.fold_expr(*e)));
+                let tail = tail.map(|tail| Box::new(self.fold_expr(*tail)));
                 UntypedExpr::List {
                     location,
                     elements,
@@ -491,9 +492,9 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
                 }
             }
 
-            UntypedExpr::PipeLine { expressions } => {
-                let expressions = expressions.mapped(|e| self.fold_expr(e));
-                UntypedExpr::PipeLine { expressions }
+            UntypedExpr::Pipeline { expressions } => {
+                let expressions = expressions.mapped(|expression| self.fold_expr(expression));
+                UntypedExpr::Pipeline { expressions }
             }
 
             UntypedExpr::Case {
@@ -501,7 +502,10 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
                 subjects,
                 clauses,
             } => {
-                let subjects = subjects.into_iter().map(|e| self.fold_expr(e)).collect();
+                let subjects = subjects
+                    .into_iter()
+                    .map(|subject| self.fold_expr(subject))
+                    .collect();
                 let clauses = clauses.map(|clauses| {
                     clauses
                         .into_iter()
@@ -821,7 +825,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
     }
 
     fn fold_pipe_line(&mut self, expressions: Vec1<UntypedExpr>) -> UntypedExpr {
-        UntypedExpr::PipeLine { expressions }
+        UntypedExpr::Pipeline { expressions }
     }
 
     fn fold_case(
@@ -947,7 +951,7 @@ pub trait UntypedExprFolder: TypeAstFolder + UntypedConstantFolder + PatternFold
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub trait UntypedConstantFolder {
     /// You probably don't want to override this method.
     fn fold_constant(&mut self, constant: UntypedConstant) -> UntypedConstant {
@@ -1348,7 +1352,7 @@ pub trait UntypedConstantFolder {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub trait PatternFolder {
     /// You probably don't want to override this method.
     fn fold_pattern(&mut self, pattern: UntypedPattern) -> UntypedPattern {
@@ -1623,7 +1627,7 @@ pub trait PatternFolder {
         &mut self,
         location: SrcSpan,
         left_location: SrcSpan,
-        left_side_assignment: Option<(EcoString, SrcSpan)>,
+        left_side_assignment: Option<StringPrefixLeftSideAssignment>,
         right_location: SrcSpan,
         left_side_string: EcoString,
         right_side_assignment: AssignName,

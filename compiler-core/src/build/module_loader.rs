@@ -57,7 +57,11 @@ where
 
         let meta = match self.read_cache_metadata(&file)? {
             Some(meta) => meta,
-            None => return read_source(name).map(|module| Input::New(Box::new(module))),
+            None => {
+                return read_source(name).map(|module| Input::New {
+                    module: Box::new(module),
+                });
+            }
         };
 
         // The cache currently does not contain enough data to perform codegen,
@@ -65,7 +69,9 @@ where
         // that codegen has already been performed before using a cache.
         if self.codegen.is_required() && !meta.codegen_performed {
             tracing::debug!(?name, "codegen_required_cache_insufficient");
-            return read_source(name).map(|module| Input::New(Box::new(module)));
+            return read_source(name).map(|module| Input::New {
+                module: Box::new(module),
+            });
         }
 
         // If the timestamp of the source is newer than the cache entry and
@@ -75,16 +81,22 @@ where
             let source_module = read_source(name.clone())?;
             if meta.fingerprint != SourceFingerprint::new(&source_module.code) {
                 tracing::debug!(?name, "cache_stale");
-                return Ok(Input::New(Box::new(source_module)));
+                return Ok(Input::New {
+                    module: Box::new(source_module),
+                });
             } else if self.mode == Mode::Lsp && self.incomplete_modules.contains(&name) {
                 // Since the lsp can have valid but incorrect intermediate code states between
                 // successful compilations, we need to invalidate the cache even if the fingerprint matches
                 tracing::debug!(?name, "cache_stale for lsp");
-                return Ok(Input::New(Box::new(source_module)));
+                return Ok(Input::New {
+                    module: Box::new(source_module),
+                });
             }
         }
 
-        Ok(Input::Cached(self.cached(file, meta)))
+        Ok(Input::Cached {
+            module: self.cached(file, meta),
+        })
     }
 
     /// Read the cache metadata file from the artefact directory for the given
@@ -97,14 +109,13 @@ where
         }
 
         let binary = self.io.read_bytes(&meta_path)?;
-        let cache_metadata = CacheMetadata::from_binary(&binary).map_err(|e| -> Error {
-            Error::FileIo {
+        let cache_metadata =
+            CacheMetadata::from_binary(&binary).map_err(|error| Error::FileIo {
                 action: FileIoAction::Parse,
                 kind: FileKind::File,
                 path: meta_path,
-                err: Some(e),
-            }
-        })?;
+                err: Some(error),
+            })?;
         Ok(Some(cache_metadata))
     }
 
@@ -136,7 +147,7 @@ where
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn read_source<IO>(
     io: IO,
     target: Target,

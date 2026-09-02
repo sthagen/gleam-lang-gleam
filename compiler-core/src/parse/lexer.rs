@@ -16,10 +16,10 @@ use super::error::InvalidUnicodeEscapeError;
 pub struct Lexer<T: Iterator<Item = (u32, char)>> {
     chars: T,
     pending: Vec<Spanned>,
-    chr0: Option<char>,
-    chr1: Option<char>,
-    loc0: u32,
-    loc1: u32,
+    char0: Option<char>,
+    char1: Option<char>,
+    location0: u32,
+    location1: u32,
 }
 pub type Spanned = (u32, Token, u32);
 pub type LexResult = Result<Spanned, LexicalError>;
@@ -54,9 +54,11 @@ pub fn string_to_keyword(word: &str) -> Option<Token> {
 }
 
 pub fn make_tokenizer(source: &str) -> impl Iterator<Item = LexResult> + '_ {
-    let chars = source.char_indices().map(|(i, c)| (i as u32, c));
-    let nlh = NewlineHandler::new(chars);
-    Lexer::new(nlh)
+    let chars = source
+        .char_indices()
+        .map(|(index, char)| (index as u32, char));
+    let new_line_handler = NewlineHandler::new(chars);
+    Lexer::new(new_line_handler)
 }
 
 // The newline handler is an iterator which collapses different newline
@@ -64,8 +66,8 @@ pub fn make_tokenizer(source: &str) -> impl Iterator<Item = LexResult> + '_ {
 #[derive(Debug)]
 pub struct NewlineHandler<T: Iterator<Item = (u32, char)>> {
     source: T,
-    chr0: Option<(u32, char)>,
-    chr1: Option<(u32, char)>,
+    char0: Option<(u32, char)>,
+    char1: Option<(u32, char)>,
 }
 
 impl<T> NewlineHandler<T>
@@ -73,20 +75,20 @@ where
     T: Iterator<Item = (u32, char)>,
 {
     pub fn new(source: T) -> Self {
-        let mut nlh = NewlineHandler {
+        let mut new_line_handler = NewlineHandler {
             source,
-            chr0: None,
-            chr1: None,
+            char0: None,
+            char1: None,
         };
-        let _ = nlh.shift();
-        let _ = nlh.shift();
-        nlh
+        let _ = new_line_handler.shift();
+        let _ = new_line_handler.shift();
+        new_line_handler
     }
 
     fn shift(&mut self) -> Option<(u32, char)> {
-        let result = self.chr0;
-        self.chr0 = self.chr1;
-        self.chr1 = self.source.next();
+        let result = self.char0;
+        self.char0 = self.char1;
+        self.char1 = self.source.next();
         result
     }
 }
@@ -99,15 +101,15 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         // Collapse \r\n into \n
-        if let Some((i, '\r')) = self.chr0 {
-            if let Some((_, '\n')) = self.chr1 {
+        if let Some((index, '\r')) = self.char0 {
+            if let Some((_, '\n')) = self.char1 {
                 // Transform windows EOL into \n
                 let _ = self.shift();
                 // using the position from the \r
-                self.chr0 = Some((i, '\n'));
+                self.char0 = Some((index, '\n'));
             } else {
                 // Transform MAC EOL into \n
-                self.chr0 = Some((i, '\n'));
+                self.char0 = Some((index, '\n'));
             }
         }
 
@@ -120,23 +122,23 @@ where
     T: Iterator<Item = (u32, char)>,
 {
     pub fn new(input: T) -> Self {
-        let mut lxr = Lexer {
+        let mut lexer = Lexer {
             chars: input,
             pending: Vec::new(),
-            chr0: None,
-            chr1: None,
-            loc0: 0,
-            loc1: 0,
+            char0: None,
+            char1: None,
+            location0: 0,
+            location1: 0,
         };
-        let _ = lxr.next_char();
-        let _ = lxr.next_char();
+        let _ = lexer.next_char();
+        let _ = lexer.next_char();
 
         // Check whether the first character is a UTF-8 byte order mark, and if so, consume it.
-        if lxr.chr0 == Some('\u{feff}') {
-            let _ = lxr.next_char();
+        if lexer.char0 == Some('\u{feff}') {
+            let _ = lexer.next_char();
         }
 
-        lxr
+        lexer
     }
 
     // This is the main entry point. Call this function to retrieve the next token.
@@ -153,39 +155,39 @@ where
     // Take a look at the next character, if any, and decide upon the next steps.
     fn consume_normal(&mut self) -> Result<(), LexicalError> {
         // Check if we have some character:
-        if let Some(c) = self.chr0 {
+        if let Some(character) = self.char0 {
             let mut check_for_minus = false;
-            if self.is_upname_start(c) {
+            if self.is_upname_start(character) {
                 let name = self.lex_upname()?;
                 self.emit(name);
-            } else if self.is_name_start(c) {
+            } else if self.is_name_start(character) {
                 check_for_minus = true;
                 let name = self.lex_name()?;
                 self.emit(name);
-            } else if self.is_number_start(c, self.chr1) {
+            } else if self.is_number_start(character, self.char1) {
                 check_for_minus = true;
                 let num = self.lex_number()?;
                 self.emit(num);
             } else {
-                self.consume_character(c)?;
+                self.consume_character(character)?;
             }
             if check_for_minus {
                 // We want to lex `1-1` and `x-1` as `1 - 1` and `x - 1`
-                if Some('-') == self.chr0 && self.is_number_start('-', self.chr1) {
+                if Some('-') == self.char0 && self.is_number_start('-', self.char1) {
                     self.eat_single_char(Token::Minus);
                 }
             }
         } else {
             // We reached end of file.
-            let tok_pos = self.get_pos();
-            self.emit((tok_pos, Token::EndOfFile, tok_pos));
+            let token_pos = self.get_position();
+            self.emit((token_pos, Token::EndOfFile, token_pos));
         }
 
         Ok(())
     }
 
-    fn consume_character(&mut self, c: char) -> Result<(), LexicalError> {
-        match c {
+    fn consume_character(&mut self, character: char) -> Result<(), LexicalError> {
+        match character {
             '@' => {
                 self.eat_single_char(Token::At);
             }
@@ -194,89 +196,122 @@ where
                 self.emit(string);
             }
             '=' => {
-                let tok_start = self.get_pos();
+                let mut token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
-                    Some('=') => {
-                        let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        if let Some('=') = self.chr0 {
-                            return Err(LexicalError {
-                                error: LexicalErrorType::InvalidTripleEqual,
-                                location: SrcSpan {
-                                    start: tok_start,
-                                    end: tok_end + 1,
-                                },
-                            });
-                        }
-                        self.emit((tok_start, Token::EqualEqual, tok_end));
+
+                if self.char0 != Some('=') {
+                    let token_end = self.get_position();
+                    self.emit((token_start, Token::Equal, token_end));
+                    return Ok(());
+                }
+
+                let _ = self.next_char();
+
+                if self.char0 != Some('=') {
+                    self.emit((token_start, Token::EqualEqual, self.get_position()));
+                    return Ok(());
+                }
+
+                let _ = self.next_char();
+                let mut seen_equals = 3;
+
+                if self.char0 != Some('=') {
+                    return Err(LexicalError {
+                        error: LexicalErrorType::InvalidTripleEqual,
+                        location: SrcSpan {
+                            start: token_start,
+                            end: self.get_position(),
+                        },
+                    });
+                }
+
+                loop {
+                    if seen_equals >= 7 {
+                        return Err(LexicalError {
+                            error: LexicalErrorType::MergeConflictIndicator,
+                            location: SrcSpan {
+                                start: token_start,
+                                end: self.get_position(),
+                            },
+                        });
                     }
-                    _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Equal, tok_end));
+
+                    if self.char0 == Some('=') {
+                        let _ = self.next_char();
+                        seen_equals += 1;
+                    } else {
+                        while seen_equals > 1 {
+                            self.emit((token_start, Token::EqualEqual, token_start + 2));
+                            token_start += 2;
+                            seen_equals -= 2;
+                        }
+                        if seen_equals > 0 {
+                            self.emit((token_start, Token::Equal, self.get_position()));
+                        }
+                        break;
                     }
                 }
             }
             '+' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
+                match self.char0 {
                     Some('.') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::PlusDot, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::PlusDot, token_end));
                     }
                     Some('=' | '+') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
+                        let token_end = self.get_position();
                         return Err(LexicalError {
                             error: LexicalErrorType::UnsupportedProceduralOperator,
                             location: SrcSpan {
-                                start: tok_start,
-                                end: tok_end,
+                                start: token_start,
+                                end: token_end,
                             },
                         });
                     }
                     _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Plus, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::Plus, token_end));
                     }
                 }
             }
             '*' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
+                match self.char0 {
                     Some('.') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::StarDot, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::StarDot, token_end));
                     }
                     Some('=') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
+                        let token_end = self.get_position();
                         return Err(LexicalError {
                             error: LexicalErrorType::UnsupportedProceduralOperator,
                             location: SrcSpan {
-                                start: tok_start,
-                                end: tok_end,
+                                start: token_start,
+                                end: token_end,
                             },
                         });
                     }
                     _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Star, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::Star, token_end));
                     }
                 }
             }
             '/' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
+                match self.char0 {
                     Some('.') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::SlashDot, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::SlashDot, token_end));
                     }
                     Some('/') => {
                         let _ = self.next_char();
@@ -285,125 +320,125 @@ where
                     }
                     Some('=') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
+                        let token_end = self.get_position();
                         return Err(LexicalError {
                             error: LexicalErrorType::UnsupportedProceduralOperator,
                             location: SrcSpan {
-                                start: tok_start,
-                                end: tok_end,
+                                start: token_start,
+                                end: token_end,
                             },
                         });
                     }
                     _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Slash, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::Slash, token_end));
                     }
                 }
             }
             '%' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
+                match self.char0 {
                     Some('=') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
+                        let token_end = self.get_position();
                         return Err(LexicalError {
                             error: LexicalErrorType::UnsupportedProceduralOperator,
                             location: SrcSpan {
-                                start: tok_start,
-                                end: tok_end,
+                                start: token_start,
+                                end: token_end,
                             },
                         });
                     }
                     _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Percent, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::Percent, token_end));
                     }
                 }
             }
             '|' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
+                match self.char0 {
                     Some('|') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::VbarVbar, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::VbarVbar, token_end));
                     }
                     Some('>') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Pipe, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::Pipe, token_end));
                     }
                     _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Vbar, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::Vbar, token_end));
                     }
                 }
             }
             '&' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
+                match self.char0 {
                     Some('&') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::AmperAmper, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::AmperAmper, token_end));
                     }
                     _ => {
                         return Err(LexicalError {
-                            error: LexicalErrorType::UnrecognizedToken { tok: '&' },
+                            error: LexicalErrorType::UnrecognizedToken { token: '&' },
                             location: SrcSpan {
-                                start: tok_start,
-                                end: tok_start,
+                                start: token_start,
+                                end: token_start,
                             },
                         });
                     }
                 }
             }
             '-' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
+                match self.char0 {
                     Some('.') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::MinusDot, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::MinusDot, token_end));
                     }
                     Some('>') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::RArrow, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::RArrow, token_end));
                     }
                     // Not including `-` here because repeated int negation is
                     // valid gleam
                     Some('=') => {
                         let _ = self.next_char();
-                        let tok_end = self.get_pos();
+                        let token_end = self.get_position();
                         return Err(LexicalError {
                             error: LexicalErrorType::UnsupportedProceduralOperator,
                             location: SrcSpan {
-                                start: tok_start,
-                                end: tok_end,
+                                start: token_start,
+                                end: token_end,
                             },
                         });
                     }
                     _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Minus, tok_end));
+                        let token_end = self.get_position();
+                        self.emit((token_start, Token::Minus, token_end));
                     }
                 }
             }
             '!' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                if let Some('=') = self.chr0 {
+                if let Some('=') = self.char0 {
                     let _ = self.next_char();
-                    let tok_end = self.get_pos();
-                    self.emit((tok_start, Token::NotEqual, tok_end));
+                    let token_end = self.get_position();
+                    self.emit((token_start, Token::NotEqual, token_end));
                 } else {
-                    let tok_end = self.get_pos();
-                    self.emit((tok_start, Token::Bang, tok_end));
+                    let token_end = self.get_position();
+                    self.emit((token_start, Token::Bang, token_end));
                 }
             }
             '(' => {
@@ -428,96 +463,28 @@ where
                 self.eat_single_char(Token::Colon);
             }
             '<' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
-                    Some('>') => {
-                        let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Concatenate, tok_end));
-                    }
-                    Some('<') => {
-                        let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::LtLt, tok_end));
-                    }
-                    Some('.') => {
-                        let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::LessDot, tok_end));
-                    }
-                    Some('-') => {
-                        let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::LArrow, tok_end));
-                    }
-                    Some('=') => {
-                        let _ = self.next_char();
-                        match self.chr0 {
-                            Some('.') => {
-                                let _ = self.next_char();
-                                let tok_end = self.get_pos();
-                                self.emit((tok_start, Token::LessEqualDot, tok_end));
-                            }
-                            _ => {
-                                let tok_end = self.get_pos();
-                                self.emit((tok_start, Token::LessEqual, tok_end));
-                            }
-                        }
-                    }
-                    _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Less, tok_end));
-                    }
-                }
+                self.lex_lt(token_start)?;
             }
             '>' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                match self.chr0 {
-                    Some('>') => {
-                        let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::GtGt, tok_end));
-                    }
-                    Some('.') => {
-                        let _ = self.next_char();
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::GreaterDot, tok_end));
-                    }
-                    Some('=') => {
-                        let _ = self.next_char();
-                        match self.chr0 {
-                            Some('.') => {
-                                let _ = self.next_char();
-                                let tok_end = self.get_pos();
-                                self.emit((tok_start, Token::GreaterEqualDot, tok_end));
-                            }
-                            _ => {
-                                let tok_end = self.get_pos();
-                                self.emit((tok_start, Token::GreaterEqual, tok_end));
-                            }
-                        }
-                    }
-                    _ => {
-                        let tok_end = self.get_pos();
-                        self.emit((tok_start, Token::Greater, tok_end));
-                    }
-                }
+                self.lex_gt(token_start)?;
             }
             ',' => {
                 self.eat_single_char(Token::Comma);
             }
             '.' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                if let Some('.') = &self.chr0 {
+                if let Some('.') = &self.char0 {
                     let _ = self.next_char();
-                    let tok_end = self.get_pos();
-                    self.emit((tok_start, Token::DotDot, tok_end));
+                    let token_end = self.get_position();
+                    self.emit((token_start, Token::DotDot, token_end));
                 } else {
-                    let tok_end = self.get_pos();
-                    self.emit((tok_start, Token::Dot, tok_end));
+                    let token_end = self.get_position();
+                    self.emit((token_start, Token::Dot, token_end));
                     self.maybe_lex_dot_access()?;
                 }
             }
@@ -525,15 +492,15 @@ where
                 self.eat_single_char(Token::Hash);
             }
             '\n' | ' ' | '\t' | '\x0C' => {
-                let tok_start = self.get_pos();
+                let token_start = self.get_position();
                 let _ = self.next_char();
-                let tok_end = self.get_pos();
-                if c == '\n' {
-                    self.emit((tok_start, Token::NewLine, tok_end));
+                let token_end = self.get_position();
+                if character == '\n' {
+                    self.emit((token_start, Token::NewLine, token_end));
                 }
             }
             '\u{201A}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "low single comma quotation mark",
@@ -546,7 +513,7 @@ where
                 });
             }
             '\u{FF3B}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth left square bracket",
@@ -559,7 +526,7 @@ where
                 });
             }
             '\u{FF3D}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth right square bracket",
@@ -572,7 +539,7 @@ where
                 });
             }
             '\u{FF08}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth left parenthesis",
@@ -585,7 +552,7 @@ where
                 });
             }
             '\u{FF09}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth right parenthesis",
@@ -598,7 +565,7 @@ where
                 });
             }
             '\u{FF0E}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth full stop",
@@ -611,7 +578,7 @@ where
                 });
             }
             '\u{3002}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "ideographic full stop",
@@ -624,7 +591,7 @@ where
                 });
             }
             '\u{FF1C}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth less-than sign",
@@ -637,7 +604,7 @@ where
                 });
             }
             '\u{FF1E}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth greater-than sign",
@@ -650,7 +617,7 @@ where
                 });
             }
             '\u{FF5C}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth vertical line",
@@ -663,7 +630,7 @@ where
                 });
             }
             '\u{FF20}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth commercial at",
@@ -676,7 +643,7 @@ where
                 });
             }
             '\u{FF3E}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth circumflex accent",
@@ -689,7 +656,7 @@ where
                 });
             }
             '\u{FF1A}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth colon",
@@ -703,7 +670,7 @@ where
             }
             // Visually similar characters that are not valid Gleam source.
             '\u{201C}' | '\u{201D}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "double quotation mark",
@@ -716,7 +683,7 @@ where
                 });
             }
             '\u{2018}' | '\u{2019}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "single quotation mark",
@@ -729,7 +696,7 @@ where
                 });
             }
             '\u{2013}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "en dash",
@@ -742,7 +709,7 @@ where
                 });
             }
             '\u{2014}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "em dash",
@@ -755,7 +722,7 @@ where
                 });
             }
             '\u{2217}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "asterisk operator",
@@ -768,7 +735,7 @@ where
                 });
             }
             '\u{2215}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "division slash",
@@ -781,7 +748,7 @@ where
                 });
             }
             '\u{00A0}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "non-breaking space",
@@ -794,7 +761,7 @@ where
                 });
             }
             '\u{200B}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "zero-width space",
@@ -807,7 +774,7 @@ where
                 });
             }
             '\u{0430}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "Cyrillic letter а",
@@ -820,7 +787,7 @@ where
                 });
             }
             '\u{0435}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "Cyrillic letter е",
@@ -833,7 +800,7 @@ where
                 });
             }
             '\u{043E}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "Cyrillic letter о",
@@ -846,7 +813,7 @@ where
                 });
             }
             '\u{0440}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "Cyrillic letter р",
@@ -859,7 +826,7 @@ where
                 });
             }
             '\u{1D35}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "modifier letter capital I",
@@ -872,7 +839,7 @@ where
                 });
             }
             '\u{FF0C}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "fullwidth comma",
@@ -885,7 +852,7 @@ where
                 });
             }
             '\u{3001}' => {
-                let location = self.get_pos();
+                let location = self.get_position();
                 return Err(LexicalError {
                     error: LexicalErrorType::VisuallySimilarInvalidCharacter {
                         name: "ideographic comma",
@@ -897,10 +864,10 @@ where
                     },
                 });
             }
-            c => {
-                let location = self.get_pos();
+            character => {
+                let location = self.get_position();
                 return Err(LexicalError {
-                    error: LexicalErrorType::UnrecognizedToken { tok: c },
+                    error: LexicalErrorType::UnrecognizedToken { token: character },
                     location: SrcSpan {
                         start: location,
                         end: location,
@@ -912,25 +879,171 @@ where
         Ok(())
     }
 
+    // Once we've found a `<`, proceed from there
+    fn lex_lt(&mut self, mut token_start: u32) -> Result<(), LexicalError> {
+        match self.char0 {
+            Some('>') => {
+                let _ = self.next_char();
+                self.emit((token_start, Token::Concatenate, self.get_position()));
+            }
+            Some('<') => {
+                let _ = self.next_char();
+
+                if self.char0 != Some('<') {
+                    self.emit((token_start, Token::LtLt, self.get_position()));
+                    return Ok(());
+                }
+
+                let _ = self.next_char();
+                let mut seen_lt = 3;
+
+                loop {
+                    if seen_lt >= 7 {
+                        return Err(LexicalError {
+                            error: LexicalErrorType::MergeConflictIndicator,
+                            location: SrcSpan {
+                                start: token_start,
+                                end: self.get_position(),
+                            },
+                        });
+                    }
+
+                    if self.char0 == Some('<') {
+                        let _ = self.next_char();
+                        seen_lt += 1;
+                    } else {
+                        while seen_lt > 1 {
+                            self.emit((token_start, Token::LtLt, token_start + 2));
+                            token_start += 2;
+                            seen_lt -= 2;
+                        }
+                        if seen_lt > 0 {
+                            return self.lex_lt(token_start);
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            Some('.') => {
+                let _ = self.next_char();
+                self.emit((token_start, Token::LessDot, self.get_position()));
+            }
+            Some('-') => {
+                let _ = self.next_char();
+                self.emit((token_start, Token::LArrow, self.get_position()));
+            }
+            Some('=') => {
+                let _ = self.next_char();
+                match self.char0 {
+                    Some('.') => {
+                        let _ = self.next_char();
+                        self.emit((token_start, Token::LessEqualDot, self.get_position()));
+                    }
+                    _ => {
+                        self.emit((token_start, Token::LessEqual, self.get_position()));
+                    }
+                }
+            }
+            _ => {
+                self.emit((token_start, Token::Less, self.get_position()));
+            }
+        }
+        Ok(())
+    }
+
+    // Once we've found a `>`
+    fn lex_gt(&mut self, mut token_start: u32) -> Result<(), LexicalError> {
+        match self.char0 {
+            Some('>') => {
+                let _ = self.next_char();
+                let token_end = self.get_position();
+
+                if self.char0 != Some('>') {
+                    self.emit((token_start, Token::GtGt, token_end));
+                    return Ok(());
+                }
+
+                let _ = self.next_char();
+                let mut seen_gt = 3;
+
+                loop {
+                    if seen_gt >= 7 {
+                        return Err(LexicalError {
+                            error: LexicalErrorType::MergeConflictIndicator,
+                            location: SrcSpan {
+                                start: token_start,
+                                end: self.get_position(),
+                            },
+                        });
+                    }
+
+                    if self.char0 == Some('>') {
+                        let _ = self.next_char();
+                        seen_gt += 1;
+                    } else {
+                        while seen_gt > 1 {
+                            self.emit((token_start, Token::GtGt, token_start + 2));
+                            token_start += 2;
+                            seen_gt -= 2;
+                        }
+                        if seen_gt > 0 {
+                            return self.lex_gt(token_start);
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            Some('.') => {
+                let _ = self.next_char();
+                self.emit((token_start, Token::GreaterDot, self.get_position()));
+            }
+            Some('=') => {
+                let _ = self.next_char();
+                match self.char0 {
+                    Some('.') => {
+                        let _ = self.next_char();
+                        self.emit((token_start, Token::GreaterEqualDot, self.get_position()));
+                    }
+                    _ => {
+                        self.emit((token_start, Token::GreaterEqual, self.get_position()));
+                    }
+                }
+            }
+            _ => {
+                self.emit((token_start, Token::Greater, self.get_position()));
+            }
+        }
+        Ok(())
+    }
     // Lexer helper functions:
     // this can be either a reserved word, or a name
     fn lex_name(&mut self) -> LexResult {
         let mut name = String::new();
-        let start_pos = self.get_pos();
+        let start_position = self.get_position();
 
         while self.is_name_continuation() {
             name.push(self.next_char().expect("lex_name continue"));
         }
 
-        let end_pos = self.get_pos();
+        let end_position = self.get_position();
 
         match string_to_keyword(&name) {
-            Some(tok) => Ok((start_pos, tok, end_pos)),
+            Some(token) => Ok((start_position, token, end_position)),
             _ => {
                 if name.starts_with('_') {
-                    Ok((start_pos, Token::DiscardName { name: name.into() }, end_pos))
+                    Ok((
+                        start_position,
+                        Token::DiscardName { name: name.into() },
+                        end_position,
+                    ))
                 } else {
-                    Ok((start_pos, Token::Name { name: name.into() }, end_pos))
+                    Ok((
+                        start_position,
+                        Token::Name { name: name.into() },
+                        end_position,
+                    ))
                 }
             }
         }
@@ -938,61 +1051,65 @@ where
     // A type name or constructor
     fn lex_upname(&mut self) -> LexResult {
         let mut name = String::new();
-        let start_pos = self.get_pos();
+        let start_position = self.get_position();
 
         while self.is_name_continuation() {
             name.push(self.next_char().expect("lex_upname upname"));
         }
 
-        let end_pos = self.get_pos();
+        let end_position = self.get_position();
 
         match string_to_keyword(&name) {
-            Some(tok) => Ok((start_pos, tok, end_pos)),
-            _ => Ok((start_pos, Token::UpName { name: name.into() }, end_pos)),
+            Some(token) => Ok((start_position, token, end_position)),
+            _ => Ok((
+                start_position,
+                Token::UpName { name: name.into() },
+                end_position,
+            )),
         }
     }
 
     fn lex_number(&mut self) -> LexResult {
-        let start_pos = self.get_pos();
+        let start_position = self.get_position();
 
         // We call this function after making sure that what comes next starts
         // with what seems to be a valid number. If we see that it starts with
         // `-` we consume the token and record that the number is negative.
-        let is_negative = if self.chr0 == Some('-') {
+        let is_negative = if self.char0 == Some('-') {
             let _ = self.next_char();
             true
         } else {
             false
         };
 
-        let num = if self.chr0 == Some('0') {
-            match self.chr1 {
+        let number = if self.char0 == Some('0') {
+            match self.char1 {
                 Some('x' | 'X') => {
                     // Hex!
                     let _ = self.next_char();
                     let _ = self.next_char();
-                    self.lex_number_radix(start_pos, 16, is_negative, "0x")?
+                    self.lex_number_radix(start_position, 16, is_negative, "0x")?
                 }
                 Some('o' | 'O') => {
                     // Octal!
                     let _ = self.next_char();
                     let _ = self.next_char();
-                    self.lex_number_radix(start_pos, 8, is_negative, "0o")?
+                    self.lex_number_radix(start_position, 8, is_negative, "0o")?
                 }
                 Some('b' | 'B') => {
                     // Binary!
                     let _ = self.next_char();
                     let _ = self.next_char();
-                    self.lex_number_radix(start_pos, 2, is_negative, "0b")?
+                    self.lex_number_radix(start_position, 2, is_negative, "0b")?
                 }
-                _ => self.lex_decimal_number(start_pos, is_negative)?,
+                _ => self.lex_decimal_number(start_position, is_negative)?,
             }
         } else {
-            self.lex_decimal_number(start_pos, is_negative)?
+            self.lex_decimal_number(start_position, is_negative)?
         };
 
-        if Some('_') == self.chr0 {
-            let location = self.get_pos();
+        if Some('_') == self.char0 {
+            let location = self.get_position();
             Err(LexicalError {
                 error: LexicalErrorType::NumTrailingUnderscore,
                 location: SrcSpan {
@@ -1001,7 +1118,7 @@ where
                 },
             })
         } else {
-            Ok(num)
+            Ok(number)
         }
     }
 
@@ -1015,7 +1132,7 @@ where
     ) -> LexResult {
         let num = self.radix_run(radix);
         if num.is_empty() {
-            let location = self.get_pos() - 1;
+            let location = self.get_position() - 1;
             Err(LexicalError {
                 error: LexicalErrorType::RadixIntNoValue,
                 location: SrcSpan {
@@ -1023,8 +1140,8 @@ where
                     end: location,
                 },
             })
-        } else if radix < 16 && Lexer::<T>::is_digit_of_radix(self.chr0, 16) {
-            let location = self.get_pos();
+        } else if radix < 16 && Lexer::<T>::is_digit_of_radix(self.char0, 16) {
+            let location = self.get_position();
             Err(LexicalError {
                 error: LexicalErrorType::DigitOutOfRadix,
                 location: SrcSpan {
@@ -1035,7 +1152,7 @@ where
         } else {
             let value = format!("{prefix}{num}");
             let int_value = super::parse_int_value(&value).expect("int value to parse as bigint");
-            let end_pos = self.get_pos();
+            let end_pos = self.get_position();
 
             let (value, int_value) = if is_negative {
                 (format!("-{value}"), int_value.neg())
@@ -1078,14 +1195,14 @@ where
         value.push_str(&self.radix_run(10));
 
         // If float:
-        if can_lex_decimal && self.chr0 == Some('.') {
+        if can_lex_decimal && self.char0 == Some('.') {
             value.push(self.next_char().expect("lex_normal_number float"));
             value.push_str(&self.radix_run(10));
 
             // If scientific:
-            if self.chr0 == Some('e') {
+            if self.char0 == Some('e') {
                 value.push(self.next_char().expect("lex_normal_number scientific"));
-                if self.chr0 == Some('-') {
+                if self.char0 == Some('-') {
                     value.push(
                         self.next_char()
                             .expect("lex_normal_number scientific negative"),
@@ -1095,12 +1212,12 @@ where
                 if exponent_run.is_empty() {
                     return Err(LexicalError {
                         error: LexicalErrorType::MissingExponent,
-                        location: SrcSpan::new(start_pos, self.get_pos()),
+                        location: SrcSpan::new(start_pos, self.get_position()),
                     });
                 }
                 value.push_str(&exponent_run);
             }
-            let end_pos = self.get_pos();
+            let end_pos = self.get_position();
             let float_value =
                 LiteralFloatValue::parse(&value).expect("float value to parse as non-NaN f64");
             Ok((
@@ -1113,7 +1230,7 @@ where
             ))
         } else {
             let int_value = super::parse_int_value(&value).expect("int value to parse as bigint");
-            let end_pos = self.get_pos();
+            let end_pos = self.get_position();
             Ok((
                 start_pos,
                 Token::Int {
@@ -1129,8 +1246,8 @@ where
     fn maybe_lex_dot_access(&mut self) -> Result<(), LexicalError> {
         // It can be nested like: `tuple.1.2.3.4`
         loop {
-            if matches!(self.chr0, Some('0'..='9')) {
-                let number = self.lex_int_number(self.get_pos(), false)?;
+            if matches!(self.char0, Some('0'..='9')) {
+                let number = self.lex_int_number(self.get_position(), false)?;
                 self.emit(number);
             } else {
                 break;
@@ -1146,9 +1263,9 @@ where
         let mut value_text = String::new();
 
         loop {
-            if let Some(c) = self.take_number(radix) {
-                value_text.push(c);
-            } else if self.chr0 == Some('_') && Lexer::<T>::is_digit_of_radix(self.chr1, radix) {
+            if let Some(character) = self.take_number(radix) {
+                value_text.push(character);
+            } else if self.char0 == Some('_') && Lexer::<T>::is_digit_of_radix(self.char1, radix) {
                 value_text.push('_');
                 let _ = self.next_char();
             } else {
@@ -1160,7 +1277,7 @@ where
 
     // Consume a single character with the given radix.
     fn take_number(&mut self, radix: u32) -> Option<char> {
-        let take_char = Lexer::<T>::is_digit_of_radix(self.chr0, radix);
+        let take_char = Lexer::<T>::is_digit_of_radix(self.char0, radix);
 
         if take_char {
             Some(self.next_char().expect("take_number next char"))
@@ -1188,7 +1305,7 @@ where
             Doc,
             ModuleDoc,
         }
-        let kind = match (self.chr0, self.chr1) {
+        let kind = match (self.char0, self.char1) {
             (Some('/'), Some('/')) => {
                 let _ = self.next_char();
                 let _ = self.next_char();
@@ -1201,25 +1318,25 @@ where
             _ => Kind::Comment,
         };
         let mut content = EcoString::new();
-        let start_pos = self.get_pos();
-        while Some('\n') != self.chr0 {
-            match self.chr0 {
-                Some(c) => content.push(c),
+        let start_position = self.get_position();
+        while Some('\n') != self.char0 {
+            match self.char0 {
+                Some(character) => content.push(character),
                 None => break,
             }
             let _ = self.next_char();
         }
-        let end_pos = self.get_pos();
+        let end_position = self.get_position();
         let token = match kind {
             Kind::Comment => Token::CommentNormal,
             Kind::Doc => Token::CommentDoc { content },
             Kind::ModuleDoc => Token::CommentModule,
         };
-        (start_pos, token, end_pos)
+        (start_position, token, end_position)
     }
 
     fn lex_string(&mut self) -> LexResult {
-        let start_pos = self.get_pos();
+        let start_position = self.get_position();
         // advance past the first quote
         let _ = self.next_char();
         let mut string_content = String::new();
@@ -1227,25 +1344,25 @@ where
         loop {
             match self.next_char() {
                 Some('\\') => {
-                    let slash_pos = self.get_pos() - 1;
-                    if let Some(c) = self.chr0 {
-                        match c {
+                    let slash_position = self.get_position() - 1;
+                    if let Some(character) = self.char0 {
+                        match character {
                             'f' | 'n' | 'r' | 't' | '"' | '\\' => {
                                 let _ = self.next_char();
                                 string_content.push('\\');
-                                string_content.push(c);
+                                string_content.push(character);
                             }
                             'u' => {
                                 let _ = self.next_char();
 
-                                if self.chr0 != Some('{') {
+                                if self.char0 != Some('{') {
                                     return Err(LexicalError {
                                         error: LexicalErrorType::InvalidUnicodeEscape(
                                             InvalidUnicodeEscapeError::MissingOpeningBrace,
                                         ),
                                         location: SrcSpan {
-                                            start: self.get_pos() - 1,
-                                            end: self.get_pos(),
+                                            start: self.get_position() - 1,
+                                            end: self.get_position(),
                                         },
                                     });
                                 }
@@ -1256,7 +1373,7 @@ where
                                 loop {
                                     let _ = self.next_char();
 
-                                    let Some(chr) = self.chr0 else {
+                                    let Some(chr) = self.char0 else {
                                         break;
                                     };
 
@@ -1274,21 +1391,21 @@ where
                                                 InvalidUnicodeEscapeError::ExpectedHexDigitOrCloseBrace,
                                             ),
                                             location: SrcSpan {
-                                                start: self.get_pos(),
-                                                end: self.get_pos() + 1,
+                                                start: self.get_position(),
+                                                end: self.get_position() + 1,
                                             },
                                         });
                                     }
                                 }
 
-                                if self.chr0 != Some('}') {
+                                if self.char0 != Some('}') {
                                     return Err(LexicalError {
                                         error: LexicalErrorType::InvalidUnicodeEscape(
                                             InvalidUnicodeEscapeError::ExpectedHexDigitOrCloseBrace,
                                         ),
                                         location: SrcSpan {
-                                            start: self.get_pos() - 1,
-                                            end: self.get_pos(),
+                                            start: self.get_position() - 1,
+                                            end: self.get_position(),
                                         },
                                     });
                                 }
@@ -1301,8 +1418,8 @@ where
                                             InvalidUnicodeEscapeError::InvalidNumberOfHexDigits,
                                         ),
                                         location: SrcSpan {
-                                            start: slash_pos,
-                                            end: self.get_pos(),
+                                            start: slash_position,
+                                            end: self.get_position(),
                                         },
                                     });
                                 }
@@ -1319,8 +1436,8 @@ where
                                             InvalidUnicodeEscapeError::InvalidCodepoint,
                                         ),
                                         location: SrcSpan {
-                                            start: slash_pos,
-                                            end: self.get_pos(),
+                                            start: slash_position,
+                                            end: self.get_position(),
                                         },
                                     });
                                 }
@@ -1333,8 +1450,8 @@ where
                                 return Err(LexicalError {
                                     error: LexicalErrorType::BadStringEscape,
                                     location: SrcSpan {
-                                        start: slash_pos,
-                                        end: slash_pos + 1,
+                                        start: slash_position,
+                                        end: slash_position + 1,
                                     },
                                 });
                             }
@@ -1343,8 +1460,8 @@ where
                         return Err(LexicalError {
                             error: LexicalErrorType::BadStringEscape,
                             location: SrcSpan {
-                                start: slash_pos,
-                                end: slash_pos,
+                                start: slash_position,
+                                end: slash_position,
                             },
                         });
                     }
@@ -1355,74 +1472,74 @@ where
                     return Err(LexicalError {
                         error: LexicalErrorType::UnexpectedStringEnd,
                         location: SrcSpan {
-                            start: start_pos,
-                            end: start_pos,
+                            start: start_position,
+                            end: start_position,
                         },
                     });
                 }
             }
         }
-        let end_pos = self.get_pos();
+        let end_position = self.get_position();
 
-        let tok = Token::String {
+        let token = Token::String {
             value: string_content.into(),
         };
 
-        Ok((start_pos, tok, end_pos))
+        Ok((start_position, token, end_position))
     }
 
-    fn is_name_start(&self, c: char) -> bool {
-        matches!(c, '_' | 'a'..='z')
+    fn is_name_start(&self, character: char) -> bool {
+        matches!(character, '_' | 'a'..='z')
     }
-    fn is_upname_start(&self, c: char) -> bool {
-        c.is_ascii_uppercase()
+    fn is_upname_start(&self, character: char) -> bool {
+        character.is_ascii_uppercase()
     }
-    fn is_number_start(&self, c: char, c1: Option<char>) -> bool {
-        match c {
+    fn is_number_start(&self, character: char, character1: Option<char>) -> bool {
+        match character {
             '0'..='9' => true,
-            '-' => matches!(c1, Some('0'..='9')),
+            '-' => matches!(character1, Some('0'..='9')),
             _ => false,
         }
     }
 
     fn is_name_continuation(&self) -> bool {
-        self.chr0
+        self.char0
             .map(|c| matches!(c, '_' | '0'..='9' | 'a'..='z' | 'A'..='Z'))
             .unwrap_or(false)
     }
 
     // advance the stream and emit a token
-    fn eat_single_char(&mut self, ty: Token) {
-        let tok_start = self.get_pos();
+    fn eat_single_char(&mut self, token: Token) {
+        let token_start = self.get_position();
         let _ = self.next_char().expect("eat_single_char");
-        let tok_end = self.get_pos();
-        self.emit((tok_start, ty, tok_end));
+        let token_end = self.get_position();
+        self.emit((token_start, token, token_end));
     }
 
     // Helper function to go to the next character coming up.
     fn next_char(&mut self) -> Option<char> {
-        let c = self.chr0;
-        let nxt = match self.chars.next() {
-            Some((loc, c)) => {
-                self.loc0 = self.loc1;
-                self.loc1 = loc;
-                Some(c)
+        let character = self.char0;
+        let next = match self.chars.next() {
+            Some((location, character)) => {
+                self.location0 = self.location1;
+                self.location1 = location;
+                Some(character)
             }
             None => {
                 // EOF needs a single advance
-                self.loc0 = self.loc1;
-                self.loc1 += 1;
+                self.location0 = self.location1;
+                self.location1 += 1;
                 None
             }
         };
-        self.chr0 = self.chr1;
-        self.chr1 = nxt;
-        c
+        self.char0 = self.char1;
+        self.char1 = next;
+        character
     }
 
     // Helper function to retrieve the current position.
-    fn get_pos(&self) -> u32 {
-        self.loc0
+    fn get_position(&self) -> u32 {
+        self.location0
     }
 
     // Helper function to emit a lexed token to the queue of tokens.

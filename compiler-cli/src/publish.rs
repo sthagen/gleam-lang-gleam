@@ -8,7 +8,7 @@ use gleam_core::{
     Error, Result,
     analyse::TargetSupport,
     ast::{CallArg, Statement, TypedExpr, TypedFunction},
-    build::{Codegen, Compile, Mode, Options, Package, Target},
+    build::{Codegen, Compile, ErlangOutput, Mode, Options, Package, Target},
     config::{GleamVersion, PackageConfig, SpdxLicense},
     docs::{Dependency, DependencyKind, DocContext},
     error::{InvalidReadmeReason, SmallVersion, wrap},
@@ -453,6 +453,7 @@ fn do_build_hex_tarball(paths: &ProjectPaths, config: &mut PackageConfig) -> Res
             codegen: Codegen::All,
             compile: Compile::All,
             no_print_progress: false,
+            erlang_output: ErlangOutput::Textual,
         },
         manifest,
     )?;
@@ -723,7 +724,7 @@ fn generated_erlang_files(
             continue;
         }
 
-        let name = module.compiled_erlang_path();
+        let name = module.compiled_textual_erlang_path();
         files.push((tar_src.join(&name), fs::read(build.join(name))?));
     }
 
@@ -757,7 +758,7 @@ where
     header.set_cksum();
     tarball
         .append_data(&mut header, path, data)
-        .map_err(|e| Error::add_tar(path, e))
+        .map_err(|error| Error::add_tar(path, error))
 }
 
 fn add_to_tar_from_file_system<P, W>(
@@ -780,7 +781,7 @@ where
 
     tarball
         .append_path(path)
-        .map_err(|e| Error::add_tar(path, e))
+        .map_err(|error| Error::add_tar(path, error))
 }
 
 #[test]

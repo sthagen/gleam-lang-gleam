@@ -44,9 +44,10 @@ pub enum LexicalErrorType {
     // Unterminated string literal
     UnexpectedStringEnd,
     UnrecognizedToken {
-        tok: char,
+        token: char,
     },
     InvalidTripleEqual,
+    MergeConflictIndicator,
     /// Operators that commonly exist in procedural language, but do
     /// not exist in Gleam. e.g. `++`, `-=`, `/=`, `%=`, `+=`, `*=`
     UnsupportedProceduralOperator,
@@ -925,14 +926,14 @@ impl LexicalError {
             LexicalErrorType::UnexpectedStringEnd => {
                 ("The string starting here was left open", vec![])
             }
-            LexicalErrorType::UnrecognizedToken { tok } if *tok == ';' => (
+            LexicalErrorType::UnrecognizedToken { token } if *token == ';' => (
                 "Remove this semicolon",
                 vec![
                     "Hint: Semicolons used to be whitespace and did nothing.".into(),
                     "You can safely remove them without your program changing.".into(),
                 ],
             ),
-            LexicalErrorType::UnrecognizedToken { tok } if *tok == '\'' => (
+            LexicalErrorType::UnrecognizedToken { token } if *token == '\'' => (
                 "Unexpected single quote",
                 vec!["Hint: Strings are written with double quotes.".into()],
             ),
@@ -969,6 +970,23 @@ impl LexicalError {
                 vec![
                     "Gleam uses `==` to check for equality between two values.".into(),
                     "See: https://tour.gleam.run/basics/equality".into(),
+                ],
+            ),
+            LexicalErrorType::MergeConflictIndicator => (
+                "Merge conflict marker found",
+                vec![
+                    "Your code appears to have a merge conflict. Resolve it by removing
+the code you do not want to keep.
+
+If you are in a merge, the top chunk is the checked-out code, and the
+bottom chunk is the new code being merged.
+
+If you are in a rebase, the top chunk is the code being rebased onto,
+and the chunk section is the checked-out code which is being rebased.
+
+More information can be found in the official git documentation:
+https://git-scm.com/book/en/v2/Git-Tools-Advanced-Merging#_checking_out_conflicts"
+                        .into(),
                 ],
             ),
             LexicalErrorType::UnsupportedProceduralOperator => (

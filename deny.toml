@@ -11,21 +11,16 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # is to ensure that we do not forget to fix these.
 #
 [[advisories.ignore]]
-id = "RUSTSEC-2026-0173"
+id = "RUSTSEC-2026-0255"
 reason = """
-proc-macro-error2 is currently unmaintained.
+sized-chunks (used by im):
 
-At time of writing, it is used by a single transitive dependency.
+Panic-safety unsoundness in Chunk, RingBuffer, and InlineArray
+(use-after-free / double-free)
 
-   $ cargo tree -i proc-macro-error2
-   proc-macro-error2 v2.0.1
-   └── i18n-embed-fl v0.9.2
-       └── age v0.11.3
-           └── gleam-core
+https://github.com/gleam-lang/gleam/issues/6161
 
-https://github.com/gleam-lang/gleam/issues/5829
-
-FIX-DEADLINE: 2026-10-08
+FIX-DEADLINE: 2026-12-11
 """
 
 [[advisories.ignore]]
@@ -73,6 +68,7 @@ FIX-DEADLINE: 2027-04-11
 # https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
 [licenses]
 allow = [
+    "Apache-2.0 WITH LLVM-exception",
     "Apache-2.0",
     "BSD-3-Clause",
     "BSL-1.0",

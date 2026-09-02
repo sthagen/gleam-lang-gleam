@@ -1129,7 +1129,6 @@ impl<'a, 'doc> Formatter<'a> {
         docvec![arena, attributes, function]
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn expr_fn(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
@@ -1295,7 +1294,7 @@ impl<'a, 'doc> Formatter<'a> {
                 message,
             } => self.echo(arena, expression, message),
 
-            UntypedExpr::PipeLine { expressions, .. } => self.pipeline(arena, expressions, false),
+            UntypedExpr::Pipeline { expressions, .. } => self.pipeline(arena, expressions, false),
 
             UntypedExpr::Int { value, .. } => self.int(arena, value),
 
@@ -1385,7 +1384,9 @@ impl<'a, 'doc> Formatter<'a> {
                 let segment_docs = segments
                     .iter()
                     .map(|segment| {
-                        bit_array_segment(arena, segment, |e| self.bit_array_segment_expr(arena, e))
+                        bit_array_segment(arena, segment, |segment| {
+                            self.bit_array_segment_expr(arena, segment)
+                        })
                     })
                     .collect_vec();
 
@@ -1517,7 +1518,6 @@ impl<'a, 'doc> Formatter<'a> {
         new_value.chars().rev().collect::<EcoString>().to_doc(arena)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn pattern_constructor(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
@@ -1593,7 +1593,7 @@ impl<'a, 'doc> Formatter<'a> {
         location: &SrcSpan,
     ) -> Document<'a, 'doc> {
         let expression = match function {
-            UntypedExpr::PipeLine { .. } => break_block(arena, self.expr(arena, function)),
+            UntypedExpr::Pipeline { .. } => break_block(arena, self.expr(arena, function)),
 
             UntypedExpr::BinOp { .. }
             | UntypedExpr::Int { .. }
@@ -1669,7 +1669,6 @@ impl<'a, 'doc> Formatter<'a> {
     // resulting document will try to first split that before splitting all the
     // other arguments.
     // This is used for function calls and tuples.
-    #[allow(clippy::too_many_arguments)]
     fn append_inlinable_wrapped_arguments<'b, T, Predicate, ToDoc>(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
@@ -1812,7 +1811,6 @@ impl<'a, 'doc> Formatter<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn const_record_update(
         &mut self,
         arena: &'doc DocumentArena<'a, 'doc>,
@@ -1988,7 +1986,7 @@ impl<'a, 'doc> Formatter<'a> {
             | UntypedExpr::Fn { .. }
             | UntypedExpr::List { .. }
             | UntypedExpr::Call { .. }
-            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Pipeline { .. }
             | UntypedExpr::Case { .. }
             | UntypedExpr::FieldAccess { .. }
             | UntypedExpr::Tuple { .. }
@@ -2560,7 +2558,7 @@ impl<'a, 'doc> Formatter<'a> {
             | UntypedExpr::Var { .. }
             | UntypedExpr::Call { .. }
             | UntypedExpr::BinOp { .. }
-            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Pipeline { .. }
             | UntypedExpr::FieldAccess { .. }
             | UntypedExpr::TupleIndex { .. }
             | UntypedExpr::Todo { .. }
@@ -2594,7 +2592,7 @@ impl<'a, 'doc> Formatter<'a> {
             | UntypedExpr::List { .. }
             | UntypedExpr::Call { .. }
             | UntypedExpr::BinOp { .. }
-            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Pipeline { .. }
             | UntypedExpr::FieldAccess { .. }
             | UntypedExpr::Tuple { .. }
             | UntypedExpr::TupleIndex { .. }
@@ -2991,7 +2989,7 @@ impl<'a, 'doc> Formatter<'a> {
                 let doc = self.bin_op(arena, operator, left, right, true).group(arena);
                 commented(arena, doc, comments)
             }
-            UntypedExpr::PipeLine { expressions } if siblings > 1 => {
+            UntypedExpr::Pipeline { expressions } if siblings > 1 => {
                 let comments = self.pop_comments(expression.start_byte_index());
                 let doc = self.pipeline(arena, expressions, true).group(arena);
                 commented(arena, doc, comments)
@@ -3005,7 +3003,7 @@ impl<'a, 'doc> Formatter<'a> {
             | UntypedExpr::List { .. }
             | UntypedExpr::Call { .. }
             | UntypedExpr::BinOp { .. }
-            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Pipeline { .. }
             | UntypedExpr::Case { .. }
             | UntypedExpr::FieldAccess { .. }
             | UntypedExpr::Tuple { .. }
@@ -3129,7 +3127,7 @@ impl<'a, 'doc> Formatter<'a> {
             Pattern::StringPrefix {
                 left_side_string: left,
                 right_side_assignment: right,
-                left_side_assignment: left_assign,
+                left_side_assignment: left_assignment,
                 ..
             } => {
                 let left = self.string(arena, left);
@@ -3137,8 +3135,8 @@ impl<'a, 'doc> Formatter<'a> {
                     AssignName::Variable(name) => name.to_doc(arena),
                     AssignName::Discard(name) => name.to_doc(arena),
                 };
-                match left_assign {
-                    Some((name, _)) => {
+                match left_assignment {
+                    Some(StringPrefixLeftSideAssignment { name, .. }) => {
                         docvec![
                             arena,
                             left,
@@ -3390,7 +3388,7 @@ impl<'a, 'doc> Formatter<'a> {
             | UntypedExpr::Fn { .. }
             | UntypedExpr::List { .. }
             | UntypedExpr::Call { .. }
-            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Pipeline { .. }
             | UntypedExpr::Case { .. }
             | UntypedExpr::FieldAccess { .. }
             | UntypedExpr::Tuple { .. }
@@ -3432,7 +3430,7 @@ impl<'a, 'doc> Formatter<'a> {
             | UntypedExpr::Fn { .. }
             | UntypedExpr::List { .. }
             | UntypedExpr::Call { .. }
-            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Pipeline { .. }
             | UntypedExpr::Case { .. }
             | UntypedExpr::FieldAccess { .. }
             | UntypedExpr::Tuple { .. }
@@ -3598,7 +3596,7 @@ impl<'a, 'doc> Formatter<'a> {
             | UntypedExpr::Fn { .. }
             | UntypedExpr::List { .. }
             | UntypedExpr::Call { .. }
-            | UntypedExpr::PipeLine { .. }
+            | UntypedExpr::Pipeline { .. }
             | UntypedExpr::Case { .. }
             | UntypedExpr::FieldAccess { .. }
             | UntypedExpr::Tuple { .. }
@@ -4088,7 +4086,7 @@ fn binop<'a, 'doc>(binop: BinOp) -> Document<'a, 'doc> {
     }
 }
 
-#[allow(clippy::enum_variant_names)]
+#[expect(clippy::enum_variant_names)]
 #[derive(Debug)]
 /// This is used to determine how to fit the items of a list, or the segments of
 /// a bit array in a line.
@@ -4204,7 +4202,7 @@ fn is_breakable_argument(expression: &UntypedExpr, arity: usize) -> bool {
         | UntypedExpr::String { .. }
         | UntypedExpr::Var { .. }
         | UntypedExpr::BinOp { .. }
-        | UntypedExpr::PipeLine { .. }
+        | UntypedExpr::Pipeline { .. }
         | UntypedExpr::FieldAccess { .. }
         | UntypedExpr::TupleIndex { .. }
         | UntypedExpr::Todo { .. }

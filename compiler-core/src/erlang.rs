@@ -8,9 +8,8 @@ mod tests;
 
 use crate::build::Target;
 use crate::erlang::pattern::{AliasedLiteral, PatternGenerator};
-use crate::exhaustiveness::CompiledCase;
 use crate::strings::to_snake_case;
-use crate::type_::{self, is_prelude_module};
+use crate::type_::{self, HasType, is_prelude_module};
 use crate::{
     ast::*,
     type_::{
@@ -215,7 +214,9 @@ impl<'a> Generator<'a> {
         }
     }
 
-    fn module_document<Output>(&mut self, builder: &mut impl ErlangBuilder<Output>) {
+    fn module<Output>(&mut self, builder: &mut impl ErlangBuilder<Output>) {
+        builder.module_declaration(ErlangModuleName::new(&self.module.name));
+
         // We need to know which private functions are referenced in importable
         // constants so that we can export them anyway in the generated Erlang.
         // This is because otherwise when the constant is used in another module it
@@ -246,6 +247,10 @@ impl<'a> Generator<'a> {
         // We also add a `-module_doc` comment at the beginning of the module
         // with its documentation.
         self.module_documentation(builder);
+
+        // We add a `-file` attribute a the top of the module to set the file
+        // for all functions coming after this.
+        builder.module_file_attribute(&self.module_source_path);
 
         // Then we generate `-type` definitions for the module's types.
         for custom_type in &self.module.definitions.custom_types {
@@ -440,13 +445,13 @@ fn phantom_type_variables(custom_type: &CustomType<Arc<Type>>) -> Vec<EcoString>
     // itself: any of those that isn't used by any of the constructors is going
     // to be a phantom type variable.
     let mut definition_type_variables =
-        collect_type_var_usages(HashMap::new(), custom_type.typed_parameters.iter());
+        collect_ref_type_var_usages(HashMap::new(), custom_type.typed_parameters.iter());
 
     // So we need to gather all the type variables referenced by all the
     // constructors.
     let mut constructors_type_variables = HashMap::new();
     for constructor in &custom_type.constructors {
-        constructors_type_variables = collect_type_var_usages(
+        constructors_type_variables = collect_ref_type_var_usages(
             constructors_type_variables,
             constructor.arguments.iter().map(|argument| &argument.type_),
         );
@@ -467,7 +472,7 @@ fn phantom_type_variables(custom_type: &CustomType<Arc<Type>>) -> Vec<EcoString>
 
 /// Given a custom type's type parameter (that is expected to be generic or
 /// unbound), this will return the name the corresponding type variable should
-/// have in the generated erlang code.
+/// have in the generated Erlang code.
 ///
 /// If the type passed is not generic this will panic!
 fn type_parameter_name(type_: &Type) -> EcoString {
@@ -529,7 +534,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
     /// When we run into this Gleam assignment we will need to decide how to
     /// call it on the Erlang side. So we would call:
     ///
-    /// ```ignore
+    /// ```txt
     /// let location = todo!("the location of this variable")
     /// new_erlang_variable("wibble", location)
     /// // and later we can tell what name was picked by calling
@@ -613,14 +618,20 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         let function_name = EcoString::from(escape_erlang_existing_name(self.function_name));
 
         // Then we add the function's documentation and type annotation.
-        builder.file_attribute(
-            &self.module_generator.module_source_path,
-            self.module_generator
-                .line_numbers
-                .line_number(function.location.start),
+        self.function_spec_attribute(
+            builder,
+            &function_name,
+            &function.arguments,
+            function.return_type.clone(),
         );
-        self.function_spec_attribute(builder, &function_name, function);
-        self.function_doc_attribute(builder, function);
+        self.function_doc_attribute(
+            builder,
+            function.publicity,
+            function
+                .documentation
+                .as_ref()
+                .map(|(_, documentation)| documentation),
+        );
 
         // Finally we start generating code for the function itself, how we do
         // it depends if the function is external or not.
@@ -669,33 +680,33 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
 
     /// This generates the `-spec` attribute for a function with the given name.
     ///
-    fn function_spec_attribute<Output>(
+    fn function_spec_attribute<Output, Typed: HasType>(
         &mut self,
         builder: &mut impl ErlangBuilder<Output>,
         function_name: &EcoString,
-        function: &'a Function<Arc<Type>, TypedExpr>,
+        arguments: &[Typed],
+        return_type: Arc<Type>,
     ) {
         // We start by getting all the type variable usages from this function,
         // both in the argument types and return type.
         let module_name = &self.module_generator.module.name;
         let var_usages = &collect_type_var_usages(
             HashMap::new(),
-            function
-                .arguments
+            arguments
                 .iter()
-                .map(|argument| &argument.type_)
-                .chain(std::iter::once(&function.return_type)),
+                .map(|argument| argument.type_())
+                .chain([return_type.clone()]),
         );
         let generator = TypeGenerator::new(module_name).with_var_usages(var_usages);
 
         // We can then start generating the function spec.
-        let spec = builder.start_function_spec(function_name, function.arguments.len());
+        let spec = builder.start_function_spec(function_name, arguments.len());
         let function_type = builder.start_function_type();
-        for argument in &function.arguments {
-            generator.type_(builder, &argument.type_);
+        for argument in arguments {
+            generator.type_(builder, &argument.type_());
         }
         let function_type = builder.end_function_type_arguments(function_type);
-        generator.type_(builder, &function.return_type);
+        generator.type_(builder, &return_type);
         builder.end_function_type(function_type);
         builder.end_function_spec(spec);
     }
@@ -703,17 +714,18 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
     fn function_doc_attribute<Output>(
         &self,
         builder: &mut impl ErlangBuilder<Output>,
-        function: &TypedFunction,
+        function_publicity: Publicity,
+        documentation: Option<&'_ EcoString>,
     ) {
         // If a function is marked as internal or comes from an internal module
         // we want to hide its documentation in the Erlang shell!
         // So the doc directive will look like this: `-doc(false).`
         let is_internal =
-            self.module_generator.module.type_info.is_internal || function.publicity.is_internal();
+            self.module_generator.module.type_info.is_internal || function_publicity.is_internal();
 
         if is_internal {
             builder.doc_attribute(DocContent::False);
-        } else if let Some((_, documentation)) = &function.documentation
+        } else if let Some(documentation) = documentation
             && !documentation.is_empty()
         {
             builder.doc_attribute(DocContent::String(documentation));
@@ -844,12 +856,12 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 int_value,
                 location,
                 ..
-            } => builder.int(*location, int_value.clone()),
+            } => builder.int_expression(*location, int_value.clone()),
             TypedExpr::Float {
                 float_value,
                 location,
                 ..
-            } => builder.float(*location, float_value.value()),
+            } => builder.float_expression(*location, float_value.value()),
             TypedExpr::String {
                 value, location, ..
             } => builder.string(*location, value),
@@ -977,7 +989,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 constructor: ModuleValueConstructor::Record { name, arity: 0, .. },
                 location,
                 ..
-            } => builder.atom(*location, &to_snake_case(name)),
+            } => builder.atom_expression(*location, &to_snake_case(name)),
             TypedExpr::RecordUpdate {
                 updated_record_assigned_name,
                 updated_record,
@@ -1119,9 +1131,8 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 location,
                 subjects,
                 clauses,
-                compiled_case,
                 ..
-            } => self.case(builder, *location, subjects, clauses, compiled_case),
+            } => self.case(builder, *location, subjects, clauses),
 
             //
             // Something went wrong!
@@ -1142,7 +1153,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         self.module_generator.echo_used = true;
 
         let call = builder.start_call(echo_location);
-        builder.atom(echo_location, "echo");
+        builder.atom_expression(echo_location, "echo");
         let call = builder.end_called_expression(call);
 
         // Echo has 4 arguments: the expression to print...
@@ -1154,14 +1165,14 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         if let Some(message) = message {
             self.maybe_block_expr(builder, message);
         } else {
-            builder.atom(echo_location, "nil");
+            builder.atom_expression(echo_location, "nil");
         }
 
         // ...the filepath of this module...
         builder.string(echo_location, &self.module_generator.module_source_path);
 
         // ...and the line number of the expression.
-        builder.int(
+        builder.int_expression(
             echo_location,
             self.module_generator
                 .line_numbers
@@ -1191,8 +1202,8 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         let map = builder.start_map(location);
 
         builder.map_field(location);
-        builder.atom(location, "gleam_error");
-        builder.atom(
+        builder.atom_expression(location, "gleam_error");
+        builder.atom_expression(
             location,
             match error_kind {
                 RuntimeErrorKind::Todo => "todo",
@@ -1203,7 +1214,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         );
 
         builder.map_field(location);
-        builder.atom(location, "message");
+        builder.atom_expression(location, "message");
         if let Some(message) = message {
             self.maybe_block_expr(builder, message);
         } else {
@@ -1211,20 +1222,20 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         }
 
         builder.map_field(location);
-        builder.atom(location, "file");
+        builder.atom_expression(location, "file");
         builder.string(location, &self.module_generator.module_source_path);
 
         builder.map_field(location);
-        builder.atom(location, "module");
+        builder.atom_expression(location, "module");
         builder.string(location, &self.module_generator.module.name);
 
         builder.map_field(location);
-        builder.atom(location, "function");
+        builder.atom_expression(location, "function");
         builder.string(location, self.function_name);
 
         builder.map_field(location);
-        builder.atom(location, "line");
-        builder.int(
+        builder.atom_expression(location, "line");
+        builder.int_expression(
             location,
             self.module_generator
                 .line_numbers
@@ -1350,24 +1361,24 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
 
         // We want to add some additional fields to the error map:
         builder.map_field(location);
-        builder.atom(location, "value");
+        builder.atom_expression(location, "value");
         builder.variable(location, &value_name);
 
         builder.map_field(location);
-        builder.atom(location, "start");
-        builder.int(location, location.start.into());
+        builder.atom_expression(location, "start");
+        builder.int_expression(location, location.start.into());
 
         builder.map_field(location);
-        builder.atom(location, "end");
-        builder.int(location, value.location().end.into());
+        builder.atom_expression(location, "end");
+        builder.int_expression(location, value.location().end.into());
 
         builder.map_field(location);
-        builder.atom(location, "pattern_start");
-        builder.int(location, pattern.location().start.into());
+        builder.atom_expression(location, "pattern_start");
+        builder.int_expression(location, pattern.location().start.into());
 
         builder.map_field(location);
-        builder.atom(location, "pattern_end");
-        builder.int(location, pattern.location().end.into());
+        builder.atom_expression(location, "pattern_end");
+        builder.int_expression(location, pattern.location().end.into());
 
         self.end_runtime_error(builder, error);
         builder.end_clause_body(clause);
@@ -1546,7 +1557,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 builder.atom_pattern(*location, "true");
                 let clause = builder.end_clause_pattern(clause);
                 let clause = builder.end_clause_guards(clause);
-                builder.atom(*location, "nil");
+                builder.atom_expression(*location, "nil");
                 builder.end_clause_body(clause);
 
                 // Otherwise we want to throw a runtime error!
@@ -1602,7 +1613,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 builder.atom_pattern(*location, "true");
                 let clause = builder.end_clause_pattern(clause);
                 let clause = builder.end_clause_guards(clause);
-                builder.atom(*location, "nil");
+                builder.atom_expression(*location, "nil");
                 builder.end_clause_body(clause);
 
                 // Otherwise we want to throw a runtime error!
@@ -1654,7 +1665,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 builder.atom_pattern(*location, "true");
                 let clause = builder.end_clause_pattern(clause);
                 let clause = builder.end_clause_guards(clause);
-                builder.atom(*location, "nil");
+                builder.atom_expression(*location, "nil");
                 builder.end_clause_body(clause);
 
                 // Otherwise we want to throw a runtime error!
@@ -1731,7 +1742,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
             builder.atom_pattern(location, "true");
             let clause = builder.end_clause_pattern(clause);
             let clause = builder.end_clause_guards(clause);
-            builder.atom(location, "nil");
+            builder.atom_expression(location, "nil");
             builder.end_clause_body(clause);
 
             // If it's false the assertion failed! The left hand side was true
@@ -1801,7 +1812,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         builder.atom_pattern(location, "true");
         let clause = builder.end_clause_pattern(clause);
         let clause = builder.end_clause_guards(clause);
-        builder.atom(location, "nil");
+        builder.atom_expression(location, "nil");
         builder.end_clause_body(clause);
 
         // But if it fails we know that both sides of the assertion resulted in
@@ -1838,32 +1849,32 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         let error = self.start_runtime_error(builder, RuntimeErrorKind::Assert, location, message);
 
         builder.map_field(location);
-        builder.atom(location, "kind");
-        builder.atom(location, "binary_operator");
+        builder.atom_expression(location, "kind");
+        builder.atom_expression(location, "binary_operator");
 
         builder.map_field(location);
-        builder.atom(location, "operator");
-        builder.atom(location, operator.name());
+        builder.atom_expression(location, "operator");
+        builder.atom_expression(location, operator.name());
 
         builder.map_field(location);
-        builder.atom(location, "left");
+        builder.atom_expression(location, "left");
         self.assertion_expression_map(builder, location, &left);
 
         builder.map_field(location);
-        builder.atom(location, "right");
+        builder.atom_expression(location, "right");
         self.assertion_expression_map(builder, location, &right);
 
         builder.map_field(location);
-        builder.atom(location, "start");
-        builder.int(location, location.start.into());
+        builder.atom_expression(location, "start");
+        builder.int_expression(location, location.start.into());
 
         builder.map_field(location);
-        builder.atom(location, "end");
-        builder.int(location, right.location.end.into());
+        builder.atom_expression(location, "end");
+        builder.int_expression(location, right.location.end.into());
 
         builder.map_field(location);
-        builder.atom(location, "expression_start");
-        builder.int(location, left.location.start.into());
+        builder.atom_expression(location, "expression_start");
+        builder.int_expression(location, left.location.start.into());
 
         self.end_runtime_error(builder, error);
     }
@@ -1880,26 +1891,26 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         let error = self.start_runtime_error(builder, RuntimeErrorKind::Assert, location, message);
 
         builder.map_field(location);
-        builder.atom(location, "kind");
-        builder.atom(location, "expression");
+        builder.atom_expression(location, "kind");
+        builder.atom_expression(location, "expression");
 
         // If assert fails on an expression's result then we know it must have
         // evaluated to false!
         builder.map_field(location);
-        builder.atom(location, "expression");
+        builder.atom_expression(location, "expression");
         self.assertion_expression_map(builder, location, &expression);
 
         builder.map_field(location);
-        builder.atom(location, "start");
-        builder.int(location, location.start.into());
+        builder.atom_expression(location, "start");
+        builder.int_expression(location, location.start.into());
 
         builder.map_field(location);
-        builder.atom(location, "end");
-        builder.int(location, expression.location.end.into());
+        builder.atom_expression(location, "end");
+        builder.int_expression(location, expression.location.end.into());
 
         builder.map_field(location);
-        builder.atom(location, "expression_start");
-        builder.int(location, expression.location.start.into());
+        builder.atom_expression(location, "expression_start");
+        builder.int_expression(location, expression.location.start.into());
 
         self.end_runtime_error(builder, error);
     }
@@ -1915,11 +1926,11 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         let error = self.start_runtime_error(builder, RuntimeErrorKind::Assert, location, message);
 
         builder.map_field(location);
-        builder.atom(location, "kind");
-        builder.atom(location, "function_call");
+        builder.atom_expression(location, "kind");
+        builder.atom_expression(location, "function_call");
 
         builder.map_field(location);
-        builder.atom(location, "arguments");
+        builder.atom_expression(location, "arguments");
         for argument in arguments {
             builder.cons_list(location);
             self.assertion_expression_map(builder, location, argument);
@@ -1927,16 +1938,16 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         builder.empty_list(location);
 
         builder.map_field(location);
-        builder.atom(location, "start");
-        builder.int(location, location.start.into());
+        builder.atom_expression(location, "start");
+        builder.int_expression(location, location.start.into());
 
         builder.map_field(location);
-        builder.atom(location, "end");
-        builder.int(location, call.location().end.into());
+        builder.atom_expression(location, "end");
+        builder.int_expression(location, call.location().end.into());
 
         builder.map_field(location);
-        builder.atom(location, "expression_start");
-        builder.int(location, call.location().start.into());
+        builder.atom_expression(location, "expression_start");
+        builder.int_expression(location, call.location().start.into());
 
         self.end_runtime_error(builder, error);
     }
@@ -1959,8 +1970,8 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         let map = builder.start_map(assertion_location);
 
         builder.map_field(assertion_location);
-        builder.atom(assertion_location, "kind");
-        builder.atom(
+        builder.atom_expression(assertion_location, "kind");
+        builder.atom_expression(
             assertion_location,
             match kind {
                 AssertedExpressionKind::Literal => "literal",
@@ -1971,17 +1982,17 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
 
         if runtime_value.is_some() {
             builder.map_field(assertion_location);
-            builder.atom(assertion_location, "value");
+            builder.atom_expression(assertion_location, "value");
             self.runtime_value(builder, expression);
         }
 
         builder.map_field(assertion_location);
-        builder.atom(assertion_location, "start");
-        builder.int(assertion_location, location.start.into());
+        builder.atom_expression(assertion_location, "start");
+        builder.int_expression(assertion_location, location.start.into());
 
         builder.map_field(assertion_location);
-        builder.atom(assertion_location, "end");
-        builder.int(assertion_location, location.end.into());
+        builder.atom_expression(assertion_location, "end");
+        builder.int_expression(assertion_location, location.end.into());
 
         builder.end_map(map);
     }
@@ -2001,10 +2012,10 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
             .expect("trying to reference unevaluated assert value")
         {
             AssertedExpressionRuntimeValue::KnownBool(true) => {
-                builder.atom(expression.location, "true")
+                builder.atom_expression(expression.location, "true")
             }
             AssertedExpressionRuntimeValue::KnownBool(false) => {
-                builder.atom(expression.location, "false")
+                builder.atom_expression(expression.location, "false")
             }
             AssertedExpressionRuntimeValue::Variable(name) => {
                 builder.variable(expression.location, name)
@@ -2023,7 +2034,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         index: u64,
     ) {
         let call = builder.start_remote_call(location, ErlangModuleName::erlang(), "element");
-        builder.int(location, (index + 1).into());
+        builder.int_expression(location, (index + 1).into());
         self.maybe_block_expr(builder, tuple);
         builder.end_call(call);
     }
@@ -2057,7 +2068,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 // }
                 // ```
                 Type::Named { .. } | Type::Var { .. } | Type::Tuple { .. } => {
-                    builder.atom(variable_location, &to_snake_case(record_name));
+                    builder.atom_expression(variable_location, &to_snake_case(record_name));
                 }
                 Type::Fn { arguments, .. } => {
                     self.record_builder_anonymous_function(
@@ -2145,7 +2156,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                     )
                 } else {
                     let call = builder.start_call(call_location);
-                    builder.atom(fun.location(), escape_erlang_existing_name(name));
+                    builder.atom_expression(fun.location(), escape_erlang_existing_name(name));
                     builder.end_called_expression(call)
                 };
                 for argument in arguments {
@@ -2203,7 +2214,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                     )
                 } else {
                     let call = builder.start_call(call_location);
-                    builder.atom(fun.location(), escape_erlang_existing_name(name));
+                    builder.atom_expression(fun.location(), escape_erlang_existing_name(name));
                     builder.end_called_expression(call)
                 };
                 for argument in arguments {
@@ -2242,10 +2253,10 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         arguments: &'a [TypedCallArg],
     ) {
         if arguments.is_empty() {
-            builder.atom(location, &to_snake_case(record_name));
+            builder.atom_expression(location, &to_snake_case(record_name));
         } else {
             let tuple = builder.start_tuple(location);
-            builder.atom(location, &to_snake_case(record_name));
+            builder.atom_expression(location, &to_snake_case(record_name));
             for argument in arguments {
                 self.maybe_block_expr(builder, &argument.value);
             }
@@ -2259,7 +2270,6 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         case_location: SrcSpan,
         subjects: &'a [TypedExpr],
         clauses: &'a [TypedClause],
-        compiled_case: &'a CompiledCase,
     ) {
         let case = builder.start_case(case_location);
 
@@ -2285,13 +2295,9 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         }
         let case = builder.end_case_subject(case);
 
-        for (clause_index, clause) in clauses.iter().enumerate() {
+        for clause in clauses.iter() {
             let taken_names_before_clause = self.taken_names.clone();
-
-            // If the main pattern is not unreachable, emit an Erlang case arm for it.
-            if !compiled_case.unreachable.contains(&(clause_index, 0)) {
-                self.clause_branch(builder, &clause.pattern, clause);
-            }
+            self.clause_branch(builder, &clause.pattern, clause);
 
             // Erlang doesn't support alternative patterns so we're gonna have
             // to turn those into separate branches!
@@ -2319,23 +2325,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
             // end
             // ```
             //
-            for (alt_offset, pattern) in clause.alternative_patterns.iter().enumerate() {
-                // This specific for loop iterates over alternative patterns.
-                // Since we have already looked over the main pattern, we
-                // must add 1 to the `alt_offset` as we shift by one to line up
-                // with the real indexes for the unreachable. (Alternatives start at `1+`.)
-                let pattern_index = alt_offset + 1;
-
-                // If this alternative is unreachable based on
-                // the `compiled_case`, then the Erlang generated code
-                // will not contain this alternative's Erlang arm.
-                if compiled_case
-                    .unreachable
-                    .contains(&(clause_index, pattern_index))
-                {
-                    continue;
-                }
-
+            for pattern in &clause.alternative_patterns {
                 self.taken_names = taken_names_before_clause.clone();
                 self.clause_branch(builder, pattern, clause);
             }
@@ -2415,12 +2405,12 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 int_value,
                 location,
                 ..
-            } => builder.int(*location, int_value.clone()),
+            } => builder.int_expression(*location, int_value.clone()),
             Constant::Float {
                 float_value,
                 location,
                 ..
-            } => builder.float(*location, float_value.value()),
+            } => builder.float_expression(*location, float_value.value()),
             Constant::String {
                 value, location, ..
             } => builder.string(*location, value),
@@ -2511,7 +2501,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                     // usual as a tagged tuple.
                     Some(arguments) => {
                         let tuple = builder.start_tuple(*location);
-                        builder.atom(*location, &to_snake_case(&tag));
+                        builder.atom_expression(*location, &to_snake_case(&tag));
                         for argument in arguments {
                             self.inlined_constant(builder, &argument.value);
                         }
@@ -2533,7 +2523,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                     // ```
                     None => match type_::collapse_links(type_.clone()).deref() {
                         Type::Named { .. } | Type::Var { .. } | Type::Tuple { .. } => {
-                            builder.atom(*location, &to_snake_case(&tag));
+                            builder.atom_expression(*location, &to_snake_case(&tag));
                         }
                         Type::Fn { arguments, .. } => {
                             self.record_builder_anonymous_function(
@@ -2606,7 +2596,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 location,
                 ..
             }) if int_value.is_negative() => {
-                builder.int(*location, BigInt::ZERO);
+                builder.int_expression(*location, BigInt::ZERO);
             }
             Some(size) => self.inlined_constant(builder, size),
             None => builder.bit_array_segment_default_size(),
@@ -2803,12 +2793,12 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         right: &'a TypedExpr,
     ) {
         match how_to_divide(left, right) {
-            HowToDivide::ReplaceWithZero => builder.float(division_location, 0.0),
+            HowToDivide::ReplaceWithZero => builder.float_expression(division_location, 0.0),
             HowToDivide::EvaluateLeftAndReturnZero => {
                 // We first evaluate the left hand side, and ignore its return
                 // value, and then we return zero directly!
                 self.maybe_block_expr(builder, left);
-                builder.float(division_location, 0.0);
+                builder.float_expression(division_location, 0.0);
             }
             HowToDivide::PlainErlangDivision => {
                 builder.binary_operator(division_location, "/");
@@ -2839,7 +2829,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 builder.float_pattern(right.location(), 0.0);
                 let guards = builder.end_clause_pattern(clause);
                 let body = builder.end_clause_guards(guards);
-                builder.float(right.location(), 0.0);
+                builder.float_expression(right.location(), 0.0);
                 builder.end_clause_body(body);
 
                 // -0.0 -> -0.0
@@ -2847,7 +2837,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 builder.float_pattern(right.location(), -0.0);
                 let guards = builder.end_clause_pattern(clause);
                 let body = builder.end_clause_guards(guards);
-                builder.float(right.location(), -0.0);
+                builder.float_expression(right.location(), -0.0);
                 builder.end_clause_body(body);
 
                 // _value -> left / _value
@@ -2882,12 +2872,12 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         op: &'static str,
     ) {
         match how_to_divide(left, right) {
-            HowToDivide::ReplaceWithZero => builder.int(division_location, BigInt::ZERO),
+            HowToDivide::ReplaceWithZero => builder.int_expression(division_location, BigInt::ZERO),
             HowToDivide::EvaluateLeftAndReturnZero => {
                 // We first evaluate the left hand side, and ignore its return
                 // value, and then we return zero directly!
                 self.maybe_block_expr(builder, left);
-                builder.int(division_location, BigInt::ZERO);
+                builder.int_expression(division_location, BigInt::ZERO);
             }
             HowToDivide::PlainErlangDivision => {
                 builder.binary_operator(division_location, op);
@@ -2930,7 +2920,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 builder.int_pattern(right.location(), BigInt::ZERO);
                 let guards = builder.end_clause_pattern(clause);
                 let body = builder.end_clause_guards(guards);
-                builder.int(right.location(), BigInt::ZERO);
+                builder.int_expression(right.location(), BigInt::ZERO);
                 builder.end_clause_body(body);
 
                 // _value -> left div _value
@@ -3032,7 +3022,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
 
             builder.bit_array_segment(segment.location);
 
-            // For utf16 and utf32 we need an explicit conversion using erlang's
+            // For utf16 and utf32 we need an explicit conversion using Erlang's
             // `unicode:characters_to_binary`. The segment value will be
             // something like this:
             // ```erl
@@ -3045,12 +3035,12 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
             );
             {
                 self.maybe_block_expr(builder, &segment.value);
-                builder.atom(segment.location, "utf8");
+                builder.atom_expression(segment.location, "utf8");
                 let tuple = builder.start_tuple(segment.location);
-                builder.atom(segment.location, &format!("utf{size}"));
+                builder.atom_expression(segment.location, &format!("utf{size}"));
                 match endiannes {
-                    Endianness::Big => builder.atom(segment.location, "big"),
-                    Endianness::Little => builder.atom(segment.location, "little"),
+                    Endianness::Big => builder.atom_expression(segment.location, "big"),
+                    Endianness::Little => builder.atom_expression(segment.location, "little"),
                 }
                 builder.end_tuple(tuple);
             }
@@ -3093,14 +3083,14 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         } = &size
         {
             if int_value.is_negative() {
-                builder.int(*size_location, BigInt::ZERO);
+                builder.int_expression(*size_location, BigInt::ZERO);
             } else {
-                builder.int(*size_location, int_value.clone());
+                builder.int_expression(*size_location, int_value.clone());
             }
         } else {
             let call =
                 builder.start_remote_call(size.location(), ErlangModuleName::erlang(), "max");
-            builder.int(size.location(), BigInt::ZERO);
+            builder.int_expression(size.location(), BigInt::ZERO);
             self.maybe_block_expr(builder, size);
             builder.end_call(call);
         }
@@ -3201,10 +3191,10 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                 match assignments.get(name) {
                     Some(AliasedLiteral::String { value, .. }) => builder.string(*location, value),
                     Some(AliasedLiteral::Int { value, .. }) => {
-                        builder.int(*location, value.clone())
+                        builder.int_expression(*location, value.clone())
                     }
                     Some(AliasedLiteral::Float { value, .. }) => {
-                        builder.float(*location, value.value())
+                        builder.float_expression(*location, value.value())
                     }
                     None => {
                         builder.variable(*location, &self.local_var_name(definition_location));
@@ -3222,7 +3212,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         index: u64,
     ) {
         let call = builder.start_remote_call(location, ErlangModuleName::erlang(), "element");
-        builder.int(location, (index + 1).into());
+        builder.int_expression(location, (index + 1).into());
         self.clause_guard(builder, tuple, &HashMap::new());
         builder.end_call(call);
     }
@@ -3307,10 +3297,10 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
         );
 
         if arguments.is_empty() {
-            builder.atom(builder_location, &to_snake_case(record_name));
+            builder.atom_expression(builder_location, &to_snake_case(record_name));
         } else {
             let tuple = builder.start_tuple(builder_location);
-            builder.atom(builder_location, &to_snake_case(record_name));
+            builder.atom_expression(builder_location, &to_snake_case(record_name));
             for argument in arguments {
                 builder.variable(builder_location, &argument);
             }
@@ -3348,7 +3338,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                         location,
                         &self.new_erlang_variable(&gleam_name, location),
                     );
-                    builder.float(location, value.value());
+                    builder.float_expression(location, value.value());
                 }
                 AliasedLiteral::Int { location, value } => {
                     builder.match_operator(location);
@@ -3356,7 +3346,7 @@ impl<'a, 'generator> FunctionGenerator<'a, 'generator> {
                         location,
                         &self.new_erlang_variable(&gleam_name, location),
                     );
-                    builder.int(location, value.clone());
+                    builder.int_expression(location, value.clone());
                 }
             }
         }
@@ -3401,7 +3391,7 @@ pub fn records(module: &TypedModule) -> Vec<(&str, String)> {
 }
 
 /// Given an expression, this tells us how we should be calling it as a
-/// function in the generated erlang code.
+/// function in the generated Erlang code.
 fn how_to_call<'a>(function: &'a TypedExpr) -> FunctionCall<'a> {
     match function {
         // This is a record constructor from the current module.
@@ -3422,7 +3412,7 @@ fn how_to_call<'a>(function: &'a TypedExpr) -> FunctionCall<'a> {
             ..
         } => FunctionCall::BuildRecord { name },
 
-        // Notice how whenever we have a function that has an erlang
+        // Notice how whenever we have a function that has an Erlang
         // external definition we will always directly call that and not go
         // through the Gleam function. For example:
         //
@@ -3587,14 +3577,14 @@ fn how_to_divide(left: &TypedExpr, right: &TypedExpr) -> HowToDivide {
 }
 
 pub fn record_definition(record_name: &str, fields: &[(SrcSpan, &str, Arc<Type>)]) -> String {
-    let mut builder = ErlangSourceBuilder::new(None);
+    let mut builder = ErlangSourceBuilder::default();
 
     let attribute = builder.start_record_attribute(&to_snake_case(record_name));
 
     let type_printer = TypeGenerator::new("").var_as_any();
     for (field_location, field_name, field_type) in fields {
         builder.record_field();
-        builder.atom(*field_location, field_name);
+        builder.atom_expression(*field_location, field_name);
         type_printer.type_(&mut builder, field_type);
     }
 
@@ -3602,16 +3592,14 @@ pub fn record_definition(record_name: &str, fields: &[(SrcSpan, &str, Arc<Type>)
     builder.into_output()
 }
 
-pub fn module<'a>(
+pub fn module<'a, Output>(
+    mut builder: impl ErlangBuilder<Output>,
     module: &'a TypedModule,
-    line_numbers: LineNumbers,
+    line_numbers: &'a LineNumbers,
     root: &'a Utf8Path,
-) -> String {
-    let mut generator = Generator::new(module, &line_numbers, root);
-
-    let module_name = ErlangModuleName::new(&module.name);
-    let mut builder = ErlangSourceBuilder::new(Some(module_name));
-    generator.module_document(&mut builder);
+) -> Output {
+    let mut generator = Generator::new(module, line_numbers, root);
+    generator.module(&mut builder);
     builder.into_output()
 }
 
@@ -3983,7 +3971,7 @@ fn variable_name(name: &str) -> EcoString {
     first_uppercased.chain(chars).collect()
 }
 
-/// When rendering a type variable to an erlang type spec we need all type
+/// When rendering a type variable to an Erlang type spec we need all type
 /// variables with the same id to end up with the same name in the generated
 /// Erlang.
 /// This function converts a usize into base 26 A-Z for this purpose.
@@ -4048,12 +4036,22 @@ pub fn escape_erlang_existing_name(name: &str) -> &str {
 ///     fn(a) -> String       // `a` is `any()`
 ///     fn() -> Result(a, b)  // `a` and `b` are `any()`
 ///     fn(a) -> a            // `a` is a type var
-fn collect_type_var_usages<'a>(
+fn collect_ref_type_var_usages<'a>(
     mut ids: HashMap<u64, u64>,
     types: impl IntoIterator<Item = &'a Arc<Type>>,
 ) -> HashMap<u64, u64> {
     for type_ in types {
         type_var_ids(type_, &mut ids);
+    }
+    ids
+}
+
+fn collect_type_var_usages(
+    mut ids: HashMap<u64, u64>,
+    types: impl IntoIterator<Item = Arc<Type>>,
+) -> HashMap<u64, u64> {
+    for type_ in types {
+        type_var_ids(&type_, &mut ids);
     }
     ids
 }
@@ -4159,6 +4157,7 @@ fn erl_safe_type_name(mut name: EcoString) -> EcoString {
         | "pid"
         | "port"
         | "pos_integer"
+        | "record"
         | "reference"
         | "string"
         | "term"

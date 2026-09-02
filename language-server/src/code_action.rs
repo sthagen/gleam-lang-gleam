@@ -11,10 +11,11 @@ use gleam_core::{
         self, ArgNames, AssignName, AssignmentKind, BitArraySegmentTruncation, BoundVariable,
         BoundVariableName, CallArg, CustomType, FunctionLiteralKind, ImplicitCallArgOrigin, Import,
         InvalidExpression, PIPE_PRECEDENCE, Pattern, PatternUnusedArguments,
-        PipelineAssignmentKind, Publicity, RecordConstructor, TodoKind, TypeAstConstructorName,
-        TypedArg, TypedAssignment, TypedClauseGuard, TypedDefinitions, TypedExpr, TypedFunction,
-        TypedModuleConstant, TypedPattern, TypedPipelineAssignment, TypedRecordConstructor,
-        TypedStatement, TypedTailPattern, TypedUse, visit::Visit as _,
+        PipelineAssignmentKind, Publicity, RecordConstructor, StringPrefixLeftSideAssignment,
+        TodoKind, TypeAstConstructorName, TypedArg, TypedAssignment, TypedClauseGuard,
+        TypedDefinitions, TypedExpr, TypedFunction, TypedModuleConstant, TypedPattern,
+        TypedPipelineAssignment, TypedRecordConstructor, TypedStatement, TypedTailPattern,
+        TypedUse, visit::Visit as _,
     },
     build::{Located, Module, Origin},
     config::PackageConfig,
@@ -505,12 +506,12 @@ impl<'ast> ast::visit::Visit<'ast> for PatternVariableFinder {
         &mut self,
         _location: &'ast SrcSpan,
         _left_location: &'ast SrcSpan,
-        left_side_assignment: &'ast Option<(EcoString, SrcSpan)>,
+        left_side_assignment: &'ast Option<StringPrefixLeftSideAssignment>,
         _right_location: &'ast SrcSpan,
         _left_side_string: &'ast EcoString,
         right_side_assignment: &'ast AssignName,
     ) {
-        if let Some((name, _)) = left_side_assignment {
+        if let Some(StringPrefixLeftSideAssignment { name, .. }) = left_side_assignment {
             self.pattern_variables.push(name.clone());
         }
         if let AssignName::Variable(name) = right_side_assignment {
@@ -5820,9 +5821,9 @@ impl<'a, IO> PatternMatchOnValue<'a, IO> {
 
         let mut action = Vec::with_capacity(1);
         CodeActionBuilder::new(action_title)
-            .kind(CodeActionKind::RefactorRewrite)
+            .kind(CodeActionKind::QuickFix)
             .changes(self.params.text_document.uri.clone(), self.edits.edits)
-            .preferred(false)
+            .preferred(true)
             .push_to(&mut action);
         action
     }
@@ -6447,19 +6448,25 @@ impl<'ast, IO> ast::visit::Visit<'ast> for PatternMatchOnValue<'ast, IO> {
         &mut self,
         _location: &'ast SrcSpan,
         _left_location: &'ast SrcSpan,
-        left_side_assignment: &'ast Option<(EcoString, SrcSpan)>,
+        left_side_assignment: &'ast Option<StringPrefixLeftSideAssignment>,
         right_location: &'ast SrcSpan,
         _left_side_string: &'ast EcoString,
         right_side_assignment: &'ast AssignName,
     ) {
-        if let Some((name, location)) = left_side_assignment
-            && within(
-                self.params.range,
-                self.edits.src_span_to_lsp_range(*location),
-            )
+        if let Some(StringPrefixLeftSideAssignment {
+            name,
+            name_start_position,
+            location,
+        }) = left_side_assignment
         {
-            let location = PatternLocation::regular(*location);
-            self.pattern_variable_under_cursor = Some((name, location, type_::string()));
+            let location = SrcSpan::new(*name_start_position, location.end);
+            if within(
+                self.params.range,
+                self.edits.src_span_to_lsp_range(location),
+            ) {
+                let location = PatternLocation::regular(location);
+                self.pattern_variable_under_cursor = Some((name, location, type_::string()));
+            }
         } else if let AssignName::Variable(name) = right_side_assignment
             && within(
                 self.params.range,
@@ -12459,7 +12466,7 @@ impl<'a> WrapInAnonymousFunction<'a> {
                 .kind(CodeActionKind::RefactorRewrite)
                 .changes(
                     self.params.text_document.uri.clone(),
-                    self.edits.edits.drain(..).collect(),
+                    std::mem::take(&mut self.edits.edits),
                 )
                 .push_to(&mut actions);
         }
@@ -12905,6 +12912,8 @@ impl<'a> DiscardUnusedVariable<'a> {
                         self.params.range,
                         self.edits.src_span_to_lsp_range(*location),
                     )
+                    // We do not want code action for generated variables.
+                    && !origin.is_generated()
                 {
                     Some(UnusedVariable { location, origin })
                 } else {
@@ -12916,22 +12925,53 @@ impl<'a> DiscardUnusedVariable<'a> {
             return vec![];
         };
 
-        match unused_variable.origin.syntax {
-            type_::error::VariableSyntax::Variable(_) => {
-                self.edits
-                    .insert(unused_variable.location.start, ("_").to_string());
-            }
-            type_::error::VariableSyntax::LabelShorthand(_) => {
-                self.edits
-                    .insert(unused_variable.location.end, (" _").to_string());
-            }
-            type_::error::VariableSyntax::AssignmentPattern(location) => {
-                self.edits.delete(SrcSpan {
-                    start: location.start,
+        // Discard hovered variable definition.
+        self.discard_variable(unused_variable.origin, unused_variable.location);
+
+        // In case there are alternative patterns like:
+        //
+        // ```gleam
+        // [0, y] | [1, y] | [2, y]
+        // ```
+        //
+        // with code action triggered at first `y`, to discard the second and
+        // third `y` we need to find references of variable. Since the variable
+        // is unused, only alternative patterns will be there.
+        let references = FindVariableReferences::new(
+            *unused_variable.location,
+            // Name can be `None` only if the variable is generated, and here
+            // we know that it is not.
+            unused_variable.origin.name().expect("variable name"),
+        )
+        .find_in_module(&self.module.ast);
+
+        for reference in references {
+            let located = self.module.ast.find_node(reference.location.start);
+            match located {
+                // For bindings like `x`, `[x, y]` we have origin and location
+                // directly, so we can simply discard them with regard to origin.
+                Some(Located::Pattern(Pattern::Variable {
+                    location, origin, ..
+                })) => self.discard_variable(origin, location),
+                // For pattern assignments like `[1, 2] as tail` we can remove
+                // the part from the end of the pattern to the end of the assign.
+                Some(Located::Pattern(Pattern::Assign {
+                    location, pattern, ..
+                })) => self.edits.delete(SrcSpan {
+                    start: pattern.location().end,
                     end: location.end,
-                });
+                }),
+                // For prefix alias of string prefix pattern we can remove
+                // assignment.
+                Some(Located::StringPrefixPatternPrefixAlias { location, .. }) => {
+                    self.edits.delete(location)
+                }
+                // For suffix of string prefix pattern we can add `_` before the name
+                Some(Located::StringPrefixPatternSuffix { location, .. }) => {
+                    self.edits.insert(location.start, "_".to_string())
+                }
+                _ => (),
             }
-            type_::error::VariableSyntax::Generated => (),
         }
 
         let mut action = Vec::with_capacity(1);
@@ -12941,6 +12981,24 @@ impl<'a> DiscardUnusedVariable<'a> {
             .preferred(true)
             .push_to(&mut action);
         action
+    }
+
+    fn discard_variable(&mut self, origin: &VariableOrigin, location: &SrcSpan) {
+        match origin.syntax {
+            type_::error::VariableSyntax::Variable(_) => {
+                self.edits.insert(location.start, ("_").to_string());
+            }
+            type_::error::VariableSyntax::LabelShorthand(_) => {
+                self.edits.insert(location.end, (" _").to_string());
+            }
+            type_::error::VariableSyntax::AssignmentPattern { name: _, location } => {
+                self.edits.delete(SrcSpan {
+                    start: location.start,
+                    end: location.end,
+                });
+            }
+            type_::error::VariableSyntax::Generated => (),
+        }
     }
 }
 
@@ -13198,12 +13256,27 @@ impl<'a> ConvertIntToDifferentBase<'a> {
                 .kind(CodeActionKind::RefactorRewrite)
                 .changes(
                     self.params.text_document.uri.clone(),
-                    self.edits.edits.drain(..).collect(),
+                    std::mem::take(&mut self.edits.edits),
                 )
                 .preferred(false)
                 .push_to(&mut action);
         }
         action
+    }
+
+    fn insert_int(&mut self, string_value: &EcoString, int_value: &BigInt, location: &SrcSpan) {
+        let string_value = string_value.trim_start_matches('-');
+        let base = if string_value.starts_with("0b") {
+            Base::Binary
+        } else if string_value.starts_with("0o") {
+            Base::Octal
+        } else if string_value.starts_with("0x") {
+            Base::Hexadecimal
+        } else {
+            Base::Decimal
+        };
+
+        self.int = Some((*location, base, int_value.clone()))
     }
 }
 
@@ -13237,11 +13310,29 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertIntToDifferentBase<'ast> {
     }
 
     fn visit_typed_expr(&mut self, expr: &'ast TypedExpr) {
-        // We skip all the expression's the cursor is not inside of.
+        // We skip all the expressions the cursor is not inside of.
         // This is gonna make it faster to find the int we're hovering, if any.
         let expression_range = self.edits.src_span_to_lsp_range(expr.location());
         if within(self.params.range, expression_range) {
             ast::visit::visit_typed_expr(self, expr);
+        }
+    }
+
+    fn visit_typed_pattern(&mut self, pattern: &'ast TypedPattern) {
+        // We skip all the patterns the cursor is not inside of.
+        // This is gonna make it faster to find the int we're hovering, if any.
+        let pattern_range = self.edits.src_span_to_lsp_range(pattern.location());
+        if within(self.params.range, pattern_range) {
+            ast::visit::visit_typed_pattern(self, pattern);
+        }
+    }
+
+    fn visit_typed_constant(&mut self, constant: &'ast ast::TypedConstant) {
+        // We skip all the constants the cursor is not inside of.
+        // This is gonna make it faster to find the int we're hovering, if any.
+        let constant_range = self.edits.src_span_to_lsp_range(constant.location());
+        if within(self.params.range, constant_range) {
+            ast::visit::visit_typed_constant(self, constant);
         }
     }
 
@@ -13257,17 +13348,48 @@ impl<'ast> ast::visit::Visit<'ast> for ConvertIntToDifferentBase<'ast> {
             return;
         }
 
-        let string_value = string_value.trim_start_matches('-');
-        let base = if string_value.starts_with("0b") {
-            Base::Binary
-        } else if string_value.starts_with("0o") {
-            Base::Octal
-        } else if string_value.starts_with("0x") {
-            Base::Hexadecimal
-        } else {
-            Base::Decimal
-        };
+        self.insert_int(string_value, int_value, location);
+    }
 
-        self.int = Some((*location, base, int_value.clone()))
+    fn visit_typed_constant_int(
+        &mut self,
+        location: &'ast SrcSpan,
+        string_value: &'ast EcoString,
+        int_value: &'ast BigInt,
+    ) {
+        let int_range = self.edits.src_span_to_lsp_range(*location);
+        if !within(self.params.range, int_range) {
+            return;
+        }
+
+        self.insert_int(string_value, int_value, location);
+    }
+
+    fn visit_typed_pattern_int(
+        &mut self,
+        location: &'ast SrcSpan,
+        string_value: &'ast EcoString,
+        int_value: &'ast BigInt,
+    ) {
+        let int_range = self.edits.src_span_to_lsp_range(*location);
+        if !within(self.params.range, int_range) {
+            return;
+        }
+
+        self.insert_int(string_value, int_value, location);
+    }
+
+    fn visit_typed_bit_array_size_int(
+        &mut self,
+        location: &'ast SrcSpan,
+        string_value: &'ast EcoString,
+        int_value: &'ast BigInt,
+    ) {
+        let int_range = self.edits.src_span_to_lsp_range(*location);
+        if !within(self.params.range, int_range) {
+            return;
+        }
+
+        self.insert_int(string_value, int_value, location);
     }
 }
