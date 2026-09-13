@@ -120,6 +120,39 @@
   merge conflict indicator
   ([0xda157](https://github.com/0xda157))
 
+- The compiler now provides hint about `|' in pattern matching
+  ([n0kk23](https://github.com/n0kk23))
+
+- The compiler now provides better error message when trying to import or use
+  private value or type from modules within current package. For example:
+
+  ```gleam
+  import wibble
+  //     ^^^^^^ `wibble` is a module in same package
+
+  fn go() -> wibble.Wobble {
+    todo
+  }
+  ```
+
+  Results in following errors:
+
+  ```
+  error: Use of private module type
+    ┌─ /workspaces/wobble/src/wobble.gleam:4:12
+    │
+  4 │ fn go() -> wibble.Wobble {
+    │            ^^^^^^^^^^^^^
+
+  `wibble.Wobble` is a private type.
+  ```
+
+  ([Andrey Kozhev](https://github.com/ankddev))
+
+- When an invalid type alias is created the error messages no longer cascade
+  through further usages.
+  ([James Dolan](https://github.com/jamesdolan16))
+
 ### Build tool
 
 - The build tool now stores its build cache in a more compact binary format,
@@ -145,6 +178,15 @@
 - The build tool now shows a better error when trying to add a package as a
   dependency when it is already a development dependency (or vice-versa).
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- `--out` argument in `export package-information` and `export package-interface`
+  commands is no longer required. Those commands now print to stdout by
+  default.
+  ([Rodrigo Álvarez](https://github.com/Papipo))
+
+- The `export javascript-prelude` and `export typescript-prelude` commands gain
+  the `--out` parameter.
+  ([Louis Pilfold](https://github.com/lpil))
 
 ### Language server
 
@@ -183,6 +225,10 @@
 - The language server now supports triggering "Convert int to different base"
   code action in constants, patterns and bit array "size" options.
   ([Andrey Kozhev](https://github.com/ankddev))
+
+- The language server now supports go-to-definition, find-references and
+  renaming for function argument labels.
+  ([Alistair Smith](https://github.com/alii))
 
 ### Formatter
 
@@ -272,6 +318,24 @@
   dependency resolution once per path dependency, so commands run after
   `gleam deps download` would needlessly resolve versions again.
   ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where concatenating a string to a string in a block would
+  produce an invalid bitstring on the Erlang target.
+  ([Lillian Rose](https://github.com/lillianrubyrose) with
+  [Mar Bloeiman](https://github.com/strawmelonjuice))
+
+- Fixed a bug where the compiler would suggest wrapping a mismatched type in
+  `Ok()` even when doing so would not fix the type unification error.
+  ([Hari Mohan](https://github.com/seafoamteal))
+
+- Fixed a bug where `gleam export hex-tarball` and `gleam publish` could fail on
+  Windows with a "path is outside this Gleam project" error for files that were
+  inside the project.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug in generating TypeScript annotations for function signatures
+  that use types from aliased modules.
+  ([Ian Chamberlain](https://github.com/ian-h-chamberlain))
 
 ## v1.18.1 - 2026-08-01
 

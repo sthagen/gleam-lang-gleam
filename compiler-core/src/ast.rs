@@ -285,14 +285,23 @@ pub enum ArgNames {
 }
 
 impl ArgNames {
-    pub fn get_label(&self) -> Option<&EcoString> {
+    pub fn get_label(&self) -> Option<(&EcoString, &SrcSpan)> {
         match self {
             ArgNames::Discard { .. } | ArgNames::Named { .. } => None,
-            ArgNames::LabelledDiscard { label, .. } | ArgNames::NamedLabelled { label, .. } => {
-                Some(label)
+
+            ArgNames::LabelledDiscard {
+                label,
+                label_location,
+                ..
             }
+            | ArgNames::NamedLabelled {
+                label,
+                label_location,
+                ..
+            } => Some((label, label_location)),
         }
     }
+
     pub fn get_variable_name(&self) -> Option<&EcoString> {
         match self {
             ArgNames::Discard { .. } | ArgNames::LabelledDiscard { .. } => None,
@@ -906,12 +915,26 @@ impl TypedFunction {
             return Some(found);
         }
 
-        if let Some(found_arg) = self
+        if let Some(argument) = self
             .arguments
             .iter()
-            .find_map(|arg| arg.find_node(byte_index))
+            .find(|argument| argument.location.contains(byte_index))
         {
-            return Some(found_arg);
+            if let Some((_, function_name)) = &self.name
+                && let Some((label, label_location)) = argument.names.get_label()
+                && label_location.contains(byte_index)
+            {
+                return Some(Located::FunctionLabelDefinition {
+                    location: *label_location,
+                    field_type: argument.type_.clone(),
+                    label: label.clone(),
+                    function_name: function_name.clone(),
+                });
+            }
+
+            if let Some(found_argument) = argument.find_node(byte_index) {
+                return Some(found_argument);
+            }
         }
 
         if let Some(found_statement) = self
@@ -1764,9 +1787,12 @@ impl CallArg<TypedExpr> {
                     }
                     let label = self.label.as_ref()?;
 
-                    if let Some(variant) = called_function.record_constructor_variant_name()
-                        && let Some(label_location) = self.label_location()
-                        && label_location.contains(byte_index)
+                    let label_location = self
+                        .label_location()
+                        .filter(|location| location.contains(byte_index));
+
+                    if let Some(label_location) = label_location
+                        && let Some(variant) = called_function.record_constructor_variant_name()
                     {
                         let record_type = called_function
                             .type_()
@@ -1778,6 +1804,17 @@ impl CallArg<TypedExpr> {
                             label: label.clone(),
                             record_type,
                             variant: variant.clone(),
+                        })
+                    } else if let Some(label_location) = label_location
+                        && let Some((function_module, function_name)) =
+                            called_function.module_function_name()
+                    {
+                        Some(Located::FunctionLabelUsage {
+                            location: label_location,
+                            field_type: self.value.type_(),
+                            label: label.clone(),
+                            function_module: function_module.clone(),
+                            function_name: function_name.clone(),
                         })
                     } else {
                         Some(Located::Label {
@@ -2665,17 +2702,17 @@ impl TypedClauseGuard {
         }
     }
 
-    pub(crate) fn referenced_variables(&self) -> im::HashSet<&EcoString> {
+    pub(crate) fn referenced_variables(&self) -> imbl::HashSet<&EcoString> {
         match self {
-            ClauseGuard::Var { name, .. } => im::hashset![name],
+            ClauseGuard::Var { name, .. } => imbl::hashset![name],
 
             ClauseGuard::Block { value, .. } => value.referenced_variables(),
             ClauseGuard::Not { expression, .. } => expression.referenced_variables(),
             ClauseGuard::TupleIndex { tuple, .. } => tuple.referenced_variables(),
             ClauseGuard::FieldAccess { container, .. } => container.referenced_variables(),
             ClauseGuard::Constant(constant) => constant.referenced_variables(),
-            ClauseGuard::ModuleSelect { .. } => im::HashSet::new(),
-            ClauseGuard::Invalid { .. } => im::HashSet::new(),
+            ClauseGuard::ModuleSelect { .. } => imbl::HashSet::new(),
+            ClauseGuard::Invalid { .. } => imbl::HashSet::new(),
 
             ClauseGuard::BinaryOperator { left, right, .. } => left
                 .referenced_variables()
@@ -4301,7 +4338,7 @@ impl<A> BitArrayOption<A> {
 }
 
 impl BitArrayOption<TypedConstant> {
-    fn referenced_variables(&self) -> im::HashSet<&EcoString> {
+    fn referenced_variables(&self) -> imbl::HashSet<&EcoString> {
         match self {
             BitArrayOption::Bytes { .. }
             | BitArrayOption::Int { .. }
@@ -4318,7 +4355,7 @@ impl BitArrayOption<TypedConstant> {
             | BitArrayOption::Big { .. }
             | BitArrayOption::Little { .. }
             | BitArrayOption::Unit { .. }
-            | BitArrayOption::Native { .. } => im::hashset![],
+            | BitArrayOption::Native { .. } => imbl::hashset![],
 
             BitArrayOption::Size { value, .. } => value.referenced_variables(),
         }

@@ -22,7 +22,7 @@ use crate::{
     config::PackageConfig,
     dep_tree,
     parse::SpannedString,
-    reference::{EntityKind, ReferenceKind},
+    reference::{EntityKind, LabelOwner, ReferenceKind},
     type_::{
         self, AccessorsMap, Deprecation, FieldMap, ModuleInterface, Opaque, PatternConstructor,
         RecordAccessor, References, Type, TypeAliasConstructor, TypeConstructor,
@@ -150,7 +150,7 @@ pub struct ModuleAnalyzerConstructor<'a, A> {
     pub target: Target,
     pub ids: &'a UniqueIdGenerator,
     pub origin: Origin,
-    pub importable_modules: &'a im::HashMap<EcoString, ModuleInterface>,
+    pub importable_modules: &'a imbl::HashMap<EcoString, ModuleInterface>,
     pub warnings: &'a TypeWarningEmitter,
     pub direct_dependencies: &'a HashMap<EcoString, A>,
     pub dev_dependencies: &'a HashSet<EcoString>,
@@ -194,7 +194,7 @@ struct ModuleAnalyzer<'a, A> {
     target: Target,
     ids: &'a UniqueIdGenerator,
     origin: Origin,
-    importable_modules: &'a im::HashMap<EcoString, ModuleInterface>,
+    importable_modules: &'a imbl::HashMap<EcoString, ModuleInterface>,
     warnings: &'a TypeWarningEmitter,
     direct_dependencies: &'a HashMap<EcoString, A>,
     dev_dependencies: &'a HashSet<EcoString>,
@@ -1218,10 +1218,13 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
 
                 if let Some(label) = label {
                     environment.references.register_label_definition(
-                        (environment.current_module.clone(), name.clone()),
+                        LabelOwner::Record {
+                            module: environment.current_module.clone(),
+                            name: name.clone(),
+                        },
                         label.clone(),
                         label_location,
-                        constructor.name.clone(),
+                        Some(constructor.name.clone()),
                     );
                 }
 
@@ -1479,7 +1482,13 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         let arity = parameters.len();
         let tryblock = || {
             hydrator.disallow_new_type_variables();
-            let type_ = hydrator.type_from_ast(resolved_type, environment, &mut self.problems)?;
+            let hydrator_result =
+                hydrator.type_from_ast(resolved_type, environment, &mut self.problems);
+
+            let type_ = match &hydrator_result {
+                Ok(type_) => type_.clone(),
+                Err(_) => environment.new_unbound_var(),
+            };
 
             environment
                 .names
@@ -1525,7 +1534,11 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
                 });
             }
 
-            Ok(())
+            if let Err(e) = hydrator_result {
+                Err(e)
+            } else {
+                Ok(())
+            }
         };
         let result = tryblock();
         self.record_if_error(result);
@@ -1603,8 +1616,25 @@ impl<'a, A> ModuleAnalyzer<'a, A> {
         {
             check_argument_names(names, &mut self.problems);
 
-            if let Err(error) = builder.add(names.get_label(), *location) {
+            let label = names.get_label();
+
+            if let Err(error) = builder.add(label.map(|(label, _)| label), *location) {
                 self.problems.error(error);
+            }
+
+            // If this argument is labelled then register the label's definition so
+            // the language server can find it when looking up references to
+            // the label, or jumping to its definition
+            if let Some((label, label_location)) = label {
+                environment.references.register_label_definition(
+                    LabelOwner::Function {
+                        module: environment.current_module.clone(),
+                        name: name.clone(),
+                    },
+                    label.clone(),
+                    *label_location,
+                    None,
+                );
             }
         }
         let field_map = builder.finish();

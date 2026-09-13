@@ -404,6 +404,11 @@ fn wrong_number_of_subjects_alternative_patterns() {
 }
 
 #[test]
+fn wrong_number_of_subjects_multiple_subjects() {
+    assert_error!("case 1, 2 { _ -> 1 }");
+}
+
+#[test]
 fn recursive_var() {
     assert_error!("let id = fn(x) { x(x) } 1");
 }
@@ -2888,6 +2893,45 @@ pub fn want_result(wibble: fn() -> Result(Int, Bool)) {
     );
 }
 
+// https://github.com/gleam-lang/gleam/issues/5914
+#[test]
+fn do_not_suggest_wrapping_in_ok_if_expected_ok_type_is_unbound() {
+    assert_module_error!(
+        "
+pub fn main() {
+  wibble(wobble(todo))
+}
+
+pub fn wobble(arg: a) -> Result(a, String) {
+  todo
+}
+
+pub fn wibble(arg: Result(a, Int)) -> a {
+  todo
+}"
+    );
+}
+
+// https://github.com/gleam-lang/gleam/issues/5914
+#[test]
+fn do_not_suggest_wrapping_in_error_if_expected_error_type_is_unbound() {
+    assert_module_error!(
+        "
+pub fn main() {
+  wibble(wobble(todo))
+}
+
+pub fn wobble(arg: a) -> Result(Int, a) {
+  todo
+}
+
+pub fn wibble(arg: Result(Float, a)) -> a {
+  todo
+}
+"
+    );
+}
+
 #[test]
 // https://github.com/gleam-lang/gleam/issues/4195
 fn let_assert_binding_cannot_be_used_in_panic_message() {
@@ -4403,6 +4447,140 @@ const a = 1 + 2
 const b = 1 - 2
 // And an error here!
 const c = 1 - does_not_exist
+"
+    );
+}
+
+#[test]
+fn import_of_private_value_in_the_same_package() {
+    assert_module_error!(
+        ("wibble", "const wobble = 0"),
+        "
+import wibble.{wobble}
+"
+    );
+}
+
+#[test]
+fn use_of_private_value_in_the_same_package() {
+    assert_module_error!(
+        ("wibble", "const wobble = 0"),
+        "
+import wibble
+
+pub fn go() {
+  wibble.wobble
+}
+"
+    );
+}
+
+#[test]
+fn import_of_private_value_in_other_package() {
+    assert_module_error!(
+        ("anotherpackage", "wibble", "const wobble = 0"),
+        "
+// Import of private value from another package should give error about unknown
+// module value.
+import wibble.{wobble}
+"
+    );
+}
+
+#[test]
+fn use_of_private_value_in_other_package() {
+    assert_module_error!(
+        ("anotherpackage", "wibble", "const wobble = 0"),
+        "
+import wibble
+
+pub fn go() {
+  // Use of private value from another package should give error about unknown
+  // module value.
+  wibble.wobble
+}
+"
+    );
+}
+
+#[test]
+fn import_of_private_type_in_the_same_package() {
+    assert_module_error!(
+        (
+            "wibble",
+            "
+type Wibble {
+  Wibble
+}
+"
+        ),
+        "
+import wibble.{type Wibble}
+"
+    );
+}
+
+#[test]
+fn use_of_private_type_in_the_same_package() {
+    assert_module_error!(
+        (
+            "wibble",
+            "
+type Wibble {
+  Wibble
+}
+"
+        ),
+        "
+import wibble
+
+pub fn go() -> wibble.Wibble {
+  todo
+}
+"
+    );
+}
+
+#[test]
+fn import_of_private_type_in_other_package() {
+    assert_module_error!(
+        (
+            "anotherpackage",
+            "wibble",
+            "
+type Wibble {
+  Wibble
+}
+"
+        ),
+        "
+// Import of private type from another package should give error about unknown
+// module value.
+import wibble.{type Wibble}
+"
+    );
+}
+
+#[test]
+fn use_of_private_type_in_other_package() {
+    assert_module_error!(
+        (
+            "anotherpackage",
+            "wibble",
+            "
+type Wibble {
+  Wibble
+}
+"
+        ),
+        "
+import wibble
+
+// Use of private type from another package should give error about unknown
+// module value.
+pub fn go() -> wibble.Wibble {
+  todo
+}
 "
     );
 }

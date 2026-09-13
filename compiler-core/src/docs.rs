@@ -503,15 +503,20 @@ fn search_item_for_module(module: &Module) -> SearchItem {
 pub fn generate_json_package_interface(
     path: Utf8PathBuf,
     package: &Package,
-    cached_modules: &im::HashMap<EcoString, type_::ModuleInterface>,
+    cached_modules: &imbl::HashMap<EcoString, type_::ModuleInterface>,
 ) -> OutputFile {
     OutputFile {
         path,
-        content: Content::Text(
-            serde_json::to_string(&PackageInterface::from_package(package, cached_modules))
-                .expect("JSON module interface serialisation"),
-        ),
+        content: Content::Text(package_interface(package, cached_modules)),
     }
+}
+
+pub fn package_interface(
+    package: &Package,
+    cached_modules: &imbl::HashMap<EcoString, type_::ModuleInterface>,
+) -> String {
+    serde_json::to_string_pretty(&PackageInterface::from_package(package, cached_modules))
+        .expect("JSON module interface serialisation")
 }
 
 pub fn generate_json_package_information(path: Utf8PathBuf, config: PackageConfig) -> OutputFile {
@@ -521,7 +526,7 @@ pub fn generate_json_package_information(path: Utf8PathBuf, config: PackageConfi
     }
 }
 
-fn package_information_as_json(config: PackageConfig) -> String {
+pub fn package_information_as_json(config: PackageConfig) -> String {
     let info = PackageInformation {
         package_config: config,
     };
