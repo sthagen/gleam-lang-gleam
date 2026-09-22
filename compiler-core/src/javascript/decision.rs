@@ -854,7 +854,7 @@ impl<'a, 'doc> CasePrinter<'_, '_, 'a, '_, 'doc> {
                 .variables
                 .expression_generator
                 .current_scope
-                .restore_user_variables(&old_user_variables),
+                .restore_user_variables(old_user_variables),
             DecisionKind::LetAssert { .. } => {}
         }
 
@@ -1060,7 +1060,7 @@ fn derived_variables(
         .iter()
         .map(|(check, _decision)| check)
         .chain(match fallback_check {
-            FallbackCheck::RuntimeCheck { check } => Some(check),
+            FallbackCheck::RuntimeCheck { check } => Some(check.as_ref()),
             FallbackCheck::InfiniteCatchAll | FallbackCheck::CatchAll { .. } => None,
         });
 

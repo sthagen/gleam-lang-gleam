@@ -1,0 +1,34 @@
+---
+source: test-package-compiler/src/tests.rs
+expression: "./cases/otp_app_override"
+---
+//// otp_app_override/_gleam_artefacts/main.abstr
+<288 byte binary>
+
+//// otp_app_override/_gleam_artefacts/main.cache
+<.cache binary>
+
+//// otp_app_override/_gleam_artefacts/main.cache_meta
+<28 byte binary>
+
+//// otp_app_override/ebin/main.beam
+<0 byte binary>
+
+//// otp_app_override/ebin/my_erlang_application.app
+{application, my_erlang_application, [
+    {vsn, "0.1.0"},
+    {applications, [gleam_stdlib,
+                    hpack,
+                    uuid]},
+    {description, ""},
+    {modules, [main]},
+    {registered, []}
+]}.
+
+
+//// Warning
+warning: Empty module
+
+Module 'main' contains no public definitions.
+
+Hint: You can safely remove this module.

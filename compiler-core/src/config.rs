@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2020 The Gleam contributors
 
 mod stale_package_remover;
-use crate::error::{FileIoAction, FileKind};
+use crate::error::{self, FileIoAction, FileKind, did_you_mean};
 use crate::io::FileSystemReader;
 use crate::io::ordered_map;
 use crate::manifest::Manifest;
@@ -67,9 +67,29 @@ impl<'de> serde::de::Visitor<'de> for SpdxLicenseVisitor {
         E: serde::de::Error,
     {
         match spdx::license_id(value) {
-            None => Err(serde::de::Error::custom(format!(
-                "{value} is not a known SPDX License identifier"
-            ))),
+            None => {
+                if is_valid_license_ref(value) {
+                    Ok(SpdxLicense {
+                        licence: value.to_string(),
+                    })
+                } else {
+                    let suggestion = {
+                        let licence_names: Vec<EcoString> = spdx::identifiers::LICENSES
+                            .iter()
+                            .map(|licence| EcoString::from(licence.name))
+                            .collect();
+                        did_you_mean(value, &licence_names)
+                            .map_or_default(|suggestion| format!("\n\nHint: {suggestion}"))
+                    };
+
+                    Err(serde::de::Error::custom(error::wrap_format!(
+                        "This is not a valid SPDX licence identifier or custom licence reference.
+
+Custom licence references must start with `LicenseRef-` and contain only \
+alphabetical characters, numbers, dashes, and dots.{suggestion}"
+                    )))
+                }
+            }
             Some(_) => Ok(SpdxLicense {
                 licence: value.to_string(),
             }),
@@ -1239,6 +1259,16 @@ fn is_valid_package_name(name: &str) -> bool {
         .is_match(name)
 }
 
+static LICENSE_REF_PATTERN: OnceLock<Regex> = OnceLock::new();
+
+// Check that a license string is a valid SPDX LicenseRef, according to:
+// https://spdx.github.io/spdx-spec/v2.3/SPDX-license-expressions/
+fn is_valid_license_ref(licence: &str) -> bool {
+    LICENSE_REF_PATTERN
+        .get_or_init(|| Regex::new(r"^LicenseRef-[A-Za-z0-9\.-]+$").expect("LicenseRef regex"))
+        .is_match(licence)
+}
+
 #[test]
 fn name_with_dash() {
     let input = r#"
@@ -1507,4 +1537,47 @@ wibble = ">= 1.0.0 and < 2.0.0"
 "#;
     let canonical = deserialise_config("gleam.toml", toml.into()).expect("valid config");
     assert_eq!(canonical, hyphen_alternative)
+}
+
+#[test]
+fn valid_licence_ref() {
+    let input = r#"
+name = "my_project"
+version = "1.0.0"
+licences = ["LicenseRef-my.valid-licence4"]
+"#;
+
+    let config = toml::from_str::<PackageConfig>(input).unwrap();
+    assert_eq!(
+        config.licences,
+        vec![SpdxLicense {
+            licence: "LicenseRef-my.valid-licence4".to_string()
+        }]
+    );
+}
+
+#[test]
+fn invalid_licence_ref() {
+    let input = r#"
+name = "my_project"
+version = "1.0.0"
+licences = ["LicenseRef-my_invalid_licence"]
+"#;
+    let output = toml::from_str::<PackageConfig>(input)
+        .unwrap_err()
+        .to_string();
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn licence_typo() {
+    let input = r#"
+name = "my_project"
+version = "1.0.0"
+licences = ["MIIT"]
+"#;
+    let output = toml::from_str::<PackageConfig>(input)
+        .unwrap_err()
+        .to_string();
+    insta::assert_snapshot!(output);
 }

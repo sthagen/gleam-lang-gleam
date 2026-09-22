@@ -5,7 +5,7 @@
 
 # Changelog
 
-## Unreleased
+## 1.19.0-rc1 - 2026-09-22
 
 ### Compiler
 
@@ -153,6 +153,52 @@
   through further usages.
   ([James Dolan](https://github.com/jamesdolan16))
 
+- Matching on bit array patterns which contain empty string segments is now
+  deprecated.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- The compiler now recognises more unreachable clauses in a `case` where an
+  earlier clause matches an overlapping string.
+
+  ```gleam
+  pub fn go(input: String, x: Int) {
+    case input, x {
+      "ab", 1 -> 7
+      "a" <> _, _ -> 2
+      "ab", _ -> 3
+      _, _ -> 4
+    }
+  }
+  ```
+
+  The compiler will emit the following warning:
+
+  ```txt
+  warning: Unreachable pattern
+    ┌─ /main.gleam:5:5
+    │
+  5 │     "ab", _ -> 3
+    │     ^^^^^^^
+
+  This pattern cannot be reached as a previous pattern matches the same
+  values.
+
+  Hint: It can be safely removed.
+  ```
+
+  Anything reaching the third clause starts with `"a"`, so the second clause has
+  already matched it. Code that previously compiled cleanly may now emit this
+  warning.
+  ([John Downey](https://github.com/jtdowney))
+
+- The compiler's lexer now uses byte indexing with an ASCII fast path instead
+  of iterating over characters, and builds tokens from source slices to reduce
+  allocations.
+  ([John Downey](https://github.com/jtdowney))
+
+- The performance of `echo` for floats has been improved on the Erlang target.
+  ([Andrey Kozhev](https://github.com/ankddev))
+
 ### Build tool
 
 - The build tool now stores its build cache in a more compact binary format,
@@ -175,6 +221,10 @@
 - Make links to Tangled repositories use their new domain & URL format.
   ([Naomi Roberts](https://github.com/naomieow))
 
+- `compile-package` now supports a `--src-only` flag to compile only the `/src`
+  folder.
+  ([Rodrigo Álvarez](https://github.com/Papipo))
+
 - The build tool now shows a better error when trying to add a package as a
   dependency when it is already a development dependency (or vice-versa).
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
@@ -187,6 +237,15 @@
 - The `export javascript-prelude` and `export typescript-prelude` commands gain
   the `--out` parameter.
   ([Louis Pilfold](https://github.com/lpil))
+
+- `gleam compile-package` now generates a .app file in the ebin folder, listing
+  all .beam modules (this includes Erlang and Elixir ones).
+  ([Rodrigo Álvarez](https://github.com/Papipo))
+
+- `gleam compile-package` gains a new `--otp-app-names` flag, letting the
+  caller specify dependencies' OTP application names when they differ
+  from their Gleam package names, as comma separated `package=otp_app` pairs.
+  ([Rodrigo Álvarez](https://github.com/Papipo))
 
 ### Language server
 
@@ -240,6 +299,11 @@
 
 ### Bug fixes
 
+- Fixed a bug where the generated Erlang `.app` file's module list could be
+  missing Erlang or Elixir native modules that hadn't been recompiled since
+  a previous build.
+  ([Rodrigo Álvarez](https://github.com/Papipo))
+
 - Fixed a bug where on the JavaScript target a case clause whose guard's top
   level operator was `||` could run for a subject its pattern did not match.
   ([John Downey](https://github.com/jtdowney))
@@ -277,6 +341,15 @@
 
 - Fixed a bug where echo would print BitArrays like `<<1, 2, 3>>` as strings on
   the Erlang target.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would not produce a type error when using a
+  record constructor as the updated record in a record update expression in a
+  constant.
+  ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
+
+- Fixed a bug where the compiler would crash when writing a constant record
+  update depending on another invalid constant.
   ([Giacomo Cavalieri](https://github.com/giacomocavalieri))
 
 - Fixed a bug where the "Discard unused variable" language server code action
@@ -336,6 +409,33 @@
 - Fixed a bug in generating TypeScript annotations for function signatures
   that use types from aliased modules.
   ([Ian Chamberlain](https://github.com/ian-h-chamberlain))
+
+- Fixed a bug where the generated `package-interface.json` would not include
+  deprecation messages for constructors.
+  ([Surya Rose](https://github.com/GearsDatapacks))
+
+- Fixed a bug where on the JavaScript target a string prefix pattern could be
+  skipped when an earlier clause matched an overlapping string, but then failed
+  for another reason.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where on the JavaScript target a name given to a string prefix or
+  bit array in a pattern would not be bound in every branch it was used in.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where the end position of the final token was incorrect when the
+  source ended with a multi-byte character.
+  ([John Downey](https://github.com/jtdowney))
+
+- Fixed a bug where the build tool would exit with an error when the gleam.toml
+  licence array contained a licence starting with `LicenseRef-`, which are used
+  by hex.pm to support non-SPDX licences.
+  ([Vivid](https://github.com/absolutely-vivid))
+
+- Fixed a bug where packages published from Windows would record their file
+  paths in `metadata.config` using `\` separators, which Erlang reads as
+  escape characters, corrupting the paths or making the metadata unparseable.
+  ([John Downey](https://github.com/jtdowney))
 
 ## v1.18.1 - 2026-08-01
 

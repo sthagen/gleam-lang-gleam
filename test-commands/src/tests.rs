@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 The Gleam contributors
 
 use camino::Utf8PathBuf;
-use gleam_cli::{Command, ExportTarget, fs};
-use std::process;
+use gleam_cli::{Command, CompilePackage, ExportTarget, fs};
+use std::{collections::HashMap, process};
 
 fn package(package: &str) -> Utf8PathBuf {
     Utf8PathBuf::from(&format!("./packages/{package}"))
@@ -126,4 +126,33 @@ fn package_interface() {
     .unwrap();
     let contents = std::fs::read_to_string(path).unwrap();
     insta::assert_snapshot!(contents);
+}
+
+#[test]
+fn compile_package_produces_textual_erlang_files() {
+    let temporary_directory = tempfile::TempDir::new().unwrap();
+    let output_directory =
+        Utf8PathBuf::from(temporary_directory.path().as_os_str().to_str().unwrap());
+
+    let package_directory = package("compile_package");
+
+    Command::CompilePackage(CompilePackage {
+        target: gleam_core::build::Target::Erlang,
+        package_directory: package_directory.clone(),
+        output_directory: output_directory.clone(),
+        libraries_directory: package_directory.clone(),
+        javascript_prelude: None,
+        skip_beam_compilation: true,
+        src_only: false,
+        otp_app_names: HashMap::new(),
+    })
+    .run(package_directory)
+    .unwrap();
+
+    assert!(
+        output_directory
+            .join("_gleam_artefacts")
+            .join("wibble.erl")
+            .exists()
+    );
 }

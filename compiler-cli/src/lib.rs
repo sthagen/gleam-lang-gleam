@@ -93,6 +93,7 @@ use clap::{
     Args, Parser, Subcommand,
     builder::{Styles, styling},
 };
+use ecow::EcoString;
 use gleam_core::{
     analyse::TargetSupport,
     build::{Codegen, Compile, ErlangOutput, Mode, NullTelemetry, Options, Runtime, Target},
@@ -100,6 +101,7 @@ use gleam_core::{
     paths::ProjectPaths,
     version::COMPILER_VERSION,
 };
+use std::collections::HashMap;
 
 #[derive(Args, Debug, Clone)]
 pub struct UpdateOptions {
@@ -754,19 +756,19 @@ pub struct NewOptions {
 pub struct CompilePackage {
     /// The compilation target for the generated project
     #[arg(long, ignore_case = true, help = target_doc())]
-    target: Target,
+    pub target: Target,
 
     /// The directory of the Gleam package
     #[arg(long = "package")]
-    package_directory: Utf8PathBuf,
+    pub package_directory: Utf8PathBuf,
 
     /// A directory to write compiled package to
     #[arg(long = "out")]
-    output_directory: Utf8PathBuf,
+    pub output_directory: Utf8PathBuf,
 
     /// A directories of precompiled Gleam projects
     #[arg(long = "lib")]
-    libraries_directory: Utf8PathBuf,
+    pub libraries_directory: Utf8PathBuf,
 
     /// The location of the JavaScript prelude module, relative to the `out`
     /// directory.
@@ -777,11 +779,58 @@ pub struct CompilePackage {
     /// importing of other JavaScript file extensions.
     ///
     #[arg(verbatim_doc_comment, long = "javascript-prelude")]
-    javascript_prelude: Option<Utf8PathBuf>,
+    pub javascript_prelude: Option<Utf8PathBuf>,
 
     /// Skip Erlang to BEAM bytecode compilation
     #[arg(long = "no-beam")]
-    skip_beam_compilation: bool,
+    pub skip_beam_compilation: bool,
+
+    /// Only compile modules in the `src` directory, excluding `test` and `dev`
+    #[arg(long = "src-only")]
+    pub src_only: bool,
+
+    /// OTP application names for dependencies, in the form
+    /// `package=otp_app`, separated by commas.
+    ///
+    /// Required for any dependency whose OTP application name differs from
+    /// its package name. For example:
+    /// `--otp-app-names package1=some_app,package2=another_app`
+    #[arg(
+        default_value = "",
+        verbatim_doc_comment,
+        long = "otp-app-names",
+        value_parser = parse_otp_app_names
+    )]
+    pub otp_app_names: HashMap<EcoString, EcoString>,
+}
+
+fn parse_otp_app_names(input: &str) -> Result<HashMap<EcoString, EcoString>, String> {
+    input
+        .split(',')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| match pair.split_once('=') {
+            Some((package, otp_app)) if !package.is_empty() && !otp_app.is_empty() => {
+                Ok((EcoString::from(package), EcoString::from(otp_app)))
+            }
+            _ => Err("expected the format `package=otp_app[,package=otp_app]`".into()),
+        })
+        .collect()
+}
+
+#[test]
+fn parse_otp_app_names_test() {
+    assert_eq!(parse_otp_app_names("").unwrap(), HashMap::new());
+    assert_eq!(
+        parse_otp_app_names("one=two").unwrap(),
+        HashMap::from([("one".into(), "two".into())])
+    );
+    assert_eq!(
+        parse_otp_app_names("one=two,three=four").unwrap(),
+        HashMap::from([
+            ("one".into(), "two".into()),
+            ("three".into(), "four".into()),
+        ])
+    );
 }
 
 #[derive(Subcommand, Debug)]

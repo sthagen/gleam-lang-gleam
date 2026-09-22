@@ -46,7 +46,7 @@ pub mod tests;
 
 macro_rules! wrap_format {
     ($($tts:tt)*) => {
-        wrap(&format!($($tts)*))
+        crate::error::wrap(&format!($($tts)*))
     }
 }
 pub(crate) use wrap_format;
@@ -946,7 +946,9 @@ fn edit_distance_with_substrings(a: &str, b: &str, limit: usize) -> Option<usize
     (score <= limit).then_some(score)
 }
 
-fn did_you_mean(name: &str, options: &[EcoString]) -> Option<String> {
+/// Returns a "Did you mean ...?" suggestion using the string from `options` that's most similar to
+/// `name`.
+pub fn did_you_mean(name: &str, options: &[EcoString]) -> Option<String> {
     // If only one option is given, return that option.
     // This seems to solve the `unknown_variable_3` test.
     if options.len() == 1 {

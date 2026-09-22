@@ -211,14 +211,14 @@ impl<'expression_typer, 'env, 'module> ConstantTyper<'expression_typer, 'env, 'm
 
                 // Get the field arguments from the record that we'll use as the base.
                 let (base_arguments, updated_record_tag) = if let Constant::Record {
-                    arguments,
+                    arguments: Some(arguments),
                     record_constructor: Some(resolved_record_constructor),
                     ..
                 } = resolved_record
                     && let ValueConstructorVariant::Record { name, .. } =
                         resolved_record_constructor.variant
                 {
-                    (arguments.unwrap_or(vec![]), name)
+                    (arguments, name)
                 } else {
                     self.typer.problems.error(convert_unify_error(
                         UnifyError::CouldNotUnify {
@@ -253,6 +253,24 @@ impl<'expression_typer, 'env, 'module> ConstantTyper<'expression_typer, 'env, 'm
 
                 let mut implicit_labelled_arguments = field_map.fields.clone();
                 let mut update_argument_indices = HashSet::new();
+
+                // If there's any missing or additional base arguments then we
+                // know that there must have been an error typing the constant
+                // used in this record update. For example:
+                //
+                // ```rs
+                // pub type Wibble { Wibble(a: Int, b: Int) }
+                //
+                // const wibble = Wibble(1) // <- just one argument
+                // const wobble = Wibble(..wibble, b: 2)
+                // ```
+                //
+                // In that case we avoid typing this record update!
+                // In future we might try and be smarter, for example we could
+                // try and fill holes with invalid expressions.
+                if base_arguments.len() != field_types.len() {
+                    return self.new_invalid_constant(location);
+                }
 
                 let mut final_arguments = base_arguments;
                 for argument in arguments {

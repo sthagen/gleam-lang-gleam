@@ -4584,3 +4584,30 @@ pub fn go() -> wibble.Wibble {
 "
     );
 }
+
+#[test]
+fn cannot_update_constant_using_record_constructor() {
+    assert_module_error!(
+        "
+pub type Wibble { Wibble(a: Int, b: Int) }
+
+pub const wibble = Wibble
+
+pub const wobble = Wibble(..wibble)
+"
+    );
+}
+
+#[test]
+fn update_constant_depending_on_invalid_constant_does_not_panic() {
+    assert_module_error!(
+        "
+type Wibble {
+    Wibble(wibble: Int, wobble: Int)
+}
+
+const a = Wibble(wibble: 0)
+const b = Wibble(..a, wobble: 8)
+"
+    );
+}
