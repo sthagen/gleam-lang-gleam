@@ -109,9 +109,6 @@ pub struct Environment<'a> {
     /// IDs and register the original names for them.
     pub deferred_type_variable_aliases: Vec<(u64, Arc<Type>)>,
 
-    /// Wether we ran into an `echo` or not while analysing the current module.
-    pub echo_found: bool,
-
     pub references: ReferenceTracker,
 
     pub dev_dependencies: &'a HashSet<EcoString>,
@@ -121,6 +118,14 @@ pub struct Environment<'a> {
 pub struct VariableUsage {
     origin: VariableOrigin,
     location: SrcSpan,
+    /// Alternative patterns where this variables is defined, along with its
+    /// origin:
+    ///
+    /// ```gleam
+    /// [x] | [0, x] | [0, 1, x]
+    /// //        ^           ^
+    /// ```
+    alternatives: Vec<(VariableOrigin, SrcSpan)>,
     usages: usize,
     recursive_usages: usize,
 }
@@ -168,7 +173,6 @@ impl<'a> Environment<'a> {
             names,
             deferred_type_variable_aliases: Vec::new(),
             module_type_aliases: HashMap::new(),
-            echo_found: false,
             references: ReferenceTracker::new(),
             dev_dependencies,
         }
@@ -769,6 +773,7 @@ impl Environment<'_> {
             location,
             usages: 0,
             recursive_usages,
+            alternatives,
         }) = self
             .local_variable_usages
             .last_mut()
@@ -778,6 +783,7 @@ impl Environment<'_> {
                 VariableUsage {
                     origin,
                     location,
+                    alternatives: vec![],
                     usages: 0,
                     recursive_usages: 0,
                 },
@@ -790,11 +796,35 @@ impl Environment<'_> {
                 VariableUsage {
                     origin,
                     location,
+                    alternatives,
                     usages: 0,
                     recursive_usages,
                 },
             );
             self.handle_unused_variables(unused, problems);
+        }
+    }
+
+    /// Push new alternative pattern to variable usage, so that we can mark all
+    /// alternatives as unused. For example,
+    ///
+    /// ```gleam
+    /// [x] | [0, x] | [0, 1, x]
+    /// //        ^           ^ These can be pushed with this method
+    /// ```
+    pub fn push_alternative(
+        &mut self,
+        name: &EcoString,
+        alternative_origin: VariableOrigin,
+        alternative_location: SrcSpan,
+    ) {
+        if let Some(VariableUsage { alternatives, .. }) = self
+            .local_variable_usages
+            .iter_mut()
+            .rev()
+            .find_map(|scope| scope.get_mut(name))
+        {
+            alternatives.push((alternative_origin, alternative_location));
         }
     }
 
@@ -940,12 +970,18 @@ impl Environment<'_> {
         for VariableUsage {
             origin,
             location,
+            alternatives,
             usages,
             recursive_usages,
         } in unused.into_values()
         {
             if usages == 0 {
                 problems.warning(Warning::UnusedVariable { location, origin });
+
+                // Produce warning for declarations in each alternative pattern
+                for (origin, location) in alternatives {
+                    problems.warning(Warning::UnusedVariable { location, origin });
+                }
             }
             // If the function parameter is actually used somewhere, but all the
             // usages are just passing it along in a recursive call, then it

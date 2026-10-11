@@ -20,7 +20,7 @@ use gleam_core::{
     build::{Mode, SourceFingerprint, Target, Telemetry},
     config::PackageConfig,
     dependency::{self, PackageFetchError},
-    error::{FileIoAction, FileKind, ShellCommandFailureReason, StandardIoAction},
+    error::{FileIoAction, FileIoCause, FileKind, ShellCommandFailureReason, StandardIoAction},
     hex::{self, HEXPM_PUBLIC_KEY},
     io::{HttpClient as _, TarUnpacker, WrappedReader},
     manifest::{Base16Checksum, Manifest, ManifestPackage, ManifestPackageSource, PackageChanges},
@@ -300,7 +300,7 @@ pub fn cleanup<Telem: Telemetry>(paths: &ProjectPaths, telemetry: Telem) -> Resu
     telemetry.resolved_package_versions(&changes);
 
     // Cleanup build cache of the root package if there are some changes.
-    // Without this, if a removed dependency is still used, teh build will
+    // Without this, if a removed dependency is still used, the build will
     // succeed, resulting in runtime crash due to missing files.
     if changes.any_changes() {
         tracing::debug!("cleaning_root_package_build_cache");
@@ -614,7 +614,7 @@ pub(crate) fn read_manifest_from_disc(paths: &ProjectPaths) -> Result<Manifest> 
         action: FileIoAction::Parse,
         kind: FileKind::File,
         path: manifest_path.clone(),
-        err: Some(error.to_string()),
+        cause: FileIoCause::Other(error.to_string()),
     })?;
     Ok(manifest)
 }
@@ -703,7 +703,7 @@ impl LocalPackages {
             action: FileIoAction::Parse,
             kind: FileKind::File,
             path: path.clone(),
-            err: Some(error.to_string()),
+            cause: FileIoCause::Other(error.to_string()),
         })
     }
 

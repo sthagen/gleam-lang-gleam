@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2020 The Gleam contributors
 
 mod stale_package_remover;
-use crate::error::{self, FileIoAction, FileKind, did_you_mean};
+use crate::error::{self, FileIoAction, FileIoCause, FileKind, did_you_mean};
 use crate::io::FileSystemReader;
 use crate::io::ordered_map;
 use crate::manifest::Manifest;
@@ -367,7 +367,7 @@ fn deserialise_config<P: AsRef<Utf8Path>>(
         action: FileIoAction::Parse,
         kind: FileKind::File,
         path: path.as_ref().to_path_buf(),
-        err: Some(error.to_string()),
+        cause: FileIoCause::Other(error.to_string()),
     })?;
     Ok(config)
 }
@@ -1032,9 +1032,9 @@ pub struct Docs {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct DocsPage {
     pub title: String,
-    #[serde(default, deserialize_with = "package_scoped_path::deserialize")]
+    #[serde(deserialize_with = "package_scoped_path::deserialize")]
     pub path: Utf8PathBuf,
-    #[serde(default, deserialize_with = "package_scoped_path::deserialize")]
+    #[serde(deserialize_with = "package_scoped_path::deserialize")]
     pub source: Utf8PathBuf,
 }
 
@@ -1253,7 +1253,9 @@ pub mod map_with_package_name_keys {
 
 static PACKAGE_NAME_PATTERN: OnceLock<Regex> = OnceLock::new();
 
-fn is_valid_package_name(name: &str) -> bool {
+/// Package names must start with a lowercase letter and may only contain
+/// lowercase letters, numbers and underscores.
+pub fn is_valid_package_name(name: &str) -> bool {
     PACKAGE_NAME_PATTERN
         .get_or_init(|| Regex::new("^[a-z][a-z0-9_]*$").expect("Package name regex"))
         .is_match(name)

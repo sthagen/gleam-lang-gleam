@@ -13,7 +13,7 @@ use gleam_core::{
         ErlangAppCodegenConfiguration, ErlangOutput, Mode, NullTelemetry, PackageCompiler,
         StaleTracker, Target, TargetCodegenConfiguration,
     },
-    error::{FileIoAction, FileKind},
+    error::{FileIoAction, FileIoCause, FileKind},
     metadata,
     paths::{self, ProjectPaths},
     type_::ModuleInterface,
@@ -36,17 +36,29 @@ pub fn command(options: CompilePackage) -> Result<()> {
     if options.target.is_erlang() && !options.skip_beam_compilation {
         io.initialise_beam_compiler()?;
     }
-    let app_file = match options.skip_beam_compilation {
-        true => None,
-        false => Some(ErlangAppCodegenConfiguration {
-            include_dev_deps: false,
-            package_name_overrides: options.otp_app_names,
-        }),
+    let mode = if options.no_dev {
+        Mode::Prod
+    } else {
+        Mode::Dev
+    };
+    let app_file = {
+        if options.skip_beam_compilation {
+            None
+        } else {
+            Some(ErlangAppCodegenConfiguration {
+                include_dev_deps: mode.includes_dev_dependencies(),
+                package_name_overrides: options.otp_app_names,
+            })
+        }
     };
     let target = match options.target {
         Target::Erlang => TargetCodegenConfiguration::Erlang {
             app_file,
-            output: ErlangOutput::Textual,
+            output: if options.skip_beam_compilation {
+                ErlangOutput::Textual
+            } else {
+                ErlangOutput::Binary
+            },
         },
         Target::JavaScript => TargetCodegenConfiguration::JavaScript {
             emit_typescript_definitions: false,
@@ -58,12 +70,6 @@ pub fn command(options: CompilePackage) -> Result<()> {
     };
 
     tracing::info!("Compiling package");
-
-    let mode = if options.src_only {
-        Mode::Prod
-    } else {
-        Mode::Dev
-    };
 
     let mut compiler = PackageCompiler::new(
         &config,
@@ -104,13 +110,13 @@ fn load_libraries(
         for module in fs::module_caches_paths(path)? {
             let bytes = fs::read_bytes(module.clone())?;
             let module = match metadata::decode(&bytes, ids.clone()) {
-                Ok(module) => module,
-                Err(e) => {
+                Some(module) => module,
+                None => {
                     return Err(Error::FileIo {
                         kind: FileKind::File,
                         action: FileIoAction::Parse,
                         path: module,
-                        err: Some(e.to_string()),
+                        cause: FileIoCause::CacheMetadataFormatIncorrect,
                     });
                 }
             };

@@ -21,14 +21,15 @@ use crate::type_::printer::{Names, Printer};
 use crate::type_::{FieldAccessUsage, error::PatternMatchKind};
 use crate::{ast::BinOp, parse::error::ParseErrorType, type_::Type};
 use crate::{bit_array, diagnostic::Level, type_::UnifyErrorSituation};
-use ecow::EcoString;
+use ecow::{EcoString, eco_format};
 use hexpm::version::Version;
 use itertools::Itertools;
 use src_span::SrcSpan;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::io::Write;
+use std::fmt::Write as FmtWrite;
+use std::io::Write as IoWrite;
 use std::path::PathBuf;
 use std::sync::Arc;
 use termcolor::Buffer;
@@ -183,12 +184,12 @@ pub enum Error {
     #[error("cyclical package dependencies")]
     PackageCycle { packages: Vec<EcoString> },
 
-    #[error("{action:?} {path:?} failed: {err:?}")]
+    #[error("{action:?} {path:?} failed: {cause:?}")]
     FileIo {
         kind: FileKind,
         action: FileIoAction,
         path: Utf8PathBuf,
-        err: Option<String>,
+        cause: FileIoCause,
     },
 
     #[error("Non Utf-8 Path: {path}")]
@@ -281,6 +282,12 @@ pub enum Error {
     #[error("File(s) already exist in {}",
 file_names.iter().map(|x| x.as_str()).join(", "))]
     OutputFilesAlreadyExist { file_names: Vec<Utf8PathBuf> },
+
+    #[error("Invalid package names: {}", packages.iter().join(", "))]
+    RemovedPackageNamesInvalid {
+        packages: Vec<String>,
+        dependencies: Vec<EcoString>,
+    },
 
     #[error("Packages not exist: {}", packages.iter().join(", "))]
     RemovedPackagesNotExist { packages: Vec<String> },
@@ -453,6 +460,9 @@ file_names.iter().map(|x| x.as_str()).join(", "))]
     /// dependencies of the project!
     #[error("these packages are already dependencies: {packages:?}")]
     AddedDevDependenciesAreAlreadyDependencies { packages: Vec<EcoString> },
+
+    #[error("the documentation page {path} is outside the package directory")]
+    DocumentationPageOutsidePackage { path: Utf8PathBuf },
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -794,6 +804,23 @@ impl FileIoAction {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileIoCause {
+    Other(String),
+    NotFound,
+    CacheMetadataFormatIncorrect,
+}
+
+impl FileIoCause {
+    pub fn std_io(error: std::io::Error) -> Self {
+        if let std::io::ErrorKind::NotFound = error.kind() {
+            Self::NotFound
+        } else {
+            Self::Other(error.to_string())
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
     File,
@@ -948,13 +975,15 @@ fn edit_distance_with_substrings(a: &str, b: &str, limit: usize) -> Option<usize
 
 /// Returns a "Did you mean ...?" suggestion using the string from `options` that's most similar to
 /// `name`.
-pub fn did_you_mean(name: &str, options: &[EcoString]) -> Option<String> {
+pub fn did_you_mean(target: &str, options: &[EcoString]) -> Option<String> {
+    select_suggestion(target, options).map(|selected| format!("Did you mean `{selected}`?"))
+}
+
+pub fn select_suggestion<'a>(target: &str, options: &'a [EcoString]) -> Option<&'a EcoString> {
     // If only one option is given, return that option.
     // This seems to solve the `unknown_variable_3` test.
     if options.len() == 1 {
-        return options
-            .first()
-            .map(|option| format!("Did you mean `{option}`?"));
+        return options.first();
     }
 
     // Check for case-insensitive matches.
@@ -962,13 +991,13 @@ pub fn did_you_mean(name: &str, options: &[EcoString]) -> Option<String> {
     // such as the test on `type_vars_must_be_declared`.
     if let Some(exact_match) = options
         .iter()
-        .find(|&option| option.eq_ignore_ascii_case(name))
+        .find(|&option| option.eq_ignore_ascii_case(target))
     {
-        return Some(format!("Did you mean `{exact_match}`?"));
+        return Some(exact_match);
     }
 
     // Calculate the threshold as one third of the name's length, with a minimum of 1.
-    let threshold = std::cmp::max(name.chars().count() / 3, 1);
+    let threshold = std::cmp::max(target.chars().count() / 3, 1);
 
     // Filter and sort options based on edit distance.
     options
@@ -976,11 +1005,11 @@ pub fn did_you_mean(name: &str, options: &[EcoString]) -> Option<String> {
         .filter(|&option| option != ast::CAPTURE_VARIABLE)
         .sorted()
         .filter_map(|option| {
-            edit_distance_with_substrings(option, name, threshold)
+            edit_distance_with_substrings(option, target, threshold)
                 .map(|distance| (option, distance))
         })
         .min_by_key(|&(_, distance)| distance)
-        .map(|(option, _)| format!("Did you mean `{option}`?"))
+        .map(|(option, _)| option)
 }
 
 fn to_ordinal(value: u32) -> String {
@@ -1325,6 +1354,56 @@ If you want to overwrite {text_files}, delete {text_pronoun} and run the command
                     ),
                     level: Level::Error,
                     hint: None,
+                    location: None,
+                }]
+            }
+
+            Error::RemovedPackageNamesInvalid {
+                packages,
+                dependencies,
+            } => {
+                let (plural, introduction) = if packages.len() == 1 {
+                    (
+                        "",
+                        "This is not a valid package name, so it could not be removed.",
+                    )
+                } else {
+                    (
+                        "s",
+                        "These are not valid package names, so they could not be removed.",
+                    )
+                };
+
+                let suggestions = packages
+                    .iter()
+                    .filter_map(|package| select_suggestion(package, dependencies))
+                    .map(|suggestion| eco_format!("`{suggestion}`"))
+                    .collect_vec();
+                let hint = if suggestions.is_empty() {
+                    None
+                } else {
+                    let list = comma_separated_list(suggestions.as_slice());
+                    Some(format!("Did you mean {list}?"))
+                };
+                let list = packages
+                    .iter()
+                    .map(|package| format!("  - {package}"))
+                    .join("\n");
+
+                let text = format!(
+                    "{introduction}
+
+{list}
+
+Package names must start with a lowercase letter and may only contain
+lowercase letters, numbers and underscores."
+                );
+
+                vec![Diagnostic {
+                    title: format!("Invalid package name{plural}"),
+                    text,
+                    level: Level::Error,
+                    hint,
                     location: None,
                 }]
             }
@@ -1867,34 +1946,41 @@ Erlang modules must have unique names regardless of the subfolders where their
                 kind,
                 action,
                 path,
-                err,
+                cause,
             } => {
-                let err = match err {
-                    Some(e) => {
-                        format!("\nThe error message from the file IO library was:\n\n    {e}\n")
-                    }
-                    None => "".into(),
-                };
-                let destination = if let Some(destination) = action.destination() {
-                    format!(
-                        "\n\nTo:
-
-    {destination}"
-                    )
-                } else {
-                    "".into()
-                };
                 let mut text = format!(
                     "An error occurred while trying to {} this {}:
 
-    {}{}
-{}",
+    {}",
                     action.text(),
                     kind.text(),
-                    path,
-                    destination,
-                    err,
+                    path
                 );
+                if let Some(destination) = action.destination() {
+                    text.push_str("\n\nTo:\n\n    ");
+                    text.push_str(destination.as_str());
+                }
+                match cause {
+                    FileIoCause::Other(error) => {
+                        text.push_str(
+                            "\n\nThe error message from the file IO library was:\n\n    ",
+                        );
+                        text.push_str(error.as_str());
+                    }
+                    FileIoCause::NotFound => {
+                        write!(text, "\n\nThis {} does not exist.", kind.text())
+                            .expect("successfully write to the buffer");
+                    }
+                    FileIoCause::CacheMetadataFormatIncorrect => text.push_str(
+                        "
+
+The data in this file was not in the expected format, so it could
+not be understood by the compiler.
+
+This can happen if the data file was created with a different
+version of Gleam, or if the files have been corrupted in some way.",
+                    ),
+                };
                 if cfg!(target_family = "windows") && action.is_link() {
                     text.push_str("
 
@@ -2644,6 +2730,24 @@ project's `gleam.toml`."
                     }],
                 }
             }
+
+            Error::DocumentationPageOutsidePackage { path } => {
+                let text = wrap_format!(
+                    "This documentation page source path falls outside \
+the package directory, so it could not be read.
+
+    {path}
+
+All documentation pages files must be inside the package itself."
+                );
+                vec![Diagnostic {
+                    title: "Documentation page outside package directory".into(),
+                    text,
+                    level: Level::Error,
+                    location: None,
+                    hint: None,
+                }]
+            }
         }
     }
 }
@@ -2656,6 +2760,7 @@ project's `gleam.toml`."
 fn comma_separated_list(items: &[EcoString]) -> String {
     match items {
         [] => String::new(),
+        [sole] => sole.to_string(),
         [first, second] => format!("{first} and {second}"),
         [first, ..] => {
             let (last, items) = items.split_last().unwrap_or((first, &[]));

@@ -11,7 +11,7 @@ use gleam_core::{
     build::{Codegen, Compile, ErlangOutput, Mode, Options, Package, Target},
     config::{GleamVersion, PackageConfig, SpdxLicense},
     docs::{Dependency, DependencyKind, DocContext},
-    error::{InvalidReadmeReason, SmallVersion, wrap},
+    error::{FileIoCause, InvalidReadmeReason, SmallVersion, wrap},
     hex,
     manifest::ManifestPackageSource,
     paths::{self, ProjectPaths},
@@ -154,8 +154,9 @@ fn check_for_invalid_readme(config: &PackageConfig, paths: &ProjectPaths) -> Res
 
     let project_readme = match fs::read(paths.readme()) {
         Err(Error::FileIo {
-            err: Some(message), ..
-        }) if message.contains("No such file or directory") => {
+            cause: FileIoCause::NotFound,
+            ..
+        }) => {
             return Err(Error::CannotPublishWithInvalidReadme {
                 reason: InvalidReadmeReason::Missing,
             });
@@ -495,7 +496,7 @@ fn do_build_hex_tarball(paths: &ProjectPaths, config: &mut PackageConfig) -> Res
     for module in built.root_package.modules.iter() {
         if module.ast.type_info.contains_todo() {
             modules_containing_todo.push(module.name.clone());
-        } else if module.ast.type_info.contains_echo {
+        } else if !module.ast.type_info.references.echo_usages.is_empty() {
             modules_containing_echo.push(module.name.clone());
         }
     }
